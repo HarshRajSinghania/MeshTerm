@@ -141,7 +141,7 @@ class MapScreen(Screen):
 
     @property
     def fkey_lane(self):
-        """The PicoCalc lane: three ways to frame the view, then the zoom rocker.
+        r"""The PicoCalc lane: three ways to frame the view, then the zoom rocker.
 
         The map is the one screen that repurposes the nav actions wholesale: PgUp/PgDn
         zoom, Home reframes, and ``end`` is bound to nothing at all — so the shared lane's

@@ -431,7 +431,7 @@ def axis_caption(
         taken: list[tuple[int, int]] = []  # placed [start, end) spans, in order
         ticks: list[int] = []  # the chart column each label points at
         ok = True
-        for frac, label in zip(fractions, labels):
+        for frac, label in zip(fractions, labels, strict=True):
             if frac == 0.0:
                 start = 0
                 ref = 0
@@ -626,7 +626,7 @@ def axis_chart(
     marks = y_axis_labels(peak, len(chart_rows), lo=floor)
     label_w = label_w or max([1, *(len(mark) for mark in marks)])
     out: list[Text] = []
-    for mark, row in zip(marks, chart_rows):
+    for mark, row in zip(marks, chart_rows, strict=True):
         line = Text(f"{mark:>{label_w}} " + ("┤" if mark else "│"), style=style)
         line.append_text(row)
         line.append("├" if mark else "│", style=style)

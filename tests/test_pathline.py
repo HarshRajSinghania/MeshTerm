@@ -57,7 +57,7 @@ def _char_styles(text) -> list[tuple[str, str]]:  # noqa: ANN001
     for span in text.spans:
         for i in range(span.start, span.end):
             styles[i] = str(span.style)
-    return list(zip(text.plain, styles))
+    return list(zip(text.plain, styles, strict=True))
 
 
 def test_plain_mode_matches_the_app_wide_arrow_presentation() -> None:

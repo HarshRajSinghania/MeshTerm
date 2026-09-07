@@ -78,6 +78,7 @@ import re
 import time
 from dataclasses import dataclass, field, replace
 from datetime import datetime
+from itertools import pairwise
 from typing import TYPE_CHECKING
 
 from rich.cells import cell_len
@@ -2013,7 +2014,7 @@ def _route_is_fresh(topo, hops: tuple[str, ...], target: str, now: datetime) -> 
     is treated as fresh — we have no age to hold against it.
     """
     chain = [topo.self_id, *hops, target]
-    for a, b in zip(chain, chain[1:]):
+    for a, b in pairwise(chain):
         link = topo.link(a, b)
         if link is None:
             return False

@@ -6,6 +6,7 @@ import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
+from itertools import pairwise
 from typing import TYPE_CHECKING
 
 from rich import box
@@ -935,10 +936,10 @@ def _recency_gradient(secs: float | None) -> str:
         r, g, b = _HEAT_STOPS[-1][1]
     else:
         (x0, c0), (x1, c1) = next(
-            (lo, hi) for lo, hi in zip(_HEAT_STOPS, _HEAT_STOPS[1:]) if lo[0] <= x <= hi[0]
+            (lo, hi) for lo, hi in pairwise(_HEAT_STOPS) if lo[0] <= x <= hi[0]
         )
         f = (x - x0) / (x1 - x0)
-        r, g, b = (round(a + (bb - a) * f) for a, bb in zip(c0, c1))
+        r, g, b = (round(a + (bb - a) * f) for a, bb in zip(c0, c1, strict=True))
     return f"#{r:02x}{g:02x}{b:02x}"
 
 

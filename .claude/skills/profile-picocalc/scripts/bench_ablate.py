@@ -131,9 +131,9 @@ def measure(name, cols, rows, reps):
 
             # How different are the two frames, in rows?
             rows_a, rows_b = f_a.split("\n"), f_b.split("\n")
-            changed = sum(1 for x, y in zip(rows_a, rows_b) if x != y)
+            changed = sum(1 for x, y in zip(rows_a, rows_b, strict=True) if x != y)
             rows_far = f_far.split("\n")
-            changed_far = sum(1 for x, y in zip(rows_a, rows_far) if x != y)
+            changed_far = sum(1 for x, y in zip(rows_a, rows_far, strict=True) if x != y)
     return {
         "compose": compose_ms,
         "parse": parse_ms,

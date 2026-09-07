@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import unicodedata
 from dataclasses import dataclass
+from itertools import pairwise
 
 from ..platforms import Platform, on_platform
 from .marks import RGB, parse_hex  # noqa: F401 - canonical home; re-exported for importers
@@ -177,7 +178,7 @@ class MapCanvas:
         self, points: list[tuple[float, float]], color: RGB, priority: int
     ) -> None:
         """Rasterize a polyline through ``points`` (dot coordinates) as braille dots."""
-        for (x0, y0), (x1, y1) in zip(points, points[1:]):
+        for (x0, y0), (x1, y1) in pairwise(points):
             self._segment(x0, y0, x1, y1, color, priority)
 
     def _segment(
@@ -232,7 +233,7 @@ class MapCanvas:
         edges: list[tuple[float, float, float, float]] = []
         ys: list[float] = []
         for ring in rings:
-            for (x0, y0), (x1, y1) in zip(ring, ring[1:]):
+            for (x0, y0), (x1, y1) in pairwise(ring):
                 if y0 != y1:
                     edges.append((x0, y0, x1, y1))
                     ys.extend((y0, y1))

@@ -35,7 +35,7 @@ import math
 import statistics
 from dataclasses import dataclass, field
 from datetime import datetime
-from itertools import chain
+from itertools import chain, pairwise
 
 from ..core.models import Contact, utcnow
 from ..persistence.repository import NeighbourLink, PacketPath, TracedPath
@@ -823,7 +823,7 @@ class MeshTopology:
         weakest_strength: float | None = None
         weakest_snr: float | None = None
         samples = 0
-        for a, b in zip(chain, chain[1:]):
+        for a, b in pairwise(chain):
             link = self.link(a, b)
             if link is None:
                 return 0.0, None, samples
@@ -912,7 +912,7 @@ class MeshTopology:
 
         def path_cost(path: list[str]) -> float:
             total = 0.0
-            for a, b in zip(path, path[1:]):
+            for a, b in pairwise(path):
                 total += min((c for v, c in neighbors.get(a, ()) if v == b), default=math.inf)
             return total
 

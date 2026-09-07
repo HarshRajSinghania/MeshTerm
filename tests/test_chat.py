@@ -495,7 +495,8 @@ def test_title_preview_column_aligns_regardless_of_label_length(repo: Repository
 def test_title_leads_with_openness_glyph(repo: Repository) -> None:
     """Channel rows lead with an openness glyph: ＃ name-derived, 🌐 fixed-key public, 🔒 private."""
     ctx = _RowCtx(repo)
-    head = lambda conv: _title(ctx, conv, {}, _NO_KEYS).plain.split(" ", 1)[0]
+    def head(conv):
+        return _title(ctx, conv, {}, _NO_KEYS).plain.split(" ", 1)[0]
     named = Conversation(
         label="#general", is_channel=True, channel_id="c0", secret=derive_secret("#general")
     )

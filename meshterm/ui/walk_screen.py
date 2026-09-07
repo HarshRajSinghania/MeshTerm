@@ -57,6 +57,7 @@ from __future__ import annotations
 import math
 from collections import deque
 from datetime import datetime
+from itertools import pairwise
 from typing import TYPE_CHECKING
 
 from rich.cells import cell_len
@@ -201,10 +202,10 @@ def _snr_rgb(snr: float | None) -> RGB:
     if snr >= _SNR_STOPS[-1][0]:
         return _SNR_STOPS[-1][1]
     (x0, c0), (x1, c1) = next(
-        (lo, hi) for lo, hi in zip(_SNR_STOPS, _SNR_STOPS[1:]) if lo[0] <= snr <= hi[0]
+        (lo, hi) for lo, hi in pairwise(_SNR_STOPS) if lo[0] <= snr <= hi[0]
     )
     f = (snr - x0) / (x1 - x0)
-    return tuple(round(a + (b - a) * f) for a, b in zip(c0, c1))  # type: ignore[return-value]
+    return tuple(round(a + (b - a) * f) for a, b in zip(c0, c1, strict=True))  # type: ignore[return-value]
 
 
 def _scaled(rgb: RGB, factor: float) -> RGB:
@@ -1039,7 +1040,7 @@ class WalkScreen(Screen):
         # marker, in cells, doubled into dot space.
         rx = max(floor, 2 * (width - 2 - _FAN_BASE_LABEL_W)) - ax
         phi = _FAN_HALF_ANGLE * min(1.0, (len(keys) - 1) / 5.0)
-        for i, (node, row, label) in enumerate(zip(keys, rows, labels)):
+        for i, (node, row, label) in enumerate(zip(keys, rows, labels, strict=True)):
             angle = 0.0 if len(keys) == 1 else -phi + (2 * phi) * i / (len(keys) - 1)
             x = ax + rx * math.cos(angle * _FAN_X_FLATTEN)
             room = 2 * (width - 2 - min(cell_len(label), _FAN_LABEL_W))

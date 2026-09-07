@@ -1,4 +1,4 @@
-"""Diagnose one emoji for the MeshTerm terminal-aligned width machinery.
+r"""Diagnose one emoji for the MeshTerm terminal-aligned width machinery.
 
 Given an emoji on the command line, report its codepoints and how the three width
 authorities measure it (wcwidth, Rich, prompt_toolkit), then classify it and print the

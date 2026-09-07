@@ -522,7 +522,7 @@ async def _menu_loop(ctx: AppContext, session: TuiSession) -> None:
     name_w = max((label.cell_len for label in labels), default=0)
     items: list = []
     current_category: str | None = None
-    for tool, row in zip(tools, labels):
+    for tool, row in zip(tools, labels, strict=True):
         if tool.category != current_category:
             current_category = tool.category
             items.append(section_heading(current_category))

@@ -267,7 +267,7 @@ def _changed_rows(before: str, after: str) -> list[int] | None:
     old, new = before.split("\n"), after.split("\n")
     if len(old) != len(new):
         return None
-    return [i for i, (a, b) in enumerate(zip(old, new)) if a != b]
+    return [i for i, (a, b) in enumerate(zip(old, new, strict=True)) if a != b]
 
 
 def _has_wide_glyph(text: str) -> bool:
@@ -680,7 +680,7 @@ class TuiSession:
         self._scrub_columns(cols - count, cols)
 
     def _scrub_rows(self, rows: Sequence[int]) -> bool:
-        """Force prompt_toolkit to rewrite these whole terminal rows on the next diff.
+        r"""Force prompt_toolkit to rewrite these whole terminal rows on the next diff.
 
         The row-wise twin of :meth:`_scrub_columns`, and the cheap form of the wide-glyph
         repaint (:meth:`_emit`): every column of each listed row is sentinelled, so pt finds
@@ -1539,7 +1539,7 @@ class TuiSession:
         return bool(self._float_layers())
 
     def _emit(self, text: str, layer: str = "base") -> ANSI:
-        """Wrap a composed frame as prompt_toolkit :class:`ANSI`, repainting whole *rows*
+        r"""Wrap a composed frame as prompt_toolkit :class:`ANSI`, repainting whole *rows*
         when it holds a glyph the terminal may draw narrower than pt reserves for it.
 
         prompt_toolkit paints differentially: it rewrites only the cells that changed since

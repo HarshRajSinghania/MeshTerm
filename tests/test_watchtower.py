@@ -238,7 +238,8 @@ def test_alert_row_hues_the_label_by_resolved_key(tmp_path: Path) -> None:
     from meshterm.ui.theme import name_style
     from meshterm.ui.watchtower_screen import _alert_lanes
 
-    key_of = lambda label: "d4" * 6 if label == "Roof" else None
+    def key_of(label):
+        return "d4" * 6 if label == "Roof" else None
     alert = Alert(ident=1, when=utcnow(), kind="silence", label="Roof", message="quiet")
     row = _alert_lanes(alert, key_of)
     at = row.plain.index("Roof")
@@ -261,8 +262,10 @@ def test_alert_row_leads_node_name_with_type_glyph(tmp_path: Path) -> None:
     from meshterm.ui.watchtower_screen import _alert_lanes
     from meshterm.ui.widgets import _DEFAULT_GLYPH, _NODE_GLYPHS
 
-    key_of = lambda label: None
-    type_of = lambda label: 2 if label == "Roof" else None  # Roof advertises as a repeater
+    def key_of(label):
+        return None
+    def type_of(label):
+        return 2 if label == "Roof" else None  # Roof advertises as a repeater
     glyph, glyph_style = _NODE_GLYPHS[2]
 
     alert = Alert(ident=1, when=utcnow(), kind="silence", label="Roof", message="quiet")

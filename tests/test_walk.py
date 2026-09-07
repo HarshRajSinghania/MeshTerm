@@ -135,7 +135,7 @@ def test_walk_graph_labels_names_in_full_when_the_canvas_has_room() -> None:
     ]
     topo = MeshTopology(US, contacts=long_names)
     when = utcnow()
-    for c, snr in zip(long_names, (8.0, 1.0)):
+    for c, snr in zip(long_names, (8.0, 1.0), strict=True):
         topo.add_walk([topo.self_id, topo.canonical(c.public_key)], snrs=[snr], when=when,
                       source="trace")
     screen = WalkScreen(

@@ -333,7 +333,7 @@ def column_header(lanes: Sequence[Lane], width: int, *, indent: int = 2) -> str:
 
     def line() -> str:
         out = " " * indent
-        for lane, form in zip(lanes, picked):
+        for lane, form in zip(lanes, picked, strict=True):
             label = lane.forms[form]
             out += label + " " * max(0, lane.width - cell_len(label))
         return out

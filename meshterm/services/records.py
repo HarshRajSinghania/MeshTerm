@@ -34,6 +34,7 @@ from __future__ import annotations
 import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from itertools import pairwise
 
 from ..core.geo import haversine_km
 from ..core.models import Hop, TraceResult
@@ -69,7 +70,7 @@ def first_repeated_edge(nodes: Sequence[str]) -> tuple[str, str] | None:
     """
     walked = [n.strip().lower() for n in nodes if n and n.strip()]
     seen: set[tuple[str, str]] = set()
-    for pair in zip(walked, walked[1:]):
+    for pair in pairwise(walked):
         if pair in seen:
             return pair
         seen.add(pair)
@@ -306,7 +307,7 @@ def compute_walk_stats(
     complete = True
     leg_km: float | None = None
     leg_link: tuple[str | None, str | None] | None = None
-    for i, (a, b) in enumerate(zip(points, points[1:])):
+    for i, (a, b) in enumerate(pairwise(points)):
         if a is None or b is None:
             complete = False
             continue

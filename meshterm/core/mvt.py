@@ -234,7 +234,9 @@ def _decode_feature(buf: bytes, keys: list[str], values: list[Any]) -> Feature |
     if not geom_ints:
         return None
     tags: dict[str, Any] = {}
-    for k, v in zip(tag_ints[0::2], tag_ints[1::2]):
+    # A malformed tile may carry an odd tag list; drop the dangling key rather than
+    # raise — the rest of this decoder is deliberately lenient about bad tiles.
+    for k, v in zip(tag_ints[0::2], tag_ints[1::2], strict=False):
         if 0 <= k < len(keys) and 0 <= v < len(values):
             tags[keys[k]] = values[v]
     return Feature(geom_type=geom_type, rings=_decode_geometry(geom_ints), tags=tags)

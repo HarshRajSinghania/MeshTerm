@@ -104,7 +104,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from itertools import permutations, product
+from itertools import pairwise, permutations, product
 from math import ceil
 
 from .mapcanvas import MapCanvas
@@ -375,7 +375,7 @@ def revisited_hops(hops: Sequence[str]) -> tuple[str, ...]:
 
 
 def _split_revisits(layers: Sequence[PathLayer]) -> list[PathLayer]:
-    """Give every revisit *within* a path its own node id, so no walk folds into a cycle.
+    r"""Give every revisit *within* a path its own node id, so no walk folds into a cycle.
 
     The k-th occurrence of a hop in one layer becomes ``hop\\x00#k`` (the first keeps the bare
     id), which leaves the flow acyclic and lets the balanced rank spread the walk evenly again.
@@ -555,7 +555,7 @@ def render_path_graph(
             if node not in seen:
                 seen.add(node)
                 ordered_nodes.append(node)
-        edges.update(zip(seq, seq[1:]))
+        edges.update(pairwise(seq))
 
     xfrac = _balanced_x(ordered_nodes, edges)
 
@@ -667,9 +667,9 @@ def render_path_graph(
     # dropping out where it overlaps another. A two-way pair (``bidir``, above) draws as the
     # one honest vertical rather than a lane change.
     edge_style: dict[frozenset[str], tuple[int, RGB]] = {}
-    for layer, seq in sorted(zip(drawn, seqs), key=lambda ls: _draw_rank(ls[0])):
+    for layer, seq in sorted(zip(drawn, seqs, strict=True), key=lambda ls: _draw_rank(ls[0])):
         rank = _draw_rank(layer)
-        for u, v in zip(seq, seq[1:]):
+        for u, v in pairwise(seq):
             key = frozenset((u, v))
             prev = edge_style.get(key)
             if prev is None or rank > prev[0]:
@@ -731,7 +731,7 @@ def _route(
         (xu, yu), (xv, yv) = (xv, yv), (xu, yu)
     anchors: list[tuple[float, float]] = [(xu, yu), *sorted(vias), (xv, yv)]
     pts: list[tuple[float, float]] = [anchors[0]]
-    for (xa, ya), (xb, yb) in zip(anchors, anchors[1:]):
+    for (xa, ya), (xb, yb) in pairwise(anchors):
         if ya == yb:
             pts.append((xb, yb))
             continue
@@ -845,7 +845,7 @@ def bidir_clusters(sequences: Sequence[tuple[str, ...]]) -> list[tuple[str, ...]
     Returns each cluster's member ids in first-appearance order (endpoints excluded); a lone
     node or the tidy two-node pair is not a cluster and is not returned.
     """
-    edges = {pair for seq in sequences for pair in zip(seq, seq[1:])}
+    edges = {pair for seq in sequences for pair in pairwise(seq)}
     ordered = list(dict.fromkeys(node for seq in sequences for node in seq))
     rep = _merge_bidir_pairs(ordered, edges)
     groups: dict[str, list[str]] = {}
@@ -1047,7 +1047,7 @@ def _bypass_vias(
     level: list[tuple[frozenset[str], float, int, int]] = []
     seen: set[frozenset[str]] = set()
     for seq in seqs:
-        for u, v in zip(seq, seq[1:]):
+        for u, v in pairwise(seq):
             key = frozenset((u, v))
             if key in seen or key in bidir:
                 continue
@@ -1328,7 +1328,7 @@ def _balance_sides(
     best_assign: dict[int, int] | None = None
     best_key: tuple[int, int, int] | None = None
     for combo in product((-1, 1), repeat=len(routes)):
-        assign = dict(zip(routes, combo))
+        assign = dict(zip(routes, combo, strict=True))
         if any(assign[d] != assign[s] for d, s in tie.items()):  # a nest split off its sibling
             continue
         deep_above, deep_below = flanks(assign)

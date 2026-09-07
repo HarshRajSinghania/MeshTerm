@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 from datetime import timedelta
+from itertools import pairwise
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -344,7 +345,7 @@ def test_day_columns_widths_differ_by_at_most_one_dot_and_interleave() -> None:
     notches = [i for i, c in enumerate(cols) if c is GAP]  # one per day boundary
     assert len(notches) == 12
     edges = [-1, *notches, len(cols)]  # each bar runs between two notches
-    widths = [b - a - 1 for a, b in zip(edges, edges[1:])]
+    widths = [b - a - 1 for a, b in pairwise(edges)]
     assert len(widths) == 13 and set(widths) == {3, 4}
     first_wide = widths.index(4)
     last_wide = len(widths) - 1 - widths[::-1].index(4)

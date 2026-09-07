@@ -446,10 +446,10 @@ class RecordDialog(Screen):
         canvas.draw_line(closed, _AREA_TONE, priority=0)
         # Hops first, then our own node last, so the star always wins its cell — a hop that
         # projects onto the same cell can never hide us.
-        for v, (dx, dy) in zip(verts, ring):
+        for v, (dx, dy) in zip(verts, ring, strict=True):
             if not v.is_self:
                 canvas.marker(int(round(dx)), int(round(dy)), v.glyph, v.color)
-        for v, (dx, dy) in zip(verts, ring):
+        for v, (dx, dy) in zip(verts, ring, strict=True):
             if v.is_self:
                 canvas.marker(int(round(dx)), int(round(dy)), v.glyph, v.color)
         return canvas.to_ansi_lines()

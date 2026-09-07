@@ -576,7 +576,7 @@ def rank_contacts(
             reasons=_reasons(sig, terms, weights),
         )
         for contact, sig, score, terms in zip(
-            contacts, gathered, scores, per_contact_terms
+            contacts, gathered, scores, per_contact_terms, strict=True
         )
     ]
     ranked.sort(key=lambda scored: (-scored.score, scored.contact.name.casefold()))

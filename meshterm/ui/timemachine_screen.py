@@ -668,7 +668,7 @@ def _ticks_fit(picks: list[int], labels: list[str], centers: list[int], chars: i
     label would drop ticks a variable-width axis has ample room for.
     """
     last_end = -_TICK_GAP
-    for i, label in zip(picks, labels):
+    for i, label in zip(picks, labels, strict=True):
         cell = max(0, min(chars - 1, centers[i]))
         start = max(0, min(chars - len(label), cell - len(label) // 2))
         if start < last_end + _TICK_GAP:
@@ -707,9 +707,9 @@ def _fit_ticks(
             continue  # rounding fused two picks — this many will not fit cleanly
         labels = label_of(picks)
         if _ticks_fit(picks, labels, centers, chars):
-            return list(zip((centers[i] for i in picks), labels))
+            return list(zip((centers[i] for i in picks), labels, strict=True))
     picks = [0] if n == 1 else [0, n - 1]
-    return list(zip((centers[i] for i in picks), label_of(picks)))
+    return list(zip((centers[i] for i in picks), label_of(picks), strict=True))
 
 
 def _day_ticks(shown: list, chars: int) -> list[tuple[int, str]]:
@@ -912,7 +912,7 @@ def _day_columns(values: list[int], chars: int) -> list:
         :data:`~meshterm.ui.braillechart.GAP` marks a day-boundary notch).
     """
     out: list = [GAP] * (chars * 2)
-    for value, (start, width) in zip(values, _day_spans(len(values), chars)):
+    for value, (start, width) in zip(values, _day_spans(len(values), chars), strict=True):
         out[start : start + width] = [value] * width
     return out
 

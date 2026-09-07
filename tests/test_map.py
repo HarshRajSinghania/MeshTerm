@@ -615,7 +615,7 @@ def test_render_map_brightens_piled_markers() -> None:
     crowd = [MapMarker(f"n{i}", 45.50, -73.57) for i in range(8)]
     piled = _glyph_color(render_map(vp, {}, crowd), "●")
     # Washed toward white: every channel is brighter than the base cyan.
-    assert all(p > b for p, b in zip(piled, base))
+    assert all(p > b for p, b in zip(piled, base, strict=True))
     assert piled != base
 
 
@@ -684,7 +684,7 @@ def test_the_ghost_ground_lands_where_the_pan_put_it() -> None:
     assert len(before) == len(after)
     matched = sum(
         1
-        for old, new in zip(before, after)
+        for old, new in zip(before, after, strict=True)
         if old[shift:].rstrip() and new.rstrip() == old[shift:].rstrip()
     )
     assert matched > len(before) // 2, "the ground did not slide with the view"
@@ -906,7 +906,7 @@ def test_decoded_layers_survive_a_round_trip() -> None:
 
     assert restored is not None
     assert [(l.name, l.extent) for l in restored] == [(l.name, l.extent) for l in original]
-    for before, after in zip(original, restored):
+    for before, after in zip(original, restored, strict=True):
         assert after.features == before.features
 
 

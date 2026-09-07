@@ -211,7 +211,7 @@ async def _rank(ctx: AppContext, contacts: list[Contact]) -> list[ScoredContact]
 
     watch = getattr(ctx, "watch_store", None)
     admin = getattr(ctx, "admin_store", None)
-    for contact, node in zip(contacts, nodes):
+    for contact, node in zip(contacts, nodes, strict=True):
         found = signals.get(node)
         if found is None:
             continue

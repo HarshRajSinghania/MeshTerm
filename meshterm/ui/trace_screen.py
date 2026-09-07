@@ -1177,7 +1177,7 @@ class TraceScreen(Screen):
             rows.append(spin)
         elif self._status:
             rows.append(Text(self._status, style="err"))
-        for number, trace in zip(range(len(self._traces), 0, -1), reversed(self._traces)):
+        for number, trace in zip(range(len(self._traces), 0, -1), reversed(self._traces), strict=True):
             rows.append(self._trace_row(number, trace))
         return Group(*rows)
 

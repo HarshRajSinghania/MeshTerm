@@ -372,7 +372,7 @@ def _banner_lines(banner: Sequence[str], cols: int) -> list[str]:
         return []
     widths = [cell_len(Text.from_ansi(row).plain) for row in banner]
     width = max(widths)
-    padded = [fold_text(row) + " " * (width - w) for row, w in zip(banner, widths)]
+    padded = [fold_text(row) + " " * (width - w) for row, w in zip(banner, widths, strict=True)]
     return _center(padded, cols)
 
 

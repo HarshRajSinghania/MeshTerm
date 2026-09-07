@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from itertools import pairwise
 
 import pytest
 
@@ -197,7 +198,7 @@ def test_revisited_path_folds_into_a_cycle_that_piles_its_relays() -> None:
     hops = ("7f", "c1", "8e", "da", "ee", "c1", "27")
     seq = (SRC_NODE, *hops, DST_NODE)
     ordered = list(dict.fromkeys(seq))
-    x = _balanced_x(ordered, set(zip(seq, seq[1:])))
+    x = _balanced_x(ordered, set(pairwise(seq)))
     # Evenly spread, these eight nodes would sit 1/7 apart and the four loop members would
     # span three of those gaps; folded, the whole loop fits inside a single one.
     loop = [x[node] for node in ("c1", "8e", "da", "ee")]
@@ -217,12 +218,12 @@ def test_allow_duplicate_nodes_keeps_x_strictly_rising_along_the_walk() -> None:
     [layer] = _split_revisits([PathLayer(hops, WHITE, 3)])
     seq = (SRC_NODE, *layer.hops, DST_NODE)
     ordered = list(dict.fromkeys(seq))
-    x = _balanced_x(ordered, set(zip(seq, seq[1:])))
+    x = _balanced_x(ordered, set(pairwise(seq)))
     walked = [x[node] for node in seq]
     assert walked == sorted(walked) and len(set(walked)) == len(walked)
     assert x[SRC_NODE] == 0.0 and x[DST_NODE] == 1.0
     # A single walk with nothing else to balance against spreads dead evenly end to end.
-    gaps = [b - a for a, b in zip(walked, walked[1:])]
+    gaps = [b - a for a, b in pairwise(walked)]
     assert max(gaps) - min(gaps) < 1e-9
 
 
@@ -390,7 +391,7 @@ def _packed_lanes(layers, width=60, max_rows=15):  # noqa: ANN001
             if node not in seen:
                 seen.add(node)
                 ordered.append(node)
-        edges.update(zip(seq, seq[1:]))
+        edges.update(pairwise(seq))
     xfrac = _balanced_x(ordered, edges)
     best = max(range(len(drawn)), key=lambda j: drawn[j].priority)
     owner: dict[str, int] = {}
@@ -632,7 +633,7 @@ def _vias_for(layers, width=60, max_rows=15):  # noqa: ANN001
             if node not in seen:
                 seen.add(node)
                 ordered.append(node)
-        edges.update(zip(seq, seq[1:]))
+        edges.update(pairwise(seq))
     xfrac = _balanced_x(ordered, edges)
     best = max(range(len(drawn)), key=lambda j: drawn[j].priority)
     owner: dict[str, int] = {}
@@ -774,7 +775,7 @@ def test_bidir_pair_does_not_jam_a_sibling_relay_against_the_origin() -> None:
     ]
     seqs = [(SRC_NODE, *layer.hops, DST_NODE) for layer in layers]
     ordered = list(dict.fromkeys(n for seq in seqs for n in seq))
-    edges = {pair for seq in seqs for pair in zip(seq, seq[1:])}
+    edges = {pair for seq in seqs for pair in pairwise(seq)}
     x = _balanced_x(ordered, edges)
     assert x[SRC_NODE] == 0.0 and x[DST_NODE] == 1.0
     assert x["cc"] == pytest.approx(1 / 3)  # its natural spot, not jammed toward 0

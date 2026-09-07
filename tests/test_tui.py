@@ -1241,7 +1241,7 @@ def test_device_picker_builds_aligned_columns(tmp_path) -> None:
     assert rows[-2].strip().endswith("Add a network device…")  # no caveat tag trailing it
     assert rows[-1].strip().endswith("Quit")
     device_rows = rows[:2]
-    assert all(port in row for port, row in zip(("COM5", "/dev/ttyUSB0"), device_rows))
+    assert all(port in row for port, row in zip(("COM5", "/dev/ttyUSB0"), device_rows, strict=True))
     assert device_rows[0].index("COM5") == device_rows[1].index("/dev/ttyUSB0")
 
 
@@ -2765,7 +2765,7 @@ def test_the_rows_a_dialog_does_not_reach_come_back_unchanged() -> None:
     session.push(ButtonDialog("Sure?", [("Cancel", 0), ("Yes", 1)]))
     second = session._plain_frame().split("\n")
 
-    unchanged = sum(1 for a, b in zip(first, second) if a == b)
+    unchanged = sum(1 for a, b in zip(first, second, strict=True) if a == b)
     assert unchanged >= 10, "the box should only rewrite the rows it covers"
 
 

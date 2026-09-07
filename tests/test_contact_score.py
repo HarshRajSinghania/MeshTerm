@@ -41,7 +41,7 @@ def _rank(*specs) -> list:  # noqa: ANN001
     """Rank ``(name, signal-overrides)`` pairs, returning the scored contacts strongest first."""
     contacts = [_contact(name) for name, _ in specs]
     signals = {}
-    for contact, (_, overrides) in zip(contacts, specs):
+    for contact, (_, overrides) in zip(contacts, specs, strict=True):
         node = contact.public_key[:12]
         signals[node] = ContactSignals(node=node, **{**_BASE, **overrides})
     return rank_contacts(contacts, signals)
