@@ -14,6 +14,10 @@ dist/
 .claude/settings.local.json
 .claude/plans/
 .claude/housekeeping.md
+# ...and except the GitHub configuration, which only works where GitHub looks for
+# it. The catch-all above hid it silently: a workflow that is never committed is
+# indistinguishable from one that never runs.
+!.github/
 
 # Other virtual environments
 venv/

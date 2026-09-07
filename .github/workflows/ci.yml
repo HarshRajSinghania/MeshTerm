@@ -1,0 +1,86 @@
+# The three commands CONTRIBUTING.md asks a contributor to run, run for them.
+#
+# Split in two on purpose. Style is a property of the source, not of the machine, so
+# `lint` runs once and its failure is unambiguous. Behaviour is a property of the
+# machine, so `test` runs everywhere we claim to work — the description promises
+# Windows, macOS and Linux, and until this file existed that promise had only ever been
+# checked on one of them.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Nothing here writes to the repository; say so rather than inherit the default.
+permissions:
+  contents: read
+
+# A second push while the first is still running makes the first answer obsolete.
+# Cancel it — on a private repo those are metered minutes spent on a stale commit.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - run: pip install -e ".[dev]"
+
+      # Both gates, and the second runs even when the first fails: they report
+      # different things and seeing only the earlier one wastes a round trip.
+      - run: ruff check .
+      - if: ${{ !cancelled() }}
+        run: ruff format --check .
+
+  test:
+    name: test ${{ matrix.os }} py${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      # Let every leg finish. The point of a run is the whole picture of what broke,
+      # and one red leg cancelling its siblings hides the rest until the next push.
+      fail-fast: false
+      matrix:
+        # Shaped for a *private* repo, where minutes are metered and billed by a
+        # multiplier: Linux 1x, Windows 2x, macOS 10x. So Linux carries the full
+        # Python range and the costly runners cover the ends of it, which is where a
+        # version-dependent break actually shows up.
+        #
+        # Once the repo is public, standard runners are unmetered: widen this to every
+        # OS times every version and stop thinking about it.
+        include:
+          - { os: ubuntu-latest, python: "3.10" }
+          - { os: ubuntu-latest, python: "3.11" }
+          - { os: ubuntu-latest, python: "3.12" }
+          - { os: ubuntu-latest, python: "3.13" }
+          - { os: windows-latest, python: "3.10" }
+          - { os: windows-latest, python: "3.13" }
+          - { os: macos-latest, python: "3.13" }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - run: pip install -e ".[dev]"
+
+      # Includes tests/test_gallery.py, the dual-platform readability gate: every
+      # screen has to stay readable at 72 columns regular and 53 on the PicoCalc, and
+      # every PicoCalc case is a hard failure rather than a warning.
+      - run: python -m pytest -q
