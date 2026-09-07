@@ -188,6 +188,10 @@ def main_callback(
     if ctx.invoked_subcommand is None:
         from .ui.menu import run_menu
 
+        # Before prompt_toolkit takes the screen, because this changes the console's own
+        # font and the full-screen frame should be drawn once, in whatever it ends up.
+        _offer_a_font_this_console_can_draw(console, prefs)
+
         # The interactive session is the one that holds the stores in memory and rewrites
         # them whole, so it is the one that claims the directory. One-shot subcommands are
         # brief and mostly read; blocking `meshterm contacts` because a menu is open in
@@ -213,6 +217,125 @@ def main_callback(
             get_logger().exception("the interactive session raised an unhandled error")
             _report_log_location(console, settings.config_dir)
             raise
+
+
+def _offer_a_font_this_console_can_draw(console: Console, prefs: Preferences) -> None:
+    """On the classic Windows console, offer a font that can actually draw MeshTerm.
+
+    That console does no font fallback: whatever its font lacks is a box, and its default
+    — Consolas, or Lucida Console under Windows PowerShell — lacks most of what MeshTerm
+    is drawn with, including every one of the 44 braille cells the timelines are made of.
+    Nothing at the app's end fixes that, so this is the one thing left to offer.
+
+    Two shapes, depending on what is already there: a machine with Windows Terminal (and
+    every Windows 11 machine) already has Cascadia, so the offer is only to *use* it; a
+    bare Windows 10 gets the offer to install the copy MeshTerm ships.
+
+    Declining is answered with a plain description of what declining looks like, and then
+    asked once more — a reader who has never seen the app has no way to know what "some
+    glyphs may not render" is going to mean. A second decline is remembered, in the
+    ``console_font`` preference, so the question is asked twice in total and never again.
+
+    Args:
+        console: The console to ask on.
+        prefs: The preference set, read for a previous refusal and written on a new one.
+    """
+    from .core import consolefont
+    from .ui.termfont import classic_console, face_draws_charts, installed_chart_font
+
+    if not classic_console() or prefs.get("console_font") == "off":
+        return
+    if face_draws_charts(consolefont.current_face()):
+        return
+
+    installed = installed_chart_font()
+    for asking_again in (False, True):
+        if asking_again:
+            console.print()
+            console.print("[warn]⚠[/warn]  Then MeshTerm is going to look wrong here.")
+            console.print()
+            console.print("   Every chart — the signal timelines, the activity graphs — is")
+            console.print("   drawn from braille characters this console's font does not")
+            console.print("   have, so they will come out as rows of empty boxes. So will")
+            console.print("   the ✓ and ✗ marks, and the ★ on the map.")
+            console.print()
+            console.print("   Nothing is broken and nothing is lost — the app works, and")
+            console.print("   this is only about what the font can draw. It is your")
+            console.print("   console, so it is your call.")
+            console.print()
+        elif installed:
+            console.print()
+            console.print("[accent]•[/accent]  This console's font can't draw MeshTerm's charts.")
+            console.print(f"   You already have [accent]{installed}[/accent], which can.")
+            console.print()
+        else:
+            console.print()
+            console.print("[accent]•[/accent]  This console's font can't draw MeshTerm's charts.")
+            console.print("   MeshTerm ships [accent]Cascadia Mono PL[/accent] — Microsoft's")
+            console.print("   console font — and can install it just for you. No")
+            console.print("   administrator rights, nothing downloaded, 723 KB.")
+            console.print()
+
+        verb = "Use it" if installed else "Install and use it"
+        if _asks_yes(console, f"   {verb}? [y/N] "):
+            _use_a_better_console_font(console, installed)
+            return
+
+    prefs.set("console_font", "off")
+    try:
+        prefs.save()
+    except (OSError, RuntimeError) as exc:  # a read-only config dir is not fatal here
+        get_logger().warning("could not remember the console font choice: %s", exc)
+    console.print()
+    console.print("[muted]   Leaving it as it is. Change your mind on the Preferences[/muted]")
+    console.print("[muted]   page, under Display → Console font.[/muted]")
+    console.print()
+
+
+def _use_a_better_console_font(console: Console, installed: str | None) -> None:
+    """Install (when needed) and select the font, and say plainly what happened."""
+    from .core import consolefont
+
+    face = installed
+    if face is None:
+        if not consolefont.install_bundled_font():
+            console.print("[err]✗[/err]  The font could not be installed. Leaving the")
+            console.print("   console as it is.")
+            get_logger().warning("bundled console font could not be installed")
+            return
+        face = consolefont.BUNDLED_FACE
+
+    if consolefont.select(face):
+        console.print(f"[ok]✓[/ok]  Now drawing with [accent]{face}[/accent].")
+        get_logger().info("console font set to %s", face)
+    else:
+        # Installed but not selected: the font is there for next time and for the
+        # console's own properties dialog, which is worth saying rather than swallowing.
+        console.print(f"[warn]⚠[/warn]  {face} is installed, but this console kept its own")
+        console.print("   font. It will be available the next time you open one.")
+        get_logger().warning("console refused the font %s", face)
+
+
+def _asks_yes(console: Console, prompt: str) -> bool:
+    """Ask a yes/no question on the console, defaulting to no.
+
+    Not a TUI dialog: this runs before prompt_toolkit owns the screen, alongside the other
+    plain-console reports here. An unanswerable prompt — no stdin, a closed pipe — reads as
+    "no", which is the answer that changes nothing.
+
+    Args:
+        console: The console to ask on.
+        prompt: The question, ending in its own spacing.
+
+    Returns:
+        Whether the reader said yes.
+    """
+    console.print(prompt, end="")
+    try:
+        return input().strip().lower() in {"y", "yes"}
+    except (EOFError, KeyboardInterrupt, OSError):
+        console.print()
+        return False
 
 
 def _report_log_location(console: Console, config_dir: Path) -> None:

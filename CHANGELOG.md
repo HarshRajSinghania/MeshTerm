@@ -30,6 +30,21 @@ allowed to change behaviour, not just add to it.
   Terminal or VS Code's terminal keeps the emoji, and `MESHTERM_EMOJI=1` or `=0` forces
   the matter either way. `meshterm platform` reports which it chose and why.
 
+### Added
+
+- **MeshTerm can install a font its charts will actually draw in.** The classic Windows
+  console does no font fallback at all, and none of the fonts it offers can draw braille
+  — which every timeline and activity graph in MeshTerm is made of. Neither can Hack Nerd
+  Font, JetBrains Mono, Fira Code, Source Code Pro, or even DejaVu Sans Mono; the usual
+  advice works only because most terminals quietly fall back to a proportional font.
+
+  So MeshTerm now ships Cascadia Mono PL — Microsoft's console font, SIL OFL — and on
+  that console offers to use it. If you already have Cascadia (every Windows 11 machine,
+  and anyone with Windows Terminal) it just switches to it. If not, it offers to install
+  it for you: no administrator rights, nothing downloaded, 723 KB. Saying no explains
+  what saying no looks like and asks once more; a second no is remembered and never
+  raised again. Preferences → Display → Console font changes your mind either way.
+
 ## [0.2.4] — 2026-09-07
 
 ### Fixed

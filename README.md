@@ -78,6 +78,23 @@ chmod +x meshterm-0.2.4-*
 ./meshterm-0.2.4-*
 ```
 
+### A word about fonts
+
+MeshTerm draws its charts out of braille characters — that's how a timeline fits in one
+row of text. Most terminals handle that without being asked, because when the font you
+picked is missing a character they quietly borrow it from another one.
+
+The classic Windows console (the black `cmd.exe` window) doesn't do that. Whatever its
+font is missing comes out as an empty box, and its fonts are missing rather a lot of
+what MeshTerm draws. So when MeshTerm sees that console, it offers to fix it: it ships
+[Cascadia Mono PL](https://github.com/microsoft/cascadia-code), Microsoft's own console
+font, and will install it just for you — no administrator rights, nothing downloaded.
+If you already have Cascadia, it simply switches to it.
+
+You can decline, and MeshTerm will still run. Preferences → Display → Console font is
+where you change your mind. Running in **Windows Terminal** instead of the classic
+console avoids the whole question, and gets you the emoji icons as well.
+
 Rename it to something you don't mind typing and put it somewhere on your `PATH`, and it
 becomes just `meshterm` from anywhere.
 

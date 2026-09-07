@@ -128,6 +128,13 @@ _WIDTH_CHOICES: dict[str, str] = {"auto": "auto", "yes": "yes", "no": "no"}
 #: What the log file keeps. The plain level names, which are what every other tool calls
 #: these — someone being talked through a problem is being told "set it to debug", not
 #: "set it to everything".
+#: What MeshTerm may do about a console font that cannot draw it. Only ever consulted on
+#: the classic Windows console, the one host with no font fallback of its own.
+_CONSOLE_FONT_CHOICES: dict[str, str] = {
+    "ask": "Ask",
+    "off": "Leave it alone",
+}
+
 _LOG_LEVEL_CHOICES: dict[str, str] = {
     "ERROR": "Error",
     "WARNING": "Warning",
@@ -294,6 +301,18 @@ PREFERENCES: tuple[PrefSpec, ...] = (
         value_type="enum",
         default="auto",
         choices=_WIDTH_CHOICES,
+    ),
+    PrefSpec(
+        key="console_font",
+        label="Console font",
+        help="Offer a font this console can draw MeshTerm with (Windows console only)",
+        group="Display",
+        value_type="enum",
+        # "ask", not "always": changing the font of a window someone else opened is not
+        # ours to do unasked. Declining twice writes "off" here, which is how the offer
+        # stops being made rather than being made every launch.
+        default="ask",
+        choices=_CONSOLE_FONT_CHOICES,
     ),
     # --- Diagnostics ---------------------------------------------------------------
     PrefSpec(

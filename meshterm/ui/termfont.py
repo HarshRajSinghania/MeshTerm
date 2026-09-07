@@ -845,6 +845,17 @@ def _emoji_support(
 
 
 @lru_cache(maxsize=1)
+def classic_console() -> bool:
+    """Whether this session is drawing into a genuine ``conhost`` window.
+
+    The one host with no font fallback of its own, so the only one where the configured
+    font's own repertoire decides what the reader sees. See :func:`_is_classic_console`
+    for how it is identified, and why not from the environment.
+    """
+    return _is_classic_console() is True
+
+
+@lru_cache(maxsize=1)
 def emoji_support() -> EmojiSupport:
     """Whether emoji icons can be drawn here, decided once and cached.
 
@@ -861,3 +872,65 @@ def emoji_support() -> EmojiSupport:
 def emoji_enabled() -> bool:
     """Whether icons should render as emoji rather than through the compact table."""
     return emoji_support().supported
+
+
+# --- chart glyphs -----------------------------------------------------------------
+
+
+#: Families measured to carry the Braille Patterns block (U+2800–U+28FF) that
+#: :mod:`meshterm.ui.braillechart` draws every timeline from.
+#:
+#: The list is short on purpose, and each entry is a measurement rather than a
+#: reputation: reading the ``cmap`` of every font installed on a development machine
+#: (2026-09-07) found that nearly no monospace font carries the block at all. Hack Nerd
+#: Font, JetBrains Mono, Fira Code, Source Code Pro, Consolas, Lucida Console and — the
+#: surprise — DejaVu Sans *Mono* all measure zero of 256. DejaVu *Sans*, which is
+#: proportional, carries all 256, which is where the widespread "install DejaVu for
+#: braille" advice comes from: it works only because terminals fall back from the mono
+#: face to the proportional one for that block.
+#:
+#: Which is the point. On every host that falls back — Windows Terminal, VS Code's
+#: terminal, macOS, Linux — the charts draw whatever the chosen font holds, so this list
+#: never has to be right. It matters on the one host with no fallback at all, the classic
+#: Windows console, where a font outside this list means boxes where the charts should be.
+CHART_FONTS: tuple[str, ...] = (
+    # Microsoft's console font: 44/44, and the family MeshTerm bundles (see
+    # meshterm.core.consolefont). Covers the PL and NF builds by prefix.
+    "cascadia mono",
+    "cascadia code",
+    # The Nerd Font patches of the same, which keep what they patch.
+    "caskaydiacove",
+    "caskaydiamono",
+    # Widely reported to carry the block; not measured here, no copy to hand.
+    "iosevka",
+)
+
+
+def face_draws_charts(face: str | None) -> bool:
+    """Whether ``face`` can draw the braille the timelines are made of.
+
+    Args:
+        face: A configured font family, in any spelling, or ``None``.
+
+    Returns:
+        Whether it is one of :data:`CHART_FONTS`.
+    """
+    if not face:
+        return False
+    normal = normalize_face(face)
+    return any(normal.startswith(known) for known in CHART_FONTS)
+
+
+def installed_chart_font() -> str | None:
+    """The first installed family that can draw the charts, or ``None``.
+
+    What separates "select the font they already have" — every Windows 11 machine, and
+    anyone who has installed Windows Terminal — from "offer to install ours".
+
+    Returns:
+        The family name as installed, or ``None`` when nothing installed can do it.
+    """
+    for family in _installed_families():
+        if face_draws_charts(family):
+            return family
+    return None
