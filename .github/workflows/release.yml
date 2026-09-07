@@ -1,0 +1,99 @@
+# Publishing to PyPI. Deliberately hard to fire.
+#
+# There is no `push: tags` trigger here, and that absence is the point. A release
+# workflow that publishes on a `v*` tag would mean tagging v0.9.0 on launch day
+# silently claims a distribution name on a public index, permanently, as a side
+# effect of an unrelated action. PyPI has no rename and no true delete, so that
+# side effect is not one you can take back.
+#
+# So: a human runs this, from the Actions tab, on purpose, and types the version
+# to prove they meant this version. Three gates before anything leaves the runner:
+#
+#   1. no automatic trigger at all
+#   2. the typed version must equal the version actually built
+#   3. the `pypi` environment, which can require a reviewer in repo settings
+#
+# It publishes whatever version is in the tree. There is no version argument, so
+# this cannot publish something other than what is committed.
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_version:
+        description: "Version to publish, exactly (e.g. 0.9.0). A mismatch aborts."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build and check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install build twine
+
+      - run: python -m build
+
+      # Renders the README the way PyPI will, and fails on metadata PyPI would reject.
+      - run: twine check dist/*
+
+      # The version the build actually produced, read off the artifact rather than
+      # trusted from anywhere else.
+      - id: built
+        shell: bash
+        run: |
+          version=$(ls dist/*.tar.gz | sed -E 's/.*-([0-9][^-]*)\.tar\.gz/\1/')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "built version: $version"
+
+      - name: Confirm the typed version matches what was built
+        shell: bash
+        env:
+          TYPED: ${{ inputs.confirm_version }}
+          BUILT: ${{ steps.built.outputs.version }}
+        run: |
+          if [ "$TYPED" != "$BUILT" ]; then
+            echo "::error::You typed '$TYPED' but the tree builds '$BUILT'. Nothing published."
+            exit 1
+          fi
+          echo "confirmed: $BUILT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    name: publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Configure this environment in repo settings with a required reviewer, and it
+    # becomes a fourth gate: the job waits for an approval before it runs. The name
+    # must also match the environment set on the PyPI trusted publisher, or the OIDC
+    # exchange fails with an unhelpful error. If the publisher has no environment
+    # configured, delete this line.
+    environment:
+      name: pypi
+      url: https://pypi.org/p/mesh-term
+    permissions:
+      # Trusted Publishing mints a short-lived OIDC token instead of storing an API
+      # token in the repository. This is the only thing that needs write here.
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - uses: pypa/gh-action-pypi-publish@release/v1

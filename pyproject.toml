@@ -3,14 +3,34 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "meshterm"
+# The distribution name only. The import package and the console script both stay
+# `meshterm` — PyPI prohibits that name (see pypi/support#12162), and nothing about the
+# app changes because of it. `[tool.hatch.build.targets.wheel]` below is what keeps the
+# wheel shipping the `meshterm/` package under this different name.
+name = "mesh-term"
 dynamic = ["version"]
 description = "MeshTerm is a full-featured TUI-based MeshCore client for your terminal. Supports USB, Bluetooth and TCP companion connection. For Windows, macOS and Linux."
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [{ name = "Jean-Pierre Martineau" }]
-license = { text = "Apache-2.0" }
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
 keywords = ["meshcore", "lora", "mesh", "radio", "cli"]
+# No `License ::` entry: PEP 639 forbids one alongside the SPDX expression above.
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Communications :: Ham Radio",
+    "Topic :: System :: Networking",
+]
 
 dependencies = [
     "meshcore>=2.3",     # companion-device protocol (serial/BLE/TCP)
@@ -33,6 +53,12 @@ dev = [
     "pytest-asyncio>=0.23",
     "ruff>=0.4",
 ]
+
+[project.urls]
+Homepage = "https://github.com/jpmartineau/MeshTerm"
+Repository = "https://github.com/jpmartineau/MeshTerm"
+Issues = "https://github.com/jpmartineau/MeshTerm/issues"
+Changelog = "https://github.com/jpmartineau/MeshTerm/blob/main/CHANGELOG.md"
 
 [project.scripts]
 meshterm = "meshterm.cli:main"

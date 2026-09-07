@@ -84,3 +84,32 @@ jobs:
       # screen has to stay readable at 72 columns regular and 53 on the PicoCalc, and
       # every PicoCalc case is a hard failure rather than a warning.
       - run: python -m pytest -q
+
+  # Builds the distributions and checks them the way PyPI would, publishing nothing.
+  # Worth its minute: packaging breaks silently and is otherwise only discovered on
+  # the one day you least want to discover it. The wheel is installed into a clean
+  # environment and the command run from outside the source tree, because "it built"
+  # and "it works when installed" are different claims.
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install build twine
+
+      - run: python -m build
+
+      - run: twine check dist/*
+
+      - name: Install the wheel clean and run the command
+        run: |
+          python -m venv /tmp/fresh
+          /tmp/fresh/bin/pip install --quiet dist/*.whl
+          cd /tmp && /tmp/fresh/bin/meshterm --help > /dev/null
+          echo "the wheel installs and the console script runs"

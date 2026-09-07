@@ -9,6 +9,22 @@ allowed to change behaviour, not just add to it.
 
 ## [Unreleased]
 
+### Changed
+
+- The distribution is named `mesh-term`. PyPI prohibits `meshterm` (pypi/support#12162),
+  and the name you install is the only thing that changes: the import package and the
+  command are both still `meshterm`.
+- `pyproject.toml` carries the metadata a stranger sees on a package page — project URLs,
+  trove classifiers, and the licence as a PEP 639 expression.
+
+### Added
+
+- Continuous integration. Lint once, tests across seven OS and Python combinations, and a
+  packaging job that installs the built wheel into a clean environment and runs the command
+  from outside the source tree.
+- A release workflow with no automatic trigger, which publishes nothing until a human runs
+  it on purpose and types the version.
+
 ## [0.2.0] — 2026-09-07
 
 The first version to carry a changelog. Everything before it is in the commit log and is
