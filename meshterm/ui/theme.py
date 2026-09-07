@@ -507,6 +507,7 @@ _NODE_HUE_VAL = 0.95
 #: hex a caller can parse into an RGB (the map canvas and the mesh walk read the hue back
 #: out of the style string), and so every downsample on the way out — Rich's, and the
 #: fold's :func:`_quantize_sgr` — lands on that exact slot rather than guessing.
+# fmt: off
 _NODE_SLOT_HEXES: tuple[str, ...] = (
     "#ff5555",   # 9  red      —   0°
     "#ffff55",   # 11 yellow   —  60°
@@ -515,6 +516,7 @@ _NODE_SLOT_HEXES: tuple[str, ...] = (
     "#5555ff",   # 12 blue     — 240°
     "#ff55ff",   # 13 magenta  — 300°
 )
+# fmt: on
 
 
 def node_style(key: str) -> str:
@@ -631,6 +633,7 @@ def name_style(name: str, key: str | None = None) -> str:
 #: and never appear here. ``glyph()`` consumes this table at explicit icon call sites
 #: (a 1-cell lane the screen composes); the render-boundary fold consumes it for
 #: everything else, padding to the emoji's measured width so layout survives.
+# fmt: off
 _GLYPH_MAP: dict[str, str] = {
     # Packet classes (KIND_ICONS)
     "📢": "☼",   # advert — a node radiating its presence
@@ -698,6 +701,7 @@ _GLYPH_MAP: dict[str, str] = {
     "⏳": "…",   # pending/waiting
     "＋": "+",   # fullwidth plus (channels' add row)
 }
+# fmt: on
 
 
 def glyph(icon: str) -> str:
@@ -739,6 +743,7 @@ _FOLD_ALLOWED: frozenset[int] = FONT_CODEPOINTS.union(range(0x00, 0x20))
 #: fold's translation table (storage is never touched). Characters *in* the font —
 #: ``— … ⋯ ⚠ ⌫ ⇧ ⚙ ↻ ◷ ⌖ ⚿ ← ↑ → ↓ ↔ ↕ • ·`` and the Cyrillic block — never appear
 #: here: they pass through untranslated.
+# fmt: off
 _FOLD_SINGLES: dict[str, str] = {
     "–": "-", "−": "-", "‒": "-", "―": "—",
     "‘": "'", "’": "'", "‚": "'", "“": '"', "”": '"', "„": '"',
@@ -758,6 +763,7 @@ _FOLD_SINGLES: dict[str, str] = {
     # VS16, ZWJ, ZWSP.
     "️": "", "‍": "", "​": "",
 }
+# fmt: on
 
 #: Built lazily on first fold: ``str.translate`` table = accent folds (NFKD, computed
 #: over the Latin ranges once) + :data:`_FOLD_SINGLES` + the emoji map padded to each

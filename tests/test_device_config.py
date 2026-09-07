@@ -744,7 +744,7 @@ async def test_a_refused_removal_is_shown_and_the_contact_stays() -> None:
 
 
 async def test_a_contact_the_device_never_held_is_still_removed_here() -> None:
-    """"Not on the device" is not a refusal — the removal finishes on our side, and says so.
+    """“Not on the device” is not a refusal — the removal finishes on our side, and says so.
 
     The list a screen removes from is the union of the device's table and the contacts
     MeshTerm remembers for it, so the entry may only ever have existed on our side (or the

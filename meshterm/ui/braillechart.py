@@ -251,9 +251,8 @@ def activity_sparkline(
         else:
             height = min(4, max(1, round(count / scale * 4)))
             bars.append((0, height - 1))
-    return _assemble(
-        bars, [float(c) for c in reversed(window)], 1, 0, style, "faint", per_column
-    )[0]
+    rows = _assemble(bars, [float(c) for c in reversed(window)], 1, 0, style, "faint", per_column)
+    return rows[0]
 
 
 #: Default percentile :func:`activity_peak` reads its ceiling at, in place of the raw

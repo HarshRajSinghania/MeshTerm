@@ -23,6 +23,7 @@ from __future__ import annotations
 #: 512 glyphs — aliases (the rounded corners onto the square ones, ``⋯`` onto ``…``) and
 #: shared slots give a few glyphs more than one codepoint. Verified against a live table
 #: dump of the installed font (2026-08-01, post-P3 build).
+# fmt: off
 FONT_RANGES: tuple[tuple[int, int], ...] = (
     (0x0020, 0x007F), (0x00A0, 0x00A0), (0x00A7, 0x00A7), (0x00A9, 0x00A9),
     (0x00B0, 0x00B0), (0x00B2, 0x00B2), (0x00B6, 0x00B7), (0x03C0, 0x03C0),
@@ -46,6 +47,7 @@ FONT_RANGES: tuple[tuple[int, int], ...] = (
     (0x2699, 0x2699), (0x26A0, 0x26A0), (0x26BF, 0x26BF), (0x2713, 0x2713),
     (0x2717, 0x2717), (0x276F, 0x276F), (0x2800, 0x28FF), (0xFFFD, 0xFFFD),
 )
+# fmt: on
 
 #: Every codepoint the console font can draw, as one frozen set (built once at import;
 #: 520 members, so the set is small and the per-character membership test is a dict hit).

@@ -96,6 +96,7 @@ _PAYLOAD_GLOSS = {
 #: parsed into "class"/"route", the channel crypto handled by
 #: :meth:`PacketViewer._decrypt_rows`, or an advert field duplicating ``node``/
 #: ``lat``/``lon``/etc.) — skipped so the generic dump doesn't repeat them.
+# fmt: off
 _RAW_ROW_SKIP = frozenset({
     "node", "name", "kind", "snr", "rssi", "lat", "lon", "path", "node_type",
     "observed_at", "text",
@@ -107,6 +108,7 @@ _RAW_ROW_SKIP = frozenset({
     "dest_hash", "src_hash", "src_key", "trace_tag", "ack_crc", "trace_snrs",
     "adv_key", "adv_name", "adv_type", "adv_lat", "adv_lon",
 })
+# fmt: on
 
 #: Display style per packet class, shared by every packet list and the viewer.
 KIND_STYLES = {

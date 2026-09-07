@@ -295,6 +295,7 @@ def test_heat_ladder_walks_jps_seven_slots_in_order() -> None:
     from meshterm.ui.widgets import _recency_style
 
     set_platform(PICOCALC)
+    # fmt: off
     expected = [
         (60, 15), (299, 15),          # under 5 minutes  — white
         (300, 11), (3599, 11),        # 5 minutes        — yellow
@@ -304,6 +305,7 @@ def test_heat_ladder_walks_jps_seven_slots_in_order() -> None:
         (2592000, 7), (31535999, 7),  # 1 month          — light grey
         (31536000, 8), (None, 8),     # 1 year, and never — dark grey
     ]
+    # fmt: on
     for secs, slot in expected:
         style = MESH_THEME_16.styles[_recency_style(secs)]
         assert style.color is not None and style.color.number == slot, (secs, style)
