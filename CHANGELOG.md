@@ -9,6 +9,18 @@ allowed to change behaviour, not just add to it.
 
 ## [Unreleased]
 
+### Fixed
+
+- The formatter is pinned. `ruff>=0.4` meant CI installed a newer ruff than a laptop had,
+  and the two disagreed about whether the tree was clean — 0.16 formats Python blocks
+  inside Markdown and 0.15 doesn't, so the first CI run went red on a file that was fine
+  locally. An unpinned formatter isn't a gate.
+- `docs/` is out of ruff's reach. The survey documents quote code as it looked on a past
+  date, in fragments that were never whole programs; a formatter rewriting a quotation
+  edits the record.
+- The installer builds only run for `main`. Every Dependabot branch that bumped an action
+  touched the workflow file, matched its path filter, and started a five-platform build.
+
 ### Changed
 
 - The distribution is named `mesh-term`. PyPI prohibits `meshterm` (pypi/support#12162),

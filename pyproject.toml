@@ -51,7 +51,10 @@ dependencies = [
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
-    "ruff>=0.4",
+    # Pinned to a minor line, not floated. A formatter that drifts between machines is
+    # not a gate: 0.16 formats Python inside Markdown and 0.15 does not, so an
+    # unpinned `ruff>=0.4` had CI and a laptop disagreeing about a clean tree.
+    "ruff>=0.16.6,<0.17",
 ]
 
 [project.urls]
@@ -74,8 +77,12 @@ packages = ["meshterm"]
 [tool.ruff]
 line-length = 100
 target-version = "py310"
-# Helper scripts for the Claude skills; they are not part of the package.
-extend-exclude = [".claude"]
+# Helper scripts for the Claude skills; they are not part of the package. And `docs/`,
+# which holds dated survey documents: ruff formats Python blocks inside Markdown, and the
+# code they quote is an excerpt of how a file looked on a past date. Reformatting a
+# quotation edits the record — and the excerpts are call fragments, not whole programs, so
+# the formatter's idea of "fixed" turns them into something that was never there.
+extend-exclude = [".claude", "docs"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "D"]

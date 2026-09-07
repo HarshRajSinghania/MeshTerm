@@ -14,6 +14,10 @@ on:
   # Only when the packaging itself changes. Three operating systems is not something to
   # spend on every commit while the repository is private and minutes are metered.
   push:
+    # `main` only. Without this, every Dependabot branch that touches this file — which
+    # is every action bump — starts a five-platform build, and three of those legs are
+    # billed at 2x and 10x.
+    branches: [main]
     paths:
       - "packaging/**"
       - ".github/workflows/installers.yml"
