@@ -14,7 +14,7 @@ Everything the radio overhears is recorded to a local database from the moment i
 
 The project had humble beginnings as a set of scripts in early 2026. As time passed, quality-of-life features were added, and at some point, the logical next step was to build a complete MeshCore client with all the features I felt were missing in other offerings.
 
-I wanted something I could run from my computer. I wanted it to run on Windows, MacOS, and Linux, and I wanted it to work with any MeshCore companion device, via Bluetooth, USB, or TCP. I wanted a mouseless keyboard-driven MeshCore experience. I wanted something retro-futuristic. I wanted to push the envelope of what can be done on a text terminal, while keeping system requirements low so it could run on an older computer or a lower-end System on a Chip *(SoC)*.
+I wanted something I could run from my computer. I wanted it to run on Windows, macOS, and Linux, and I wanted it to work with any MeshCore companion device, via Bluetooth, USB, or TCP. I wanted a mouseless keyboard-driven MeshCore experience. I wanted something retro-futuristic. I wanted to push the envelope of what can be done on a text terminal, while keeping system requirements low so it could run on an older computer or a lower-end System on a Chip *(SoC)*.
 
 ## Platform-specific developments
 

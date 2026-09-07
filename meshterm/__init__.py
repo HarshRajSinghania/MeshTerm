@@ -1,6 +1,6 @@
 """MeshTerm is a full-featured TUI-based MeshCore client for your terminal.
 
-Supports USB, BLE and TCP companion connection. For Windows, MacOS and Linux.
+Supports USB, Bluetooth and TCP companion connection. For Windows, macOS and Linux.
 """
 
 from datetime import datetime
