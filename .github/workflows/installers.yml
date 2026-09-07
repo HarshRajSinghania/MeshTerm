@@ -44,8 +44,11 @@ jobs:
           - { os: windows-latest, label: windows-x64, ext: ".exe" }
           - { os: macos-latest, label: macos-arm64, ext: "" }
           # Apple silicon builds do not run on Intel Macs, and plenty of people still
-          # have one. macos-13 is the last x86_64 runner image.
-          - { os: macos-13, label: macos-x64, ext: "" }
+          # have one. `macos-15-intel` rather than `-26-intel` for the same reason the
+          # Python here is 3.10: built against an older system, runs on more machines.
+          # (Not `macos-13` — that image is retired, and a job asking for it does not
+          # fail, it queues forever and holds the whole run open behind it.)
+          - { os: macos-15-intel, label: macos-x64, ext: "" }
           - { os: ubuntu-22.04, label: linux-x64, ext: "" }
           # For the uConsole and other 64-bit ARM handhelds. ARM runners are free on
           # public repositories; on a private one this leg may sit unclaimed until the
