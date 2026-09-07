@@ -62,6 +62,7 @@ def _sgr(rgb: tuple[int, int, int]) -> str:
 
 
 def test_no_layers_render_nothing() -> None:
+    """Nothing to draw means no rows at all, not a blank canvas."""
     assert render_path_graph(
         [], 60, glyph_of=_glyph, label_of=lambda n: None, label_rgb_of=lambda n: WHITE
     ) == []

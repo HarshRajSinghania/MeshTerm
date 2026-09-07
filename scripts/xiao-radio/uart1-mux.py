@@ -30,6 +30,11 @@ UART1_RX_SIG = 0x02
 
 
 def poke(addr: int, value: int) -> None:
+    """Write one 32-bit word to a physical address, through a one-page /dev/mem map.
+
+    Needs root, and the address must be a register: this maps the page it falls in and
+    writes straight to it.
+    """
     page = addr & ~0xFFF
     off = addr - page
     fd = os.open("/dev/mem", os.O_RDWR | os.O_SYNC)
@@ -44,6 +49,11 @@ def poke(addr: int, value: int) -> None:
 
 
 def main() -> None:
+    """Point the two pads at UART1 and switch them to matrix mode.
+
+    The four writes are the whole job, and re-running them changes nothing, so this is
+    safe to run on every boot. See the module docstring for the register layout.
+    """
     poke(RMIO + 0x80 + 0 * 4, (0x7F << 16) | UART1_TX_SIG)  # gpio0-0 -> UART1 TX
     poke(RMIO + 0x80 + 1 * 4, (0x7F << 16) | UART1_RX_SIG)  # gpio0-1 -> UART1 RX
     poke(PMU + 0x00, (0xFF << 16) | 0x77)  # iomux pins 0,1 -> matrix mode (7)

@@ -76,6 +76,7 @@ def test_section_heading_wears_the_dashes_and_accent() -> None:
 
 
 def test_changes_phrase_pluralizes() -> None:
+    """One staged change is singular; any other count is plural."""
     assert changes_phrase(1) == "1 staged change"
     assert changes_phrase(2) == "2 staged changes"
 

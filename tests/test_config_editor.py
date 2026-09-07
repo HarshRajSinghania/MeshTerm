@@ -103,21 +103,25 @@ def _table_lines(width: int, **kwargs: Any) -> list[str]:
 
 
 def test_config_table_gives_the_description_lane_the_widest_share() -> None:
+    """DESCRIPTION takes the widest lane, because it carries the widest content.
+
+    Sizing the other two lanes to their content and leaving DESCRIPTION the remainder
+    gave it 19 of the 72 cells, and every explanation wrapped three deep.
+    """
     lines = _table_lines(72)
     header = next(line for line in lines if line.lstrip().startswith("SETTING"))
     setting = header.index("CURRENT")
     current = header.index("DESCRIPTION") - setting
     description = 72 - header.index("DESCRIPTION")
-    # DESCRIPTION carries the systematically widest content, so it takes the widest lane
-    # — not what two lanes that sized themselves to their content left over. Its share
-    # used to be 19 of the 72 cells, and every explanation wrapped three deep.
     assert description >= setting > current
     assert description >= 26
 
 
 def test_config_table_keeps_every_row_within_three_lines() -> None:
-    # The whole point of the reallocation: no setting's explanation sprawls further than
-    # three lines at the readability standard.
+    """No setting's explanation sprawls further than three lines at the readable width.
+
+    That is the whole point of the reallocation.
+    """
     lines = _table_lines(72)
     body = [line for line in lines if line.strip() and not line.startswith("──")]
     runs, run = [], 0
@@ -132,8 +136,11 @@ def test_config_table_keeps_every_row_within_three_lines() -> None:
 
 
 def test_config_table_drops_the_description_lane_where_it_cannot_fit() -> None:
-    # PicoCalc's 53 columns hold the setting and its value and nothing more; the labels
-    # keep their natural width there, nothing competing for the cells.
+    """At 53 columns the description lane is dropped rather than squeezed.
+
+    The setting and its value are all that fit, and with nothing competing for the
+    cells the labels keep their natural width.
+    """
     set_platform(PICOCALC)
     try:
         lines = _table_lines(PICOCALC.readable_cols)
@@ -146,7 +153,7 @@ def test_config_table_drops_the_description_lane_where_it_cannot_fit() -> None:
 
 
 def test_config_table_drops_the_description_lane_beside_a_staged_column() -> None:
-    # Three narrow lanes leave no room for prose, so the staged view is values alone.
+    """A staged column costs the description lane too: three narrow lanes leave no room."""
     lines = _table_lines(72, pending={"tx_power": 14})
     header = next(line for line in lines if line.lstrip().startswith("SETTING"))
     assert "STAGED" in header and "DESCRIPTION" not in header
@@ -180,7 +187,10 @@ def _info_screen(snapshot: dict) -> DeviceInfoScreen:
 
 
 def test_the_pin_is_bullets_until_it_is_asked_for() -> None:
-    # One bullet per digit — the app's own mask glyph, the one a password prompt types in.
+    """The PIN reads as bullets until something asks for it.
+
+    One bullet per digit, in the app's own mask glyph — the one a password prompt types.
+    """
     masked = _pin_row(_table_lines(72))
     assert f"{MASK_MARK * 6}" in masked
     assert "123456" not in masked
@@ -188,8 +198,11 @@ def test_the_pin_is_bullets_until_it_is_asked_for() -> None:
 
 
 def test_the_mask_shows_the_field_not_the_pins_length() -> None:
-    # A stored secret draws its field: a one-digit PIN behind one bullet would have told
-    # you how many digits to guess (and read as a stray dot besides).
+    """The mask draws the field's width, not the PIN's.
+
+    A one-digit PIN behind a single bullet would tell you how many digits to guess —
+    and would read as a stray dot besides.
+    """
     short = {**_SNAPSHOT, "ble_pin": 0}
     console = Console(
         width=72, file=io.StringIO(), theme=active_theme(), legacy_windows=False
@@ -200,7 +213,10 @@ def test_the_mask_shows_the_field_not_the_pins_length() -> None:
 
 
 def test_a_device_with_no_pin_has_nothing_to_conceal() -> None:
-    # "?" is an absence, not a secret: masking it would claim there is something behind it.
+    """A device with no PIN shows ``?`` unmasked.
+
+    An absence is not a secret, and masking it would claim there is something behind it.
+    """
     snapshot = {k: v for k, v in _SNAPSHOT.items() if k != "ble_pin"}
     console = Console(
         width=72, file=io.StringIO(), theme=active_theme(), legacy_windows=False
@@ -212,6 +228,7 @@ def test_a_device_with_no_pin_has_nothing_to_conceal() -> None:
 
 
 def test_the_chord_uncovers_the_pin_and_puts_it_back() -> None:
+    """The reveal chord uncovers the PIN, and the same key puts it away again."""
     screen = _info_screen(_SNAPSHOT)
     assert MASK_MARK in _pin_row(screen.render_body(72))
 
@@ -223,7 +240,10 @@ def test_the_chord_uncovers_the_pin_and_puts_it_back() -> None:
 
 
 def test_the_lane_chip_and_the_key_are_one_behaviour() -> None:
-    # The PicoCalc's chip dispatches the action the letter does, not a second copy of it.
+    """The PicoCalc's lane chip runs the action the letter runs, and relabels with it.
+
+    One behaviour reached two ways, not a second copy of it.
+    """
     screen = _info_screen(_SNAPSHOT)
     assert screen.fkey_lane[2].label == "Reveal"
 
@@ -233,6 +253,7 @@ def test_the_lane_chip_and_the_key_are_one_behaviour() -> None:
 
 
 def test_the_footer_names_what_the_press_would_do_now() -> None:
+    """The footer says what the key would do now: show while hidden, hide while shown."""
     screen = _info_screen(_SNAPSHOT)
     assert f"{REVEAL_KEY} show PIN" in screen.footer_hint
     screen.handle("reveal")
@@ -240,8 +261,11 @@ def test_the_footer_names_what_the_press_would_do_now() -> None:
 
 
 def test_a_page_with_no_pin_advertises_no_key_for_it() -> None:
-    # The standing rule: a footer never names a key that would do nothing, and a lane slot
-    # for an action this screen doesn't have stays empty rather than dim.
+    """A page with no PIN advertises no key for it, in the footer or on the lane.
+
+    The standing rule: a footer never names a key that would do nothing, and a lane
+    slot for an action this screen does not have stays empty rather than dim.
+    """
     screen = _info_screen({k: v for k, v in _SNAPSHOT.items() if k != "ble_pin"})
     assert "PIN" not in screen.footer_hint
     assert screen.fkey_lane[2] is None
@@ -250,7 +274,10 @@ def test_a_page_with_no_pin_advertises_no_key_for_it() -> None:
 
 
 def test_uncovering_the_pin_keeps_the_reader_where_they_were() -> None:
-    # Nothing reflows — six cells become six cells — so the scroll must not jump.
+    """Uncovering the PIN leaves the scroll where the reader put it.
+
+    Nothing reflows — six cells become six cells — so nothing should move.
+    """
     screen = _info_screen(_SNAPSHOT)
     screen.note_viewport(10)
     screen.render_body(72)
@@ -275,16 +302,21 @@ def _editor(snapshot: dict, pending: dict | None = None) -> _ConfigMenu:
 
 
 def test_the_editor_masks_the_pin_row_too() -> None:
-    # The same value on the page next door: concealed on the same terms, or the reader
-    # only has to walk one menu over to undo it.
+    """The editor conceals the same value on the same terms as the page next door.
+
+    Otherwise the reader only has to walk one menu over to undo it.
+    """
     menu = _editor(_SNAPSHOT)
     assert MASK_MARK in _pin_row(menu.render_body(72))
     assert "123456" not in _pin_row(menu.render_body(72))
 
 
 def test_a_staged_pin_is_concealed_as_well_as_the_saved_one() -> None:
-    # A PIN typed a moment ago is still a PIN; a row that uncovered itself the instant it
-    # was edited would leave the secret up for the rest of the staging session.
+    """A PIN typed a moment ago is concealed too, staged and saved alike.
+
+    A row that uncovered itself the instant it was edited would leave the secret up
+    for the rest of the staging session.
+    """
     menu = _editor(_SNAPSHOT, {"device_pin": 424242})
     row = _pin_row(menu.render_body(72))
     assert f"{MASK_MARK * 6} → {MASK_MARK * 6}" in row
@@ -293,8 +325,11 @@ def test_a_staged_pin_is_concealed_as_well_as_the_saved_one() -> None:
 
 
 def test_the_editor_reveals_on_the_same_chord_as_the_info_page() -> None:
-    # One key for the concept, both places — the editor's letters are find-as-you-type,
-    # which is why it can't be a bare one.
+    """The editor reveals on the same chord as the info page: one key for the concept.
+
+    It has to be a chord rather than a bare letter, because the editor's letters are
+    find-as-you-type.
+    """
     menu = _editor(_SNAPSHOT)
     assert f"{REVEAL_KEY} show PIN" in menu.footer_hint
     assert menu.fkey_lane[2].label == "Reveal"
@@ -306,8 +341,11 @@ def test_the_editor_reveals_on_the_same_chord_as_the_info_page() -> None:
 
 
 def test_revealing_keeps_the_filter_and_the_row_the_reader_was_on() -> None:
-    # The rows are data, so the toggle refreshes them in place rather than rebuilding the
-    # screen under a reader who had narrowed it and picked a row.
+    """Revealing keeps the typed filter and the row the reader had picked.
+
+    The rows are data, so the toggle refreshes them in place rather than rebuilding
+    the screen under a reader who had narrowed it.
+    """
     menu = _editor(_SNAPSHOT)
     for ch in "telemetry":
         menu.handle("text", ch)
@@ -320,6 +358,7 @@ def test_revealing_keeps_the_filter_and_the_row_the_reader_was_on() -> None:
 
 
 def test_an_editor_over_a_device_with_no_pin_offers_no_reveal() -> None:
+    """An editor over a device with no PIN offers no reveal either, footer or lane."""
     menu = _editor({k: v for k, v in _SNAPSHOT.items() if k != "ble_pin"})
     assert "PIN" not in menu.footer_hint
     assert menu.fkey_lane[2] is None

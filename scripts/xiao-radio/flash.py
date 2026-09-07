@@ -118,6 +118,12 @@ def check_drive_is_ours(drive, force=False):
 
 
 def main():
+    """Put the XIAO in its bootloader and copy the firmware onto the drive it exposes.
+
+    Takes the .uf2 to flash, defaulting to the one built beside this script, and
+    refuses to write to a drive that turns out to be some other board unless
+    ``--force`` says otherwise.
+    """
     args = [a for a in sys.argv[1:] if a != "--force"]
     force = "--force" in sys.argv[1:]
     uf2 = args[0] if args else os.path.join(HERE, "meshcore-xiao-radio.uf2")

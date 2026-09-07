@@ -67,6 +67,7 @@ class _StubContext:
 
 @pytest.fixture()
 def repo(tmp_path: Path) -> Repository:
+    """A Repository on a scratch database, closed when the test finishes."""
     r = Repository(tmp_path / "chat.db")
     yield r
     r.close()

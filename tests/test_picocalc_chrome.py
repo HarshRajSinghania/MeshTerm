@@ -32,6 +32,11 @@ def _slot_style(row: Text, index: int) -> str:
 
 
 def test_borderless_frame_swaps_the_panel_for_a_title_bar() -> None:
+    """On the PicoCalc there is no Panel; a one-row title bar stands in for the whole border.
+
+    It carries the rule, the title, and the clip arrow. No border column is spent, so the
+    body starts at column 0 and owns all 53 cells.
+    """
     set_platform(PICOCALC)
     composed = frame.compose_base(Text("hdr"), _screen(), "hint", 53, 26).split("\n")
     assert len(composed) == 26
@@ -136,6 +141,7 @@ def test_the_esc_hint_gives_way_before_it_crowds_the_title() -> None:
 
 
 def test_bordered_frame_is_unchanged_on_regular() -> None:
+    """Regular keeps its Panel — the borderless frame is the console's shape, not the app's."""
     set_platform(REGULAR)
     composed = frame.compose_base(Text("hdr"), _screen(), "hint", 72, 24).split("\n")
     plain = [_plain(line) for line in composed]
@@ -171,6 +177,11 @@ def test_picocalc_header_brands_the_app_not_the_device() -> None:
 
 
 def test_fkey_lane_resolution_and_banks() -> None:
+    """What the shared lane claims, and what it leaves alone.
+
+    The pager takes F4/F5, each jump rides the Shift half of the pager heading for it,
+    F1-F3 stay free for the screen's own verbs, and neither Enter nor Esc takes a slot.
+    """
     lane = DEFAULT_LANE
     # F4/F5 (paging — no physical key at all) carry the pager, and each jump rides the
     # Shift half of the very pager heading for it: Home behind Page ↑, End behind Page ↓.
@@ -185,6 +196,11 @@ def test_fkey_lane_resolution_and_banks() -> None:
 
 
 def test_fkey_lane_text_fits_and_flips() -> None:
+    """The lane fills exactly 53 cells in both banks, and a long label is clipped, not wrapped.
+
+    The directional pair rises toward its outer key, and a free slot draws as a bare
+    key number rather than an empty gap.
+    """
     primary = lane_text(DEFAULT_LANE)
     shifted = lane_text(DEFAULT_LANE, shifted=True)
     assert cell_len(primary.plain) == 53 and cell_len(shifted.plain) == 53
@@ -339,6 +355,7 @@ def test_host_battery_reads_the_sysfs_supply(tmp_path, monkeypatch) -> None:
 
 
 def test_dialog_gate_shrinks_on_picocalc() -> None:
+    """A dialog is allowed fewer cells on the PicoCalc, the screen being narrower."""
     from meshterm.ui.surface import _dialog_max_cells
 
     set_platform(PICOCALC)

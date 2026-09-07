@@ -617,6 +617,12 @@ class ClusterTextControl(FormattedTextControl):
     """
 
     def create_content(self, width: int, height: int | None):  # type: ignore[override]
+        """The base class's content, with each line's ZWJ sequences joined into one glyph.
+
+        The joining is wrapped around the returned object's line lookup and memoised
+        behind it, because prompt_toolkit hands back the same content object paint after
+        paint — walking every line of every frame would cost far more than it saves.
+        """
         content = super().create_content(width, height)
         # The base class caches its ``UIContent`` per (fragments, width, cursor), so the same
         # object comes back paint after paint: wrap its line lookup once, and memoise the merge

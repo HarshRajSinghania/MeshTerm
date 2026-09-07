@@ -69,6 +69,11 @@ class FastRenderer(Renderer):
     """
 
     def __init__(self, *args, frame_source: Callable[[], str | None], **kwargs) -> None:
+        """Wrap the stock renderer, starting with no remembered frame.
+
+        With nothing to compare against, the first paint is always a full one; the
+        ``frame_source`` argument is described in the class docstring above.
+        """
         super().__init__(*args, **kwargs)
         self._frame_source = frame_source
         self._prev_rows: list[str] | None = None

@@ -83,6 +83,7 @@ class Choice:
     hscroll_from: int = 0
 
     def __post_init__(self) -> None:
+        """Read the title callable's arity once, so no paint has to ask again."""
         # The callable form's arity, read once — see _wants_width.
         self._title_wants_width = callable(self.title) and _wants_width(self.title)
 

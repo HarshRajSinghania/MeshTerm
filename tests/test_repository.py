@@ -13,6 +13,7 @@ from meshterm.persistence.repository import Repository
 
 @pytest.fixture()
 def repo(tmp_path: Path) -> Repository:
+    """A Repository on a scratch database, closed when the test finishes."""
     r = Repository(tmp_path / "test.db")
     yield r
     r.close()

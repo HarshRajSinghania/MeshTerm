@@ -11,6 +11,7 @@ def _reset() -> None:
 
 
 def test_shift_down_reflects_the_raw_flag() -> None:
+    """``shift_down()`` reports the flag the watcher last set, with nothing in between."""
     _reset()
     try:
         assert modifier_watch.shift_down() is False

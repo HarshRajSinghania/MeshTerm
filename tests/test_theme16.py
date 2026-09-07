@@ -155,6 +155,11 @@ def test_glyph_map_targets_never_widen_their_icon() -> None:
 
 
 def test_glyph_is_identity_on_regular_and_compact_on_picocalc() -> None:
+    """Emoji pass through on regular and become font-native marks on the console.
+
+    Node and status marks are in the console font already, so they cross unchanged on
+    both platforms.
+    """
     set_platform(REGULAR)
     assert glyph("📡") == "📡"
     set_platform(PICOCALC)
@@ -174,6 +179,11 @@ def test_fold_is_identity_on_regular_even_after_picocalc_used_it() -> None:
 
 
 def test_fold_strips_accents_and_preserves_cell_widths() -> None:
+    """The fold leaves only characters the console font has, without changing the width.
+
+    An accent drops to its base letter and an emoji becomes its mapped mark, each in
+    place, so nothing downstream has to measure the row again.
+    """
     set_platform(PICOCALC)
     for text in ("café ⚠", "Ĉu vi paroläs", "📡 Advert", "🗑 Clear", "…", "npo Waymarker 🇨🇦"):
         folded = fold_text(text)
@@ -190,6 +200,7 @@ def test_fold_replaces_the_unmappable_at_width() -> None:
 
 
 def test_fold_keeps_ansi_sequences_intact() -> None:
+    """The fold rewrites text only: colour escapes and newlines cross it untouched."""
     set_platform(PICOCALC)
     line = "\x1b[1;93mwarn é\x1b[0m\nnext"
     folded = fold_text(line)
@@ -211,6 +222,7 @@ def test_fold_quantizes_embedded_truecolor_to_the_slots() -> None:
 
 
 def test_fold_drops_zero_width_machinery() -> None:
+    """Variation selectors and zero-width joiners are dropped — they have no cell to occupy."""
     set_platform(PICOCALC)
     assert fold_text("🕸️") == fold_text("🕸")
     assert "‍" not in fold_text("a‍b")

@@ -22,6 +22,7 @@ class FakeDevice:
     """A stand-in device that counts how often each cached read hits the wire."""
 
     def __init__(self) -> None:
+        """Start with every call count at zero and no fixed contact table."""
         self.contacts_calls = 0
         self.self_info_calls = 0
         self.mode_calls = 0
@@ -30,6 +31,11 @@ class FakeDevice:
         self.contact_rows: list[Contact] | None = None  # fixed table, when a test needs one
 
     async def get_contacts(self) -> list:
+        """The contact list, counting the call.
+
+        Either the fixed table a test installed, or a single contact whose name carries
+        the call number — so a second read is visible in what comes back.
+        """
         self.contacts_calls += 1
         if self.contact_rows is not None:
             return list(self.contact_rows)
@@ -37,22 +43,31 @@ class FakeDevice:
         return [Contact(name=f"contact-{self.contacts_calls}")]
 
     async def get_self_info(self) -> dict:
+        """A fixed self-description, counting the call."""
         self.self_info_calls += 1
         return {"name": "node", "tx_power": 20}
 
     async def get_path_hash_mode(self) -> int:
+        """A fixed path hash mode, counting the call."""
         self.mode_calls += 1
         return 2
 
     async def get_channel(self, idx: int):
-        # One configured slot at index 0, then the firmware "rejects" index 1 to end the probe.
+        """One configured slot at index 0, then a raised error, counting each call.
+
+        Refusing the next index is how the firmware answers a slot it does not have,
+        and it is what stops the caller walking past the last one.
+        """
         self.channel_calls += 1
         if idx == 0:
             return {"channel_name": "public", "channel_secret": b"\x00" * 16}
         raise RuntimeError("out of range")
 
     async def channel_capacity(self) -> int:
-        # A fixed hardware constant; the cache must read it exactly once for the session.
+        """The slot count, counting the call.
+
+        A fixed hardware constant, so the cache must read it exactly once per session.
+        """
         self.capacity_calls += 1
         return 8
 

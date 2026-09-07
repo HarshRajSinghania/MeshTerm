@@ -181,6 +181,11 @@ class CourierOutboxScreen(SelectScreen):
     """
 
     def __init__(self, ctx: AppContext, *, default: Any = None) -> None:
+        """Open the outbox on the store's current entries, remembering their shape.
+
+        The remembered shape is what :meth:`refresh` compares against, so a tick that
+        changed nothing leaves the highlight exactly where the reader put it.
+        """
         self._ctx = ctx
         self._shape = self._fingerprint()
         super().__init__(

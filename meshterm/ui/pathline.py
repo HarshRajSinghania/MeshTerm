@@ -415,6 +415,10 @@ class PathLine:
         separator: str = _ARROW,
         empty: str = "direct",
     ) -> None:
+        """Hold the hops and the drawing choices; nothing is measured or drawn yet.
+
+        Every argument is described in the class docstring above.
+        """
         self._hops = list(hops)
         self._mode = mode
         self._separator = separator
