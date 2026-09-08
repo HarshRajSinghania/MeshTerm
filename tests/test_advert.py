@@ -194,7 +194,7 @@ async def test_advert_cadence_op_writes_the_store(ctx: AppContext) -> None:
     device = await ctx.device()
     ctx._ui = _NoteUi()  # type: ignore[assignment]
     snapshot = dict(await device.get_self_info())
-    changes, _ = await apply_ops(
+    changes, _artifacts, _report = await apply_ops(
         ctx, device, snapshot, [("advert_cadence", True, 168), ("advert_cadence", False, OFF)]
     )
     assert changes == 2

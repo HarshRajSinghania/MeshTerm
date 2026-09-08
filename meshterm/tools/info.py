@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from datetime import datetime, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import typer
 from rich.panel import Panel
@@ -13,6 +14,9 @@ from rich.text import Text
 from ..context import AppContext
 from ..core.connection import Device
 from .base import Tool, ToolResult, register
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from ..ui.report import Column, Facts
 
 #: MeshCore advert-type byte -> human-readable node role.
 _ROLES = {1: "companion", 2: "repeater", 3: "room server", 4: "sensor"}
@@ -55,10 +59,10 @@ class InfoTool(Tool):
         # well would be the same table twice under two different spellings.
         session = getattr(ctx.ui, "session", None)
         if session is None:
-            from ..ui import script
-
-            ctx.ui.show(script.pairs(await status_pairs(device, snapshot)))
-            return ToolResult(summary={"name": snapshot.get("name")})
+            return ToolResult(
+                summary={"name": snapshot.get("name")},
+                report=(await status_facts(device, snapshot),),
+            )
 
         from ..ui.device_info_screen import DeviceInfoScreen
 
@@ -99,7 +103,7 @@ async def _read_status(device: Device) -> dict[str, Any]:
 
     The one place the device is asked. Both faces build from what it returns: the menu's
     panel composes prose rows out of these values, the CLI prints them one fact per line
-    (see :func:`_status_panel` and :func:`status_pairs`). Every read is optional —
+    (see :func:`_status_panel` and :func:`status_facts`). Every read is optional —
     firmware predating a query simply contributes nothing — so this works on any device.
 
     Args:
@@ -192,65 +196,123 @@ def _firmware(info: dict) -> str:
     return " ".join(str(info[k]) for k in ("ver", "fw_build") if info.get(k))
 
 
-async def status_pairs(device: Device, snapshot: dict) -> list[tuple[str, str]]:
-    """The device's live status as scripted key/value facts.
+async def status_facts(device: Device, snapshot: dict) -> Facts:
+    """The device's live status as one set of facts.
 
     The CLI's face of :func:`_read_status`. Where the panel writes a phrase per row, this
-    writes one value per key and puts the unit in the key — ``battery_v``, ``uptime_s``,
-    ``noise_floor_dbm`` — so nothing has to be pulled back out of prose. A reading the
-    firmware did not answer for is absent rather than :data:`~meshterm.ui.script.NONE`:
-    these are optional queries, and a missing key says "this device does not report it"
-    where a dash would claim it reported nothing.
+    writes one value per key and puts the unit *in the key* — ``battery_v``, ``uptime_s``,
+    ``noise_floor_dbm`` — so nothing has to be pulled back out of prose. A number never
+    carries a unit in its value, on either face.
+
+    The three second-valued readings and the clock drift carry a **gloss** beside the
+    figure: ``uptime_s  93784  (1d 2h)``. This is the one key/value block that may, and
+    the reason is that it is the one with no ``get`` and no ``set`` behind it — there is no
+    round trip to protect, the key still says what the number counts, and ``93784`` is a
+    reading nobody can hold in their head. The document carries the number alone, having
+    nowhere useful to put a phrase.
+
+    A reading the firmware did not answer for is **left out** of the plain block rather
+    than dashed: these are optional queries, and a missing key says "this device does not
+    report it" where a dash would claim it reported nothing. The document keeps the key and
+    writes ``null`` — see :attr:`~meshterm.ui.report.Facts.omit_absent` for why the two
+    faces disagree here on purpose.
 
     Args:
         device: The connected device to query.
         snapshot: The already-built settings snapshot (for role and identity).
 
     Returns:
-        ``(key, value)`` pairs in reading order.
+        The facts block.
     """
+    from ..ui import fields
+    from ..ui.report import Facts
+
     readings = await _read_status(device)
     info, battery, stats = readings["info"], readings["battery"], readings["stats"]
-    pairs: list[tuple[str, str]] = []
-
-    def add(key: str, value: Any) -> None:
-        """Record one fact, skipping a reading the firmware did not answer for."""
-        if value is not None and value != "":
-            pairs.append((key, str(value)))
-
-    # Identity first: which radio this is. Everything else it *can be set to* is
-    # `config show`'s answer, not this one. The name is not quoted here the way it is in
-    # a listing: a key/value line has exactly two fields, so the value is the rest of the
-    # line whatever it contains, and quotes would only be something to strip back off.
-    add("name", snapshot.get("name"))
-    add("public_key", str(snapshot.get("public_key") or "").lower() or None)
-    adv_type = snapshot.get("adv_type")
-    add("role", _ROLES.get(int(adv_type), f"type {adv_type}") if adv_type is not None else None)
-
-    add("model", info.get("model"))
-    add("firmware", _firmware(info) or None)
 
     level = battery.get("level")
-    add("battery_v", f"{int(level) / 1000:.2f}" if level else None)
-    if battery.get("total_kb"):
-        add("storage_used_kb", battery.get("used_kb", 0))
-        add("storage_total_kb", battery["total_kb"])
-
+    adv_type = snapshot.get("adv_type")
     clock = readings["clock"]
-    if clock:
-        add("clock", datetime.fromtimestamp(clock, tz=timezone.utc).astimezone().isoformat())
-        add("clock_drift_s", clock - int(time.time()))
+    values: dict[str, Any] = {
+        # Identity first: which radio this is. Everything it *can be set to* is
+        # `config show`'s answer, not this one.
+        "name": snapshot.get("name"),
+        "public_key": str(snapshot.get("public_key") or "").lower() or None,
+        "role": _ROLES.get(int(adv_type), f"type {adv_type}") if adv_type is not None else None,
+        "model": info.get("model"),
+        "firmware": _firmware(info) or None,
+        "battery_v": round(int(level) / 1000, 2) if level else None,
+        "storage_used_kb": battery.get("used_kb", 0) if battery.get("total_kb") else None,
+        "storage_total_kb": battery.get("total_kb"),
+        "clock_at": (
+            datetime.fromtimestamp(clock, tz=timezone.utc).astimezone() if clock else None
+        ),
+        "clock_drift_s": (clock - int(time.time())) if clock else None,
+        "uptime_s": stats.get("uptime_secs"),
+        "noise_floor_dbm": stats.get("noise_floor"),
+        "last_rssi_dbm": stats.get("last_rssi"),
+        "last_snr_db": stats.get("last_snr"),
+        "tx_air_s": stats.get("tx_air_secs"),
+        "rx_air_s": stats.get("rx_air_secs"),
+        "packets_sent": stats.get("sent"),
+        "packets_received": stats.get("recv"),
+        "receive_errors": stats.get("recv_errors"),
+    }
+    return Facts(
+        key="info",
+        fields=(
+            fields.word("name", "name"),
+            fields.hexid("public_key", "public_key"),
+            fields.word("role", "role"),
+            fields.word("model", "model"),
+            fields.word("firmware", "firmware"),
+            fields.decimal("battery_v", "battery_v", ".2f"),
+            fields.integer("storage_used_kb", "storage_used_kb"),
+            fields.integer("storage_total_kb", "storage_total_kb"),
+            fields.instant("clock_at", "clock_at"),
+            _glossed("clock_drift_s", _drift_gloss),
+            _glossed("uptime_s", _span_gloss),
+            fields.integer("noise_floor_dbm", "noise_floor_dbm"),
+            fields.integer("last_rssi_dbm", "last_rssi_dbm"),
+            fields.snr("last_snr_db", "last_snr_db"),
+            _glossed("tx_air_s", _span_gloss),
+            _glossed("rx_air_s", _span_gloss),
+            fields.integer("packets_sent", "packets_sent"),
+            fields.integer("packets_received", "packets_received"),
+            fields.integer("receive_errors", "receive_errors"),
+        ),
+        values=values,
+        omit_absent=True,
+    )
 
-    add("uptime_s", stats.get("uptime_secs"))
-    add("noise_floor_dbm", stats.get("noise_floor"))
-    add("last_rssi_dbm", stats.get("last_rssi"))
-    add("last_snr_db", f"{stats['last_snr']:+.1f}" if stats.get("last_snr") is not None else None)
-    add("tx_air_s", stats.get("tx_air_secs"))
-    add("rx_air_s", stats.get("rx_air_secs"))
-    add("packets_sent", stats.get("sent"))
-    add("packets_received", stats.get("recv"))
-    add("receive_errors", stats.get("recv_errors"))
-    return pairs
+
+def _glossed(key: str, gloss: Callable[[int], str]) -> Column:
+    """A seconds reading printed as its own number with a readable span beside it."""
+    from ..ui import script
+    from ..ui.report import Column, Lane
+
+    def cell(value: Any) -> str:
+        if value is None:
+            return script.NONE
+        return f"{value}  ({gloss(int(value))})"
+
+    return Column(key=key, lanes=(Lane(header=key, render=cell),))
+
+
+def _span_gloss(seconds: int) -> str:
+    """``93784`` → ``1d 2h``: the figure a person can hold in their head."""
+    from ..ui import script
+
+    return script.duration(seconds)
+
+
+def _drift_gloss(seconds: int) -> str:
+    """The device clock's error, in the direction a reader would say it."""
+    from ..ui import script
+
+    if abs(seconds) < 2:
+        return "in sync"
+    return f"{script.duration(seconds)} {'fast' if seconds > 0 else 'slow'}"
 
 
 async def _try(read) -> Any | None:

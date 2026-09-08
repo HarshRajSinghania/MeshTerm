@@ -12,7 +12,7 @@ management, factory reset) through the same executor.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import typer
 
@@ -29,6 +29,9 @@ from ..core.device_config import (
     settings_by_category,
 )
 from .base import Tool, ToolResult, register
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from ..ui.report import Block, Facts, Listing, Report
 
 
 @register
@@ -71,11 +74,16 @@ class ConfigTool(Tool):
         device = await ctx.device()
         ops: list[tuple] = list(params.get("ops") or [])
         snapshot = await build_snapshot(device)
-        changes, artifacts = await apply_ops(ctx, device, snapshot, ops)
+        changes, artifacts, report = await apply_ops(ctx, device, snapshot, ops)
 
         plural = "" if changes == 1 else "s"
         message = f"[ok]✓[/ok] applied [brand]{changes}[/brand] change{plural}" if changes else None
-        return ToolResult(summary={"changes": changes}, message=message, artifacts=artifacts)
+        return ToolResult(
+            summary={"changes": changes},
+            message=message,
+            artifacts=artifacts,
+            report=report or None,
+        )
 
     # -- CLI --------------------------------------------------------------------
 
@@ -202,7 +210,7 @@ class ConfigTool(Tool):
 
 async def apply_ops(
     ctx: AppContext, device: Device, snapshot: dict, ops: list[tuple]
-) -> tuple[int, list[str]]:
+) -> tuple[int, list[str], Report]:
     """Execute a list of configuration operation tuples against ``device``.
 
     This is the single executor for every config operation, used both by
@@ -218,35 +226,51 @@ async def apply_ops(
         ops: Operation tuples (see the module docstring).
 
     Returns:
-        A ``(changes, artifacts)`` pair: the number of value changes applied and any
-        file paths produced.
+        A ``(changes, artifacts, report)`` triple: the number of value changes applied,
+        any file paths produced, and the blocks stating what happened (empty for the
+        menu, which shows its own acknowledgements).
     """
     changes = 0
     artifacts: list[str] = []
+    report: list[Any] = []
+    applied: list[dict[str, Any]] = []
     for op in ops:
         kind = op[0]
         if kind == "show":
-            await _show(ctx, device, snapshot)
+            block = await _show(ctx, device, snapshot)
+            if block is not None:
+                report.append(block)
         elif kind == "get":
             # The bare value, nothing else: the caller named the key, so repeating it back
             # is one more thing for `$(meshterm config get name)` to strip off. The same
-            # shape `sysctl -n` and `git config --get` print.
+            # shape `sysctl -n` and `git config --get` print. The document keeps the key,
+            # the type and an enum's label, none of which the bare form has room for.
             spec = get_spec(op[1])
-            ctx.ui.note(_script_value(spec, spec.getter(snapshot)))
+            report.append(_one_setting(spec, spec.getter(snapshot)))
         elif kind == "set":
-            changes += await _apply_setting(ctx, device, op[1], op[2], snapshot)
+            change = await _apply_setting(ctx, device, op[1], op[2], snapshot)
+            if change is not None:
+                applied.append(change)
+                changes += 1
         elif kind == "set_custom":
+            previous = (await device.get_custom_vars()).get(op[1])
             await device.set_custom_var(op[1], op[2])
             ctx.ui.ack(f"[ok]✓[/ok] custom [brand]{op[1]}[/brand] = {op[2]}")
+            applied.append({"key": f"custom.{op[1]}", "previous": previous, "value": op[2]})
             changes += 1
         elif kind == "set_channel":
             await device.set_channel(op[1], op[2], op[3])
             ctx.ui.ack(f"[ok]✓[/ok] channel {op[1]} = [brand]{op[2]}[/brand]")
             changes += 1
+            report.append(_channel_written(op[1], op[2], op[3]))
         elif kind == "backup":
-            artifacts.append(str(await _backup(device, snapshot, op[1])))
+            written, counts = await _backup(device, snapshot, op[1])
+            artifacts.append(str(written))
+            report.append(_backed_up(written, counts))
         elif kind == "restore":
-            changes += await _restore(ctx, device, snapshot, op[1], op[2])
+            done, blocks = await _restore(ctx, device, snapshot, op[1], op[2])
+            changes += done
+            report.extend(blocks)
         elif kind == "advert":
             flood = len(op) > 1 and bool(op[1])
             await device.send_advert(flood)
@@ -257,6 +281,7 @@ async def apply_ops(
                 ctx.advert_store.mark_sent(public_key, flood=flood)
             kind_label = "flood" if flood else "zero-hop"
             ctx.ui.ack(f"[ok]✓[/ok] {kind_label} advertisement sent")
+            report.append(_acted("advert", sent=True, flood=flood))
         elif kind == "advert_cadence":
             from ..core.advert_store import cadence_label
 
@@ -270,35 +295,52 @@ async def apply_ops(
                     f"[brand]{cadence_label(hours)}[/brand]"
                 )
                 changes += 1
+                report.append(_acted("cadence", changes=1, flood=flood, hours=hours))
             else:  # pragma: no cover - SELF_INFO always carries the key on real firmware
                 raise DeviceCommandError(
                     "the device reported no public key — the advert cadence was not saved"
                 )
         elif kind == "share":
-            _share_contact(ctx, snapshot)
+            report.append(_share_contact(ctx, snapshot))
         elif kind == "sync_clock":
             import time as _time
             from datetime import datetime
 
             epoch = int(_time.time())
+            drift = await _try_clock(device)
             await device.set_time(epoch)
             stamp = datetime.fromtimestamp(epoch).astimezone().strftime("%Y-%m-%d %H:%M:%S")
             ctx.ui.ack(f"[ok]✓[/ok] device clock set to [brand]{stamp}[/brand]")
             changes += 1
+            report.append(
+                _acted(
+                    "clock",
+                    changes=1,
+                    set_at=datetime.fromtimestamp(epoch).astimezone(),
+                    # What the clock was off by *before* the set: the fact worth logging,
+                    # and the one this command destroys by succeeding.
+                    drift_s=None if drift is None else drift - epoch,
+                )
+            )
         elif kind == "reboot":
             await device.reboot()
             ctx.ui.ack("[warn]device rebooting[/warn]")
+            report.append(_acted("reboot", rebooted=True))
         elif kind == "export_key":
-            await _export_key(ctx, device, op[1] if len(op) > 1 else None, artifacts)
+            report.append(await _export_key(ctx, device, op[1] if len(op) > 1 else None, artifacts))
         elif kind == "import_key":
             await device.import_private_key(op[1])
             ctx.ui.ack("[ok]✓[/ok] private key imported")
             changes += 1
+            report.append(_acted("imported", changes=1, imported=True))
         elif kind == "factory_reset":
             await device.factory_reset()
             ctx.ui.ack("[err]device factory-reset[/err]")
+            report.append(_acted("factory_reset", factory_reset=True))
         else:  # pragma: no cover - guarded by the call sites that build ops
             raise DeviceCommandError(f"unknown config operation: {kind}")
+    if applied:
+        report.append(_applied(applied))
     # Drop any session-cached facts these ops may have changed, so the next screen re-reads
     # the truth rather than a stale copy (see meshterm.services.device_state.DeviceState). A
     # reboot/reconnect resets the whole cache on its own; these cover the in-place edits.
@@ -311,22 +353,25 @@ async def apply_ops(
             ctx.devstate.invalidate_config()  # self-info fields + path-hash mode
         if "set_channel" in kinds:
             ctx.devstate.invalidate_channels()
-    return changes, artifacts
+    return changes, artifacts, tuple(report)
 
 
 async def _apply_setting(
     ctx: AppContext, device: Device, key: str, raw: Any, snapshot: dict
-) -> int:
+) -> dict[str, Any]:
     """Parse, apply and record one setting; keep ``snapshot`` consistent.
 
     The local snapshot is updated with the new value so a later coupled change in the
     same batch (e.g. another radio field) is rebuilt from current values.
 
     Returns:
-        ``1`` (a change was applied).
+        The change, as ``{"key", "previous", "value"}``. The *previous* value is read off
+        the snapshot before it is overwritten: a caller managing a machine's configuration
+        wants to know what moved, and it is gone the moment this returns.
     """
     spec = get_spec(key)
     value = parse_value(spec, raw, snapshot)
+    previous = spec.getter(snapshot)
     await spec.apply(device, value, snapshot)
     snapshot[key] = value
     # Remember what we set, keyed by the device's own public key, so a forgetful device (a
@@ -335,10 +380,10 @@ async def _apply_setting(
     if ctx.settings_store is not None:
         ctx.settings_store.remember(str(snapshot.get("public_key") or ""), key, value)
     ctx.ui.ack(f"[ok]✓[/ok] [brand]{key}[/brand] = {format_value(spec, value)}")
-    return 1
+    return {"key": key, "previous": previous, "value": value}
 
 
-async def _show(ctx: AppContext, device: Device, snapshot: dict) -> None:
+async def _show(ctx: AppContext, device: Device, snapshot: dict) -> Listing | None:
     """Print every current setting, plus any custom variables.
 
     The menu shows the annotated table; a scripted run gets one ``key value`` line per
@@ -351,25 +396,55 @@ async def _show(ctx: AppContext, device: Device, snapshot: dict) -> None:
     PIN is the one value on it that lets someone else's phone onto the radio.
     ``config get device_pin`` names it deliberately.
     """
-    from ..ui import script
+    from ..ui import fields, script
     from ..ui.config_editor import PIN_KEY, conceal, config_table
+    from ..ui.report import Listing
     from ..ui.surface import TuiUi
 
     custom = await device.get_custom_vars()
     if isinstance(ctx.ui, TuiUi):
         ctx.ui.show(config_table(snapshot, custom))
-        return
+        return None
 
-    rows: list[tuple[str, str]] = []
+    rows: list[dict[str, Any]] = []
     for _category, specs in settings_by_category():
         for spec in specs:
-            value = _script_value(spec, spec.getter(snapshot))
-            masked = conceal(value, absent=script.NONE) if spec.key == PIN_KEY else value
-            rows.append((spec.key, masked))
+            value = spec.getter(snapshot)
+            printed = _script_value(spec, value)
+            redacted = spec.key == PIN_KEY and printed != script.NONE
+            masked = conceal(printed, absent=script.NONE) if spec.key == PIN_KEY else printed
+            rows.append(
+                {
+                    "key": spec.key,
+                    # A masked PIN is *withheld*, which is not a value: the document says
+                    # so with `redacted` and writes `null`, rather than shipping six
+                    # bullets a consumer would have to recognise as a mask.
+                    "value": fields.Rendered(None if redacted else value, masked),
+                    "type": spec.value_type,
+                    "label": (spec.choices or {}).get(value) if spec.value_type == "enum" else None,
+                    "redacted": redacted,
+                }
+            )
     # Custom variables are experimental firmware fields with no spec, so they are namespaced
     # rather than mixed in — a reader can tell which lines `config set` will take.
-    rows.extend((f"custom.{key}", value) for key, value in sorted(custom.items()))
-    ctx.ui.show(script.pairs(rows))
+    rows.extend(
+        {
+            "key": f"custom.{key}",
+            "value": fields.Rendered(value, value),
+            "type": "str",
+            "label": None,
+            "redacted": False,
+        }
+        for key, value in sorted(custom.items())
+    )
+    return Listing(
+        key="settings",
+        columns=_setting_columns(),
+        rows=rows,
+        # An array to a parser and a `sysctl -a` block to a reader: a header line over two
+        # columns whose keys *are* the answer would be furniture.
+        headed=False,
+    )
 
 
 def _script_value(spec: SettingSpec, value: Any) -> str:
@@ -402,95 +477,170 @@ def _script_value(spec: SettingSpec, value: Any) -> str:
     return str(value)
 
 
-def _share_contact(ctx: AppContext, snapshot: dict) -> None:
-    """Render this node's contact card — the QR code in the menu, the URI alone on the CLI.
+def _share_contact(ctx: AppContext, snapshot: dict) -> Facts:
+    """State this node's contact card — with the QR code drawn in the menu.
 
     The QR is for a phone pointed at the screen. Redirected into a file it is a block of
-    block characters around the one thing that is the answer, so a scripted run prints the
-    link by itself.
+    block characters around the one thing that is the answer, so a scripted run states the
+    link by itself. There is no machine face for the code either, and never will be: it is
+    a second rendering of ``url``.
     """
     from rich.console import Group
     from rich.text import Text
 
+    from ..ui import fields
     from ..ui.config_editor import contact_share_url
     from ..ui.qr import qr_text
+    from ..ui.report import BARE, Facts
     from ..ui.surface import TuiUi
 
     public_key = str(snapshot.get("public_key") or "")
     if not public_key:
         raise DeviceCommandError("the device did not report a public key — nothing to share")
     name = str(snapshot.get("name") or "this node")
-    url = contact_share_url(name, public_key, int(snapshot.get("adv_type") or 1))
+    adv_type = int(snapshot.get("adv_type") or 1)
+    url = contact_share_url(name, public_key, adv_type)
     if isinstance(ctx.ui, TuiUi):
         ctx.ui.show(Group(qr_text(url), Text(""), Text(url, style="accent")))
-    else:
-        ctx.ui.note(url)
+    return Facts(
+        key="share",
+        fields=(
+            fields.word("url", "url"),
+            fields.word("name", "name"),
+            fields.hexid("public_key", "public_key"),
+            fields.integer("type", "type"),
+        ),
+        values={"url": url, "name": name, "public_key": public_key.lower(), "type": adv_type},
+        shape=BARE,
+        bare="url",
+    )
 
 
-async def _backup(device: Device, snapshot: dict, path: Path) -> Path:
-    """Write a TOML backup of the current configuration."""
+async def _backup(device: Device, snapshot: dict, path: Path) -> tuple[Path, dict[str, int]]:
+    """Write a TOML backup of the current configuration.
+
+    Returns:
+        The path written and how much went into it, counted the way the file counts —
+        a setting the firmware never reported is not in the backup and is not in the tally.
+    """
+    from ..core.device_config import DEVICE_SETTINGS
+
     custom = await device.get_custom_vars()
     channels = await _read_channels(device)
-    return backup_config(Path(path), snapshot, custom, channels)
+    written = backup_config(Path(path), snapshot, custom, channels)
+    counts = {
+        "settings": sum(1 for spec in DEVICE_SETTINGS if spec.getter(snapshot) is not None),
+        "channels": len(channels),
+        "custom": len(custom),
+    }
+    return written, counts
 
 
 async def _restore(
     ctx: AppContext, device: Device, snapshot: dict, path: Path, dry_run: bool
-) -> int:
+) -> tuple[int, list[Block]]:
     """Apply (or preview) a backup file against the current configuration.
 
+    The plan is the answer on a dry run and a record on a real one, so the same listing
+    serves both — drawn for a reader only when nothing was changed, since a run that *did*
+    change things already said so, setting by setting, on stderr.
+
     Returns:
-        The number of changes applied (always ``0`` for a dry run).
+        The number of changes applied (always ``0`` for a dry run), and the blocks stating
+        what was planned or done.
     """
+    from ..ui import fields
+    from ..ui.report import SILENT, Facts, Listing
+
     backup = read_backup(Path(path))
     custom = await device.get_custom_vars()
     ops = plan_restore(backup, snapshot, custom)
+
+    def plan(applied: list[tuple], *, drawn: bool) -> list[Block]:
+        listing = Listing(
+            key="operations",
+            columns=(
+                fields.word("operation", "OPERATION"),
+                fields.word("target", "TARGET"),
+                fields.word("value", "VALUE"),
+            ),
+            rows=[
+                {
+                    "operation": op[0],
+                    "target": str(op[1]),
+                    "value": str(op[2]) if len(op) > 2 else None,
+                }
+                for op in applied
+            ],
+            plain_only=not drawn,
+        )
+        facts = Facts(
+            key="restore",
+            fields=(fields.flag("dry_run", "dry_run"), fields.integer("changes", "changes")),
+            values={"dry_run": dry_run, "changes": 0 if dry_run else len(applied)},
+            shape=SILENT,
+        )
+        return [facts, listing]
+
     if not ops:
         ctx.ui.ack("[muted]restore: device already matches the backup.[/muted]")
-        return 0
+        return 0, plan([], drawn=False)
 
     if dry_run:
-        from ..ui import script
-
-        table = script.columns("OPERATION", "TARGET", "VALUE")
-        for op in ops:
-            table.add_row(op[0], str(op[1]), str(op[2]) if len(op) > 2 else script.NONE)
-        ctx.ui.show(table)
         ctx.ui.ack("[muted]dry run — nothing was changed.[/muted]")
-        return 0
+        return 0, plan(ops, drawn=True)
 
     changes = 0
     for op in ops:
         if op[0] == "set":
-            changes += await _apply_setting(ctx, device, op[1], op[2], snapshot)
+            await _apply_setting(ctx, device, op[1], op[2], snapshot)
+            changes += 1
         elif op[0] == "set_custom":
             await device.set_custom_var(op[1], op[2])
             changes += 1
         elif op[0] == "set_channel":
             await device.set_channel(op[1], op[2], op[3])
             changes += 1
-    return changes
+    return changes, plan(ops, drawn=False)
 
 
 async def _export_key(
     ctx: AppContext, device: Device, out: Path | None, artifacts: list[str]
-) -> None:
-    """Export the private key, to a file if ``out`` is given, else to the console."""
+) -> Facts:
+    """Export the private key, to a file if ``out`` is given, else as the answer itself.
+
+    Either way the plain face prints **one bare line** — the key, or the path it was
+    written to — because ``config export-key > key.hex`` is expected to hold the key and
+    nothing else, and a caller that asked for a file wants the name of it. The warning
+    that comes with either belongs beside it on screen, not in the file, so it goes to
+    stderr with every other acknowledgement.
+
+    This document carries a private key when one was asked for. That is what the command
+    is, exactly as on the plain face, and no extra gate is introduced here.
+    """
+    from ..ui import fields
+    from ..ui.report import BARE, Facts
+
     key_hex = await device.export_private_key()
+    written: Path | None = None
     if out is not None:
-        path = Path(out)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(key_hex, encoding="utf-8")
-        artifacts.append(str(path))
+        written = Path(out)
+        written.parent.mkdir(parents=True, exist_ok=True)
+        written.write_text(key_hex, encoding="utf-8")
+        artifacts.append(str(written))
         ctx.ui.ack("[warn]private key written — keep this file secret.[/warn]")
     else:
-        # The key itself is the answer, so it is output rather than an acknowledgement:
-        # `meshterm config export-key > key.hex` should hold the key and nothing else. The
-        # warning that comes with it belongs beside it on screen, not in the file.
         ctx.ui.ack("[warn]private key (keep secret):[/warn]")
-        # Bare, on both faces: this line *is* the export, and `config export-key` with no
-        # `--out` is expected to be redirected into a file.
-        ctx.ui.note(key_hex)
+    return Facts(
+        key="key",
+        fields=(fields.hexid("private_key", "private_key"), fields.word("path", "path")),
+        values={
+            "private_key": None if written else key_hex,
+            "path": str(written) if written else None,
+        },
+        shape=BARE,
+        bare="path" if written else "private_key",
+    )
 
 
 async def _read_channels(device: Device) -> list[dict]:
@@ -524,3 +674,138 @@ def _require_yes(yes: bool, what: str) -> None:
     """
     if not yes:
         raise typer.BadParameter(f"{what}. Re-run with --yes to confirm.")
+
+
+def _setting_columns() -> tuple:
+    """One setting row's columns, shared by ``config show`` and ``config get``."""
+    from ..ui import fields
+
+    return (
+        fields.word("key", "key"),
+        fields.rendered("value", "value"),
+        fields.hidden("type"),
+        fields.hidden("label"),
+        fields.hidden("redacted"),
+    )
+
+
+def _one_setting(spec: SettingSpec, value: Any) -> Facts:
+    """One setting: the bare value plain, the whole object in the document.
+
+    ``config get device_pin`` is the one place the PIN is named deliberately, so it is
+    **not** redacted here — the caller asked for that key by name, which is a different
+    act from dumping every setting into a file.
+    """
+    from ..ui import fields
+    from ..ui.report import BARE, Facts
+
+    return Facts(
+        key="setting",
+        fields=_setting_columns(),
+        values={
+            "key": spec.key,
+            "value": fields.Rendered(value, _script_value(spec, value)),
+            "type": spec.value_type,
+            "label": (spec.choices or {}).get(value) if spec.value_type == "enum" else None,
+            "redacted": False,
+        },
+        shape=BARE,
+        bare="value",
+    )
+
+
+def _applied(applied: list[dict[str, Any]]) -> Facts:
+    """What a ``set`` changed — nothing plain, a record for whoever is logging it.
+
+    The exit status is the plain answer and the acknowledgement on stderr is the reassurance;
+    neither is something a script can read back later to find out *what moved*.
+    """
+    from ..ui import fields
+    from ..ui.report import SILENT, Column, Facts
+
+    return Facts(
+        key="applied",
+        fields=(fields.integer("changes", "changes"), Column(key="applied")),
+        values={"changes": len(applied), "applied": applied},
+        shape=SILENT,
+    )
+
+
+def _channel_written(idx: int, name: str, secret: bytes | None) -> Facts:
+    """What ``config channel`` wrote into a slot."""
+    from ..core.channels import channel_hash, derive_secret, is_public_channel
+    from ..ui import fields
+    from ..ui.fields import ChannelRef
+    from ..ui.report import SILENT, Facts
+
+    key = secret or derive_secret(name)
+    return Facts(
+        key="channel",
+        fields=(fields.integer("changes", "changes"), fields.channel("channel", lanes=())),
+        values={
+            "changes": 1,
+            "channel": ChannelRef(
+                slot=idx,
+                name=name,
+                public=is_public_channel(name, key),
+                hash=channel_hash(key),
+            ),
+        },
+        shape=SILENT,
+    )
+
+
+def _backed_up(written: Path, counts: dict[str, int]) -> Facts:
+    """What ``config backup`` wrote, and how much of it.
+
+    The plain face prints the path bare — it is what the caller keeps, and what the thing
+    that ran the command reads next.
+    """
+    from ..ui import fields
+    from ..ui.report import BARE, Facts
+
+    return Facts(
+        key="backup",
+        fields=(
+            fields.word("path", "path"),
+            fields.integer("settings", "settings"),
+            fields.integer("channels", "channels"),
+            fields.integer("custom", "custom"),
+        ),
+        values={"path": str(written), **counts},
+        shape=BARE,
+        bare="path",
+    )
+
+
+def _acted(key: str, **facts: Any) -> Facts:
+    """An action, stated as data: nothing plain, a document for whoever wanted a record.
+
+    Every one of these prints nothing on the plain face today and should keep doing so —
+    ``config advert`` says all it has to say in its exit status. But "prints nothing" is an
+    answer a person can act on and a program cannot, so the machine face gets the fact.
+    """
+    from ..ui import fields
+    from ..ui.report import SILENT, Column, Facts
+
+    def column(name: str, value: Any) -> Column:
+        if isinstance(value, bool):
+            return fields.flag(name, name)
+        if isinstance(value, int) or value is None:
+            return fields.integer(name, name)
+        return Column(key=name)
+
+    return Facts(
+        key=key,
+        fields=tuple(column(name, value) for name, value in facts.items()),
+        values=dict(facts),
+        shape=SILENT,
+    )
+
+
+async def _try_clock(device: Device) -> int | None:
+    """The device's current clock, or ``None`` where the firmware will not answer."""
+    try:
+        return await device.get_time()
+    except Exception:  # noqa: BLE001 - optional read; the drift is a nicety
+        return None

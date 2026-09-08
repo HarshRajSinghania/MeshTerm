@@ -1,15 +1,18 @@
 """End-to-end tests for what the CLI actually prints and returns.
 
-:mod:`tests.test_script_output` covers the vocabulary; this covers the commands built out
-of it — the real Typer app, driven against the simulator, asserting the four things a
-script depends on: no escape sequences, no wrapped records, a header its records line up
-under, and a documented exit status.
+:mod:`tests.test_script_output` covers the vocabulary and :mod:`tests.test_report` the
+seam; this covers the commands built out of both — the real Typer app, driven against the
+simulator, asserting the things a caller depends on: no escape sequences, no wrapped
+records, a header its records line up under, a documented exit status — and, under
+``--json``, a document that parses and a status that did not change because of a rendering
+flag.
 
 Every command here is read-only or simulator-backed, so nothing transmits.
 """
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -26,21 +29,26 @@ _ANSI = re.compile(r"\x1b\[")
 #: MeshTerm writes itself is no longer consumed either, and lands in the caller's pipe.
 _MARKUP = re.compile(r"\[/?(?:ok|err|warn|muted|accent|brand|bold|dim|reverse)\b[^\]]*\]")
 
-#: The shape of a scripted path line: one or more quoted node names, each optionally
-#: followed by its hash in parentheses *outside* the quotes, joined by a bare comma. This
-#: is the whole grammar — a line matching it splits, whatever the names hold.
-_HOP = r'"(?:[^"\\]|\\.)*"(?: \([^)]*\))?'
-_PATH_LINE = re.compile(f"{_HOP}(?:,{_HOP})*")
+#: The shape of a drawn route: one or more hops, each a bare name with its hash in
+#: parentheses (or one of the two halves alone, where history knows only one), joined by
+#: the spaced arrow. This is the whole grammar, and the arrow is what makes it one — a
+#: name holding a comma no longer needs quoting to stay one hop.
+_HOP = r"[^\n→]+?"
+_ROUTE_LINE = re.compile(f"{_HOP}(?: → {_HOP})*")
+
+#: The shape of a path *spec*: comma-joined lowercase hex, exactly what ``--path`` takes
+#: back. The one line on either face that round-trips, so nothing may creep into it.
+_PATH_SPEC = re.compile(r"[0-9a-f]+(?:,[0-9a-f]+)*")
 
 #: The commands whose output is a listing or a key/value block, and the fields a caller
 #: should find in each. Every one runs against the mock companion or the database alone.
 _LISTINGS: list[tuple[str, list[str], list[str]]] = [
     # (command, arguments, headings or keys the output must carry)
-    ("contacts", [], ["NAME", "TYPE", "HEARD", "PKTS", "KEY"]),
+    ("contacts", [], ["NAME", "TYPE", "HEARD", "PKTS", "HASH", "LOCATION", "KEY"]),
     ("info", [], ["name", "public_key", "role"]),
     ("config", ["show"], ["name", "radio_freq", "tx_power"]),
-    ("preferences", ["show"], ["PREFERENCE", "VALUE", "DEFAULT"]),
-    ("chat", ["list"], ["CONVERSATION", "KIND", "UNREAD", "LAST_TIME", "LAST_TEXT"]),
+    ("preferences", ["show"], ["PREFERENCE", "VALUE", "DEFAULT", "DESCRIPTION"]),
+    ("chat", ["list"], ["CONVERSATION", "KIND", "UNREAD", "LAST", "LAST_TEXT"]),
     ("platform", [], ["platform", "icons"]),
 ]
 
@@ -95,6 +103,10 @@ def run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):  # noqa: ANN201 - a cl
         return runner.invoke(app, ["--mock", "--db", str(tmp_path / "test.db"), *args])
 
     return invoke
+
+
+#: Commands that refuse a machine-readable face outright, and say so as a usage error.
+_REFUSES_JSON = {("specimen",)}
 
 
 # -- the four rules -------------------------------------------------------------------
@@ -162,6 +174,70 @@ def test_every_registered_command_obeys_the_rules(run, leaf) -> None:  # noqa: A
         assert line == line.rstrip(), f"{' '.join(leaf)} padded a line: {line!r}"
 
 
+@pytest.mark.parametrize(
+    "leaf",
+    [c for c in _leaf_commands() if c not in _NOT_ONE_SHOT | _KEEPS_ITS_COLOUR],
+    ids=lambda leaf: "-".join(leaf),
+)
+def test_every_registered_command_answers_json_that_parses(run, leaf) -> None:  # noqa: ANN001
+    """``--json`` is a rendering, so it belongs to the CLI rather than to a list of tools.
+
+    It reached two commands out of twenty and stopped, because each one that wanted it had
+    to restate its whole answer above the rendering. The same sweep that keeps the plain
+    rules honest now runs every command a second time and reads what comes back: **every
+    line on stdout is one complete document**, on success and on empty alike, and a
+    command that fails writes nothing there at all.
+    """
+    result = run("--json", *leaf)
+    for line in result.stdout.splitlines():
+        json.loads(line)  # raises, with the offending line, if anything else got out
+    if result.exit_code in (exitcodes.OK, exitcodes.NO_RESULT):
+        assert result.stdout.strip(), f"{' '.join(leaf)} exited {result.exit_code} silently"
+
+
+@pytest.mark.parametrize(
+    "leaf",
+    [c for c in _leaf_commands() if c not in _NOT_ONE_SHOT | _KEEPS_ITS_COLOUR],
+    ids=lambda leaf: "-".join(leaf),
+)
+def test_the_two_faces_never_disagree_about_the_exit_status(run, leaf) -> None:  # noqa: ANN001
+    """``--json`` changes the rendering, never the report.
+
+    The status is the report — it is what a caller branches on — and a flag about *how the
+    answer looks* has no business moving it. This is the cross-check that stops the two
+    faces drifting the way they did before: ``devices --json`` used to exit ``0`` where the
+    plain path said ``5``, so a script could not tell an empty scan from a full one by
+    asking the same question twice.
+    """
+    assert run("--json", *leaf).exit_code == run(*leaf).exit_code, " ".join(leaf)
+
+
+@pytest.mark.parametrize("leaf", sorted(_REFUSES_JSON), ids=lambda leaf: "-".join(leaf))
+def test_a_command_whose_output_is_the_colour_refuses_json_loudly(run, leaf) -> None:  # noqa: ANN001
+    """``specimen``'s output *is* the colour; a document of it would be an empty gesture.
+
+    A loud refusal is the honest answer, and it is the same one this project already gives
+    for the map, the dashboard and the live feed — which simply have no subcommand to
+    refuse from. It is a usage error, so stdout stays empty and the sentence goes where
+    every other failure's does.
+    """
+    result = run("--json", *leaf)
+    assert result.exit_code == exitcodes.USAGE
+    assert result.stdout == ""
+    assert "machine-readable" in result.stderr
+
+
+def test_the_menu_has_no_document_and_says_so(run) -> None:  # noqa: ANN001
+    """``meshterm --json`` with no subcommand would launch a full-screen session.
+
+    There is no document an interactive session can emit, and starting one would hang
+    whatever was waiting to parse it.
+    """
+    result = run("--json")
+    assert result.exit_code == exitcodes.USAGE
+    assert result.stdout == ""
+
+
 def test_the_sweep_actually_covers_the_whole_command_surface() -> None:
     """A derived list is only a guarantee while it is still finding the commands.
 
@@ -177,14 +253,25 @@ def test_the_sweep_actually_covers_the_whole_command_surface() -> None:
 # -- listings -------------------------------------------------------------------------
 
 
-def test_contacts_quotes_every_name_and_stamps_every_time(run) -> None:  # noqa: ANN001
-    """A record is quoted where a name could hold a space, and timed absolutely."""
+def test_contacts_names_every_node_bare_and_ages_every_time(run) -> None:  # noqa: ANN001
+    """The two rules that reversed, checked on the listing they were reversed for.
+
+    A name is bare — the alignment is what makes it one field now — and ``HEARD`` is an
+    age, because "heard recently?" is the question this listing is opened to ask and an ISO
+    instant makes the reader do arithmetic to answer it. ``--absolute`` puts the instants
+    back, for anyone who wants them.
+    """
     header, *records = result_lines(run("contacts"))
-    assert header.split() == ["NAME", "TYPE", "HEARD", "PKTS", "KEY"]
+    assert header.split() == ["NAME", "TYPE", "HEARD", "PKTS", "HASH", "LOCATION", "KEY"]
     assert records, "the simulator always has contacts"
     for line in records:
-        assert line.startswith('"')
-        stamp = line.split()[-3]
+        assert not line.startswith('"')
+        age = line.split()[2]
+        assert age in ("now", "never") or age[-1] in "mhdw"
+
+    absolute = result_lines(run("--absolute", "contacts"))[1:]
+    for line in absolute:
+        stamp = line.split()[2]
         assert stamp == "-" or stamp[:4].isdigit()
 
 
@@ -280,20 +367,32 @@ def test_preferences_get_prints_a_value_its_own_set_would_take(run) -> None:  # 
 # -- path lines -----------------------------------------------------------------------
 
 
-def test_a_trace_prints_its_route_as_the_scripted_path_line(run) -> None:  # noqa: ANN001
-    """Quoted names, hashes outside the quotes, comma-separated, no star for our own node."""
-    result = run("trace", "--target", "Alice")
+def test_a_trace_draws_its_route_with_arrows_and_keeps_its_path_in_commas(run) -> None:  # noqa: ANN001
+    """The sharpest of the reversals, and the reason is the project's own lexicon.
+
+    A *path* is a spec you compose and can paste back into ``--path``, so it stays
+    comma-separated and round-trippable. A *route* is what a walk actually did; it is not a
+    spec, and rendering it with commas promised a round trip it does not have. Our own node
+    is still named like any other hop — the menu's ``★`` says "you already know who this
+    is", which is true of the reader and false of whoever opens the file later.
+    """
+    result = run("trace-path", "--path", "a1,d4,a1")
     assert result.exit_code == exitcodes.OK, result.output
     facts = dict(line.split(None, 1) for line in result_lines(result) if line and " " in line)
     assert facts["success"] == "yes"
+
     route = facts["route"]
-    assert "★" not in route and "→" not in route
-    assert _PATH_LINE.fullmatch(route), route
+    assert "★" not in route
+    assert "→" in route
+    assert _ROUTE_LINE.fullmatch(route), route
+
+    assert _PATH_SPEC.fullmatch(facts["path"]), facts["path"]
+    assert "→" not in facts["path"]
 
 
 def test_a_trace_reports_its_per_hop_readings_under_a_header(run) -> None:  # noqa: ANN001
     """The second block is a record per hop, joined to the route line by hash."""
-    lines = result_lines(run("trace", "--target", "Alice"))
+    lines = result_lines(run("trace-path", "--path", "a1,d4,a1"))
     header = next(line for line in lines if line.startswith("HOP"))
     assert header.split() == ["HOP", "FROM", "TO", "SNR_DB"]
 

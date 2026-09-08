@@ -33,7 +33,7 @@ from ..core.preferences import (
 from .base import Tool, ToolResult, register
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
-    from rich.table import Table
+    from ..ui.report import Block, Facts, Listing
 
 
 @register
@@ -88,19 +88,23 @@ class PreferencesTool(Tool):
         prefs = ctx.preferences
         scripted = not isinstance(ctx.ui, TuiUi)
         ops: list[tuple] = list(params.get("ops") or [])
+        blocks: list[Block] = []
+        applied: list[dict[str, Any]] = []
         changes = 0
         for op in ops:
             action = op[0]
             if action == "show":
-                ctx.ui.show(
-                    _listing(prefs) if scripted else preferences_table(prefs, ctx.console.width)
-                )
+                if scripted:
+                    blocks.append(_listing(prefs))
+                else:
+                    ctx.ui.show(preferences_table(prefs, ctx.console.width))
             elif action == "get":
                 # The bare value and nothing else — the caller named the key, and
-                # whether it is overridden is what `show`'s DEFAULT lane answers.
+                # whether it is overridden is what `show`'s DEFAULT lane answers. The
+                # document keeps both, since a parser has no lane to read them off.
                 spec = get_spec(op[1])
                 if scripted:
-                    ctx.ui.note(_script_value(spec, prefs.get(spec.key)))
+                    blocks.append(_one(prefs, spec))
                 else:
                     where = "changed" if prefs.is_overridden(spec.key) else "default"
                     shown = format_value(spec, prefs.get(spec.key))
@@ -110,11 +114,19 @@ class PreferencesTool(Tool):
                 after = prefs.set(op[1], op[2])
                 if after != before:
                     changes += 1
+                    applied.append({"key": op[1], "previous": before, "value": after})
             elif action == "reset":
+                was = {s.key: prefs.get(s.key) for s in PREFERENCES if prefs.is_overridden(s.key)}
                 changes += prefs.reset()
+                applied.extend(
+                    {"key": key, "previous": before, "value": prefs.get(key)}
+                    for key, before in was.items()
+                )
 
         if changes:
             prefs.save()
+        if scripted and applied is not None and any(op[0] in ("set", "reset") for op in ops):
+            blocks.append(_written(applied, prefs))
 
         plural = "" if changes == 1 else "s"
         message = (
@@ -123,7 +135,9 @@ class PreferencesTool(Tool):
             if changes
             else None
         )
-        return ToolResult(summary={"changes": changes}, message=message)
+        return ToolResult(
+            summary={"changes": changes}, message=message, report=tuple(blocks) or None
+        )
 
     # -- CLI --------------------------------------------------------------------
 
@@ -197,26 +211,105 @@ def _script_value(spec: PrefSpec, value: Any) -> str:
     return str(value)
 
 
-def _listing(prefs: Preferences) -> Table:
-    """Every preference, its current value, and the built-in it would fall back to.
+def _row(prefs: Preferences, spec: PrefSpec) -> dict[str, Any]:
+    """One preference as a report row, in the shared setting shape.
 
-    Three facts per line and no fourth: the descriptions the page carries explain a
-    preference to someone deciding whether to change it, and they are what forces the
-    table to wrap. A scripted reader has decided.
+    ``overridden`` is the fact the plain face makes a reader derive by comparing two
+    columns; a document that carried the same two numbers and left the comparison to the
+    consumer would be handing over homework it has the answer to.
+    """
+    from ..ui.fields import Rendered
+
+    value = prefs.get(spec.key)
+    return {
+        "key": spec.key,
+        "value": Rendered(value, _script_value(spec, value)),
+        "type": spec.value_type,
+        # The reader's word for an enum's own key — never what `set` takes, which is the
+        # key itself and rides in `value`.
+        "label": (spec.choices or {}).get(value) if spec.value_type == "enum" else None,
+        "redacted": False,
+        "default": Rendered(spec.default, _script_value(spec, spec.default)),
+        "overridden": prefs.is_overridden(spec.key),
+        "help": spec.description,
+    }
+
+
+def _columns() -> tuple:
+    """The preference row's columns, shared by ``show`` and ``get``."""
+    from ..ui import fields
+
+    return (
+        fields.word("key", "PREFERENCE"),
+        fields.rendered("value", "VALUE"),
+        fields.hidden("type"),
+        fields.hidden("label"),
+        fields.hidden("redacted"),
+        fields.rendered("default", "DEFAULT"),
+        fields.hidden("overridden"),
+        fields.note("help", "DESCRIPTION"),
+    )
+
+
+def _listing(prefs: Preferences) -> Listing:
+    """Every preference, its value, its built-in default, and what it is for.
+
+    ``DESCRIPTION`` comes straight from :attr:`PrefSpec.help` — the text is already
+    written, one short line each, and as the *last* column it can never disturb an
+    alignment or wrap. It used to be cut for parser hygiene, which is a bargain the plain
+    face no longer has to make: a listing is read by a person now, and a person choosing a
+    preference is exactly who that sentence was written for.
 
     Args:
         prefs: The preference set to report.
 
     Returns:
-        The scripted table (see :func:`meshterm.ui.script.columns`).
+        The listing.
     """
-    from ..ui import script
+    from ..ui.report import Listing
 
-    table = script.columns("PREFERENCE", "VALUE", "DEFAULT")
-    for spec in PREFERENCES:
-        table.add_row(
-            spec.key,
-            _script_value(spec, prefs.get(spec.key)),
-            _script_value(spec, spec.default),
-        )
-    return table
+    return Listing(
+        key="preferences",
+        columns=_columns(),
+        rows=[_row(prefs, spec) for spec in PREFERENCES],
+        order=("PREFERENCE", "VALUE", "DEFAULT", "DESCRIPTION"),
+    )
+
+
+def _one(prefs: Preferences, spec: PrefSpec) -> Facts:
+    """One preference: the bare value plain, the whole setting object in the document."""
+    from ..ui.report import BARE, Facts
+
+    return Facts(
+        key="preference",
+        fields=_columns(),
+        values=_row(prefs, spec),
+        shape=BARE,
+        bare="value",
+    )
+
+
+def _written(applied: list[dict[str, Any]], prefs: Preferences) -> Facts:
+    """What ``set`` or ``reset`` changed — nothing plain, a record for whoever wants one.
+
+    The plain face says it in the exit status and in the acknowledgement on stderr, which
+    is the whole answer for a person. A caller managing a machine's configuration wants to
+    know *what moved*, and had no way to ask.
+    """
+    from ..ui import fields
+    from ..ui.report import SILENT, Column, Facts
+
+    return Facts(
+        key="applied",
+        fields=(
+            fields.integer("changes", "changes"),
+            Column(key="applied"),
+            fields.word("path", "path"),
+        ),
+        values={
+            "changes": len(applied),
+            "applied": applied,
+            "path": str(prefs.path) if prefs.path else None,
+        },
+        shape=SILENT,
+    )

@@ -468,21 +468,36 @@ def platform_command() -> None:
     the flavour and the usual reason a Windows session looks plainer than the screenshots
     (see :func:`meshterm.ui.termfont.emoji_support`).
     """
+    from .ui import fields
+    from .ui.report import Facts
+
     assert _platform_resolution is not None  # set by the callback that always runs first
     assert _state is not None  # ditto
     r = _platform_resolution
     emoji = emoji_support()
-    _state.console.print(
-        script.pairs(
-            [
-                ("platform", r.platform.name),
-                ("platform_source", r.source),
-                ("flag", r.flag or script.NONE),
-                ("env", r.env or script.NONE),
-                ("device_tree_model", r.detected_model or script.NONE),
-                ("icons", "yes" if emoji.supported else "no"),
-                ("icons_source", emoji.source),
-            ]
+    renderers.for_format(_state.output, _state.console).render(
+        (
+            Facts(
+                key="platform",
+                fields=(
+                    fields.word("platform", "platform"),
+                    fields.word("platform_source", "platform_source"),
+                    fields.word("flag", "flag"),
+                    fields.word("env", "env"),
+                    fields.word("device_tree_model", "device_tree_model"),
+                    fields.flag("icons", "icons"),
+                    fields.word("icons_source", "icons_source"),
+                ),
+                values={
+                    "platform": r.platform.name,
+                    "platform_source": r.source,
+                    "flag": r.flag or None,
+                    "env": r.env or None,
+                    "device_tree_model": r.detected_model or None,
+                    "icons": emoji.supported,
+                    "icons_source": emoji.source,
+                },
+            ),
         )
     )
 
@@ -653,10 +668,6 @@ async def _execute_and_render(tool: Tool, params: dict, ctx: AppContext) -> Tool
     """
     result = await tool.execute(ctx, params)
     renderers.for_format(ctx.output, ctx.console).render(result.report)
-    # A produced file is a fact, and its path is the whole of it: bare, one per line, so
-    # `meshterm config backup out.toml` can be read by the thing that runs it.
-    for artifact in result.artifacts:
-        ctx.console.print(artifact, highlight=False)
     return result
 
 

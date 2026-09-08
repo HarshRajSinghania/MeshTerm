@@ -24,7 +24,7 @@ import typer
 from ..context import AppContext
 from ..core import exitcodes
 from ..core.connection import DeviceCommandError
-from ..core.models import Contact, LoginResult, TxOptResult
+from ..core.models import NODE_TYPE_LABELS, Contact, LoginResult, TxOptResult
 from ..services import trace_runner, tx_optimizer
 from ..ui.widgets import tx_opt_summary, tx_opt_table
 from .base import Tool, ToolResult, register
@@ -319,11 +319,12 @@ class TxOptimizeTool(Tool):
         if result.applied:
             ctx.log.info("set TX power %s on %s", result.best_tx, admin_node.name)
 
+        report = None
         if isinstance(ctx.ui, TuiUi):
             ctx.ui.show(tx_opt_table(result))
             ctx.ui.show(tx_opt_summary(result))
         else:
-            _print_sweep(ctx, result, path)
+            report = _sweep_report(result, path, admin_node, contacts)
 
         if no_result:
             restored = (
@@ -341,6 +342,7 @@ class TxOptimizeTool(Tool):
             )
 
         return ToolResult(
+            report=report,
             # No level got a trace through, so nothing was measured and nothing was tuned:
             # the sweep ran and has nothing to report.
             exit_code=exitcodes.NO_RESULT if no_result else exitcodes.OK,
@@ -535,46 +537,87 @@ def _fmt_snr(snr: float | None) -> str:
     return f"{snr:+.1f}" if snr is not None else " n/a"
 
 
-def _print_sweep(ctx: AppContext, result: TxOptResult, path: str) -> None:
-    """Print a TX sweep as scripted facts: the outcome, then every level measured.
+def _sweep_report(
+    result: TxOptResult, path: str, admin_node: Contact, contacts: list[Contact]
+) -> tuple:
+    """State a TX sweep: the outcome, then every level measured.
 
     The winner comes first, because it is what the command was asked for and what a caller
     acts on; the per-level records follow, so the choice can be checked against the
     measurements it was made from. The menu's ``★`` on the winning row has no column here
-    — ``optimal_tx`` above the table already names it, and a mark is something to look at
-    rather than something to test.
+    — ``optimal_tx_dbm`` above the table already names it, and a mark is something to look
+    at rather than something to test.
+
+    The two nodes become the shared node shape, and here that matters more than anywhere
+    else: on the plain line they are told apart by nothing but their names, and a caller
+    correlating a sweep with a trace has no key to join on.
 
     Args:
-        ctx: Shared application context.
         result: The completed sweep.
         path: The forced route the traces walked, as hex hops.
-    """
-    from ..ui import script
+        admin_node: The node whose TX power was tuned.
+        contacts: The contact list, for placing the target by name.
 
-    ctx.ui.show(
-        script.pairs(
-            [
-                ("tuning_node", result.admin_node),
-                ("target", result.target),
-                ("path", path),
-                ("optimal_tx_dbm", script.number(result.best_tx)),
-                ("target_snr_db", script.number(result.best_snr, "+.1f")),
-                ("reliability", f"{result.best_success_rate:.2f}"),
-                ("previous_tx_dbm", script.number(result.original_tx)),
-                ("applied", "yes" if result.applied else "no"),
-            ]
+    Returns:
+        The report's blocks.
+    """
+    from ..ui import fields
+    from ..ui.fields import NodeRef
+    from ..ui.report import Facts, Listing
+
+    def node(name: str) -> NodeRef | None:
+        """One end of the tuned link as the shared node shape."""
+        contact = next((c for c in contacts if c.name == name), None)
+        if contact is None:
+            return NodeRef(name=name) if name else None
+        return NodeRef(
+            name=contact.name,
+            key=(contact.public_key or "").lower() or None,
+            hash=(contact.key_prefix or "").lower() or None,
+            type=NODE_TYPE_LABELS.get(contact.node_type),
         )
+
+    facts = Facts(
+        key="tx_optimize",
+        fields=(
+            fields.node("tuning_node", lanes=(("name", "tuning_node"),)),
+            fields.node("target", lanes=(("name", "target"),)),
+            fields.spec(),
+            fields.integer("optimal_tx_dbm", "optimal_tx_dbm"),
+            fields.snr("target_snr_db", "target_snr_db"),
+            fields.decimal("reliability", "reliability", ".2f"),
+            fields.integer("previous_tx_dbm", "previous_tx_dbm"),
+            fields.flag("applied", "applied"),
+        ),
+        values={
+            "tuning_node": node(result.admin_node) or NodeRef(name=admin_node.name),
+            "target": node(result.target),
+            "path": path,
+            "optimal_tx_dbm": result.best_tx,
+            "target_snr_db": result.best_snr,
+            # A fraction in [0, 1], not a formatted "1.00": the plain column rounds for
+            # the eye and the document keeps the number a number.
+            "reliability": result.best_success_rate,
+            "previous_tx_dbm": result.original_tx,
+            "applied": result.applied,
+        },
     )
-    if not result.levels:
-        return
-    ctx.ui.show(script.blank())
-    lanes = ("TX_DBM", "TARGET_SNR_DB", "SUCCESSES", "SAMPLES")
-    table = script.columns(*lanes, right=lanes)
-    for level in result.sorted_by_tx():
-        table.add_row(
-            str(level.tx_power),
-            script.number(level.target_snr, "+.1f"),
-            str(level.successes),
-            str(level.samples),
-        )
-    ctx.ui.show(table)
+    levels = Listing(
+        key="levels",
+        columns=(
+            fields.integer("tx_dbm", "TX_DBM"),
+            fields.snr("target_snr_db", "TARGET_SNR_DB"),
+            fields.integer("successes", "SUCCESSES"),
+            fields.integer("samples", "SAMPLES"),
+        ),
+        rows=[
+            {
+                "tx_dbm": level.tx_power,
+                "target_snr_db": level.target_snr,
+                "successes": level.successes,
+                "samples": level.samples,
+            }
+            for level in result.sorted_by_tx()
+        ],
+    )
+    return (facts, levels)

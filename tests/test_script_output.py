@@ -1,9 +1,11 @@
-"""Tests for the scripted CLI's output language (:mod:`meshterm.ui.script`).
+"""Tests for the plain CLI's output language (:mod:`meshterm.ui.script`).
 
-The CLI is read by ``awk``, and every rule that makes that possible is testable: no
-colour, no wrapping, no framing, quoted names, absolute times, one token for absent, one
-documented exit status per outcome. These are the enforcement point for
-:mod:`meshterm.ui.script` the way ``test_gallery`` is for the screens.
+The plain face is read by a person at a prompt — ``--json`` carries the machine now — and
+every rule that makes it legible is testable: no colour, no wrapping, no framing, bare
+names that still cannot break a record, relative ages, arrows for a route and commas for a
+path, one token for absent, one documented exit status per outcome. These are the
+enforcement point for :mod:`meshterm.ui.script` the way ``test_gallery`` is for the
+screens, and :mod:`tests.test_report` is for the seam above them.
 """
 
 from __future__ import annotations
@@ -35,35 +37,42 @@ def _rendered(*renderables: object) -> str:
     return buffer.getvalue()
 
 
-# -- quoting -------------------------------------------------------------------------
+# -- names ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
     "value,expected",
     [
-        ("Yagi-Repeater", '"Yagi-Repeater"'),
-        ("YUL Cartierville", '"YUL Cartierville"'),
-        ("Node, Inc", '"Node, Inc"'),
-        ('He said "hi"', '"He said \\"hi\\""'),
-        ("back\\slash", '"back\\\\slash"'),
-        ("", '""'),
-        (None, '""'),
+        ("Yagi-Repeater", "Yagi-Repeater"),
+        ("YUL Cartierville", "YUL Cartierville"),
+        ("Node, Inc", "Node, Inc"),
+        ('He said "hi"', 'He said "hi"'),
+        ("back\\slash", "back\\\\slash"),
     ],
 )
-def test_quote_makes_any_name_exactly_one_field(value: str | None, expected: str) -> None:
-    """A name is quoted and its quotes and backslashes escaped, whatever it holds.
+def test_a_name_is_bare_because_alignment_is_the_delimiter(value: str, expected: str) -> None:
+    """The quotes are retired; a column that lines up is already one field to the eye.
 
-    This is what lets a listing be split: an unquoted ``YUL Cartierville`` is two fields,
-    and an unquoted ``Node, Inc`` is two hops of a path line.
+    They existed so a name holding a space or a comma stayed one field for whatever was
+    splitting the line. The splitter reads JSON now, and in plain text the padding says
+    where a field ends — so a reader gets back the six cells the quotes were spending on
+    every row, and a name reads as the name the node broadcast.
     """
-    assert script.quote(value) == expected
+    assert script.name(value) == expected
 
 
-def test_a_quoted_name_survives_a_round_trip_through_the_escaping() -> None:
-    """The escaping is the ordinary backslash convention, so the value reads back."""
-    for name in ('a "quoted" name', "back\\slash", 'both\\"kinds'):
-        body = script.quote(name)[1:-1]
-        assert body.replace('\\"', '"').replace("\\\\", "\\") == name
+def test_a_name_still_cannot_end_the_record_it_sits_in() -> None:
+    """The escaping under the quoting stays, and it is the half that was load-bearing.
+
+    A node broadcasts its own name, so every name here is remote data. Nothing about
+    alignment stops a newline, a tab or an ESC in one from ending the record early — and
+    an ESC inside a name is a live colour run written into the caller's file, which is the
+    one thing "not a single escape sequence" exists to prevent.
+    """
+    assert script.name("two\nlines") == "two\\nlines"
+    assert script.name("tabbed\there") == "tabbed\\there"
+    assert script.name("bell\a") == "bell\\x07"
+    assert "\x1b" not in script.name("esc\x1b[31m")
 
 
 @pytest.mark.parametrize(
@@ -85,13 +94,8 @@ def test_a_message_body_can_never_end_its_own_record(body: str, expected: str) -
     also the one field a stranger fills in, so this is not a hypothetical message. Quotes
     inside it are left alone: nothing wraps it, so nothing needs escaping from.
     """
-    assert script.oneline(body) == expected
-    assert "\n" not in script.oneline(body)
-
-
-def test_a_name_holding_a_newline_cannot_end_its_record_either() -> None:
-    """The same hazard one field over — and a name is broadcast by its own node."""
-    assert script.quote("two\nlines") == '"two\\nlines"'
+    assert script.text(body) == expected
+    assert "\n" not in script.text(body)
 
 
 @pytest.mark.parametrize("absent", [None, ""])
@@ -100,12 +104,12 @@ def test_a_node_that_never_gave_a_name_reads_as_absent_not_as_empty(absent: str 
 
     Seven of the ten places that printed a name made the first claim by accident, so the
     same unnamed node read as ``""`` in one listing and ``-`` in the next. One helper now
-    answers it, and the distinction is the one the JSON rendering needs too — an absent
-    name is ``null``, an empty one is ``""``, and a field that flattened both cannot say
-    which it meant.
+    answers it, and the distinction is the one the machine face needs too — an absent name
+    is ``null``, an empty one is ``""``, and a field that flattened both cannot say which
+    it meant.
     """
     assert script.name(absent) == script.NONE
-    assert script.name("Alice") == '"Alice"'
+    assert script.name("Alice") == "Alice"
 
 
 # -- timestamps ----------------------------------------------------------------------
@@ -128,19 +132,97 @@ def test_stamp_reads_an_unknown_offset_as_absent() -> None:
     assert script.stamp(datetime(2026, 9, 7, 22, 22, 41)) == script.NONE
 
 
-def test_no_relative_age_ever_reaches_the_scripted_output() -> None:
-    """``3h`` is for a screen; the CLI's stamp is absolute even for a fresh time."""
-    assert script.stamp(datetime.now(timezone.utc) - timedelta(seconds=5)) != "now"
+def test_a_time_is_an_age_unless_the_instant_is_itself_the_fact() -> None:
+    """The rule that reversed, and the reason it reversed.
+
+    A person at a prompt reading ``2026-09-07T19:58:53-04:00`` is doing arithmetic to
+    answer "recently?", which is the question they typed the command to ask. So an age is
+    the default now. :func:`~meshterm.ui.script.stamp` survives for the three places the
+    instant *is* the answer — the device clock, an appointment set with ``--at``, and a
+    live capture's own ``TIME`` column, every row of which would otherwise read ``now`` —
+    and for every column under ``--absolute``.
+    """
+    fresh = datetime.now(timezone.utc) - timedelta(seconds=5)
+    assert script.age(fresh) == "now"
+    assert script.stamp(fresh)[:4].isdigit()
+
+
+@pytest.mark.parametrize(
+    "seconds,expected",
+    [
+        (0, "now"),
+        (59, "now"),
+        (60, "1m"),
+        (3599, "59m"),
+        (3600, "1h"),
+        (86400, "1d"),
+        (604800, "1w"),
+    ],
+)
+def test_the_age_ladder_steps_where_a_person_would_step(seconds: int, expected: str) -> None:
+    """``now``, ``5m``, ``3h``, ``2d``, ``4w`` — the menu's own column ladder.
+
+    Delegated to :func:`~meshterm.ui.widgets._format_age` rather than re-derived, so the
+    two faces of the same age cannot drift apart.
+    """
+    assert script.age(datetime.now(timezone.utc) - timedelta(seconds=seconds)) == expected
+
+
+def test_an_age_reads_an_unknown_offset_as_absent_exactly_as_a_stamp_does() -> None:
+    """A naive datetime is a time whose offset we don't know, which is not a fact."""
+    assert script.age(None) == script.NONE
+    assert script.age(datetime(2026, 9, 7, 22, 22, 41)) == script.NONE
+
+
+def test_never_is_a_value_and_the_absent_token_is_not() -> None:
+    """A node that has never been heard is a *fact*; a row with no such time is not.
+
+    Flattening both onto ``-`` made "we have not heard from it" and "this kind of row has
+    no heard time" read the same, which is the distinction the column exists to draw.
+    """
+    assert script.age(None, absent="never") == "never"
+    assert script.age(None) == script.NONE
+
+
+@pytest.mark.parametrize(
+    "seconds,expected",
+    [(42, "42s"), (360, "6m"), (125, "2m 5s"), (93784, "1d 2h"), (3600, "1h"), (-125, "2m 5s")],
+)
+def test_a_duration_reads_in_two_units_at_most(seconds: int, expected: str) -> None:
+    """``93784`` is a number nobody can hold in their head; ``1d 2h`` is the same fact.
+
+    Two adjacent units, largest first, so the magnitude arrives at a glance and the
+    precision never outruns what anyone would act on. Only ever a gloss beside the raw
+    figure — the key says what the number counts, and a caller reading the key must still
+    find a number under it.
+    """
+    assert script.duration(seconds) == expected
+
+
+def test_a_location_is_one_field_because_it_is_one_fact() -> None:
+    """A coordinate pair is what goes into a map's search box, verbatim.
+
+    Two columns would also mean two ``-`` for every node that has never shared a position,
+    which is worse than one.
+    """
+    assert script.location(45.50190, -73.56740) == "45.50190,-73.56740"
+    assert script.location(45.5, None) == script.NONE
+    assert script.location(None, None) == script.NONE
 
 
 # -- the absent token -----------------------------------------------------------------
 
 
 def test_one_token_stands_for_every_kind_of_absence() -> None:
-    """A reader (and a parser) learns ``-`` once, and never meets an em dash or an n/a."""
+    """A reader learns ``-`` once, and never meets an em dash, an ``n/a`` or a blank.
+
+    ``never`` is the one word that is *not* an absence: it is a value, and the age lane is
+    where it is spelled (see the ladder tests above).
+    """
     assert script.NONE == "-"
     assert script.number(None) == script.NONE
-    assert script.path([]) == script.NONE
+    assert script.route([]) == script.NONE
+    assert script.spec([]) == script.NONE
 
 
 def test_number_formats_with_its_spec_when_there_is_one() -> None:
@@ -150,33 +232,91 @@ def test_number_formats_with_its_spec_when_there_is_one() -> None:
     assert script.number(7) == "7"
 
 
-# -- path lines -----------------------------------------------------------------------
+# -- routes and paths ------------------------------------------------------------------
 
 
-def test_a_path_line_quotes_each_node_and_hangs_its_hash_outside_the_quotes() -> None:
-    """The CLI's path shape: ``"Name" (hash)``, hops joined by a bare comma."""
-    line = script.path([("Alice", "3d"), ("Yagi-Repeater", "f2")])
-    assert line == '"Alice" (3d),"Yagi-Repeater" (f2)'
+def test_a_route_is_drawn_with_arrows_and_a_path_keeps_its_commas() -> None:
+    """The lexicon's own split, finally drawn: a *route* is walked, a *path* is typed.
+
+    Both used to be comma-separated, which made a route look like something you could
+    paste back into ``--path``. You cannot — the names are in it — so that comma was
+    promising a round trip only the spec has. The arrow says "this is a picture", and
+    carries the direction the packet travelled while it is there.
+    """
+    assert (
+        script.route([("Alice", "3d"), ("Yagi-Repeater", "f2")])
+        == "Alice (3d) → Yagi-Repeater (f2)"
+    )
+    assert script.spec(["a1", "d4", "a1"]) == "a1,d4,a1"
 
 
-def test_a_path_line_names_our_own_node_like_any_other() -> None:
-    """No star: the glyph says "you already know this one", which is false of a parser."""
-    line = script.path([("MockCompanion", "a1"), ("Alice", "3d"), ("MockCompanion", "a1")])
+def test_a_route_names_our_own_node_like_any_other_hop() -> None:
+    """No star, and the reason is who reads the line.
+
+    The menu draws our own node as ``★`` because a reader never has to be told which node
+    is theirs. A route line is as often read out of a file, by somebody who was not at the
+    prompt when it ran — and by then the star names nothing.
+    """
+    line = script.route([("MockCompanion", "00"), ("Alice", "3d"), ("MockCompanion", "00")])
     assert "★" not in line
-    assert line.startswith('"MockCompanion" (a1)')
-    assert line.endswith('"MockCompanion" (a1)')
+    assert line.startswith("MockCompanion (00)")
+    assert line.endswith("MockCompanion (00)")
 
 
-def test_a_path_line_prints_a_name_alone_when_no_hash_places_it() -> None:
-    """An unidentified node has a name and nothing else; it does not get an empty ``()``."""
-    assert script.path([("Alice", None)]) == '"Alice"'
+def test_a_route_hop_never_shows_an_empty_pair_of_parentheses() -> None:
+    """Half an identity prints as the half there is — a name alone, or a hash alone.
+
+    Which is how the menu's own :class:`~meshterm.ui.pathline.PathLine` labels an
+    unresolved hop, and the reason both halves are optional: history often knows one.
+    """
+    assert script.route([("Alice", None)]) == "Alice"
+    assert script.route([(None, "3d")]) == "3d"
+    assert script.route([(None, None)]) == script.NONE
 
 
-def test_a_path_line_splits_even_when_a_name_holds_a_comma() -> None:
-    """The quoting is what makes the bare comma separator safe."""
-    line = script.path([("Node, Inc", "3d"), ("Bob", "f2")])
-    assert line.count(",") == 2  # the one inside the name, and the one separating hops
-    assert line == '"Node, Inc" (3d),"Bob" (f2)'
+def test_the_arrow_is_what_makes_the_quoting_unnecessary() -> None:
+    """The claim moved: the quotes made a comma safe, and now nothing has to.
+
+    A comma inside a node's name can no longer be read as a hop boundary, because the hop
+    boundary is not a comma any more.
+    """
+    line = script.route([("Node, Inc", "3d"), ("Bob", "f2")])
+    assert line == "Node, Inc (3d) → Bob (f2)"
+    assert line.count("→") == 1
+
+
+def test_a_spec_is_the_one_line_on_either_face_that_round_trips() -> None:
+    """It is what ``--path`` takes back, so it grows no name, no arrow and no space."""
+    assert script.spec(["a1b2", "d4e5", "a1b2"]) == "a1b2,d4e5,a1b2"
+    assert " " not in script.spec(["a1", "d4"])
+
+
+# -- live streams ----------------------------------------------------------------------
+
+
+def test_a_stream_pins_its_lanes_because_it_cannot_measure_them() -> None:
+    """A live capture cannot size its columns, because it has not seen the records yet.
+
+    :func:`~meshterm.ui.script.columns` sizes each lane to its widest value once every
+    record is in. ``monitor`` prints a row the instant a packet lands, and the row after it
+    may be twice as wide — so those two streams were gutter-joined with no alignment at
+    all, which is the last thing the quoting was holding up.
+    """
+    lanes = script.stream(("TIME", 19), ("NODE", 8), ("SNR_DB", 6), right=("SNR_DB",))
+    assert lanes.header == "TIME                 NODE      SNR_DB"
+    assert lanes.record("2026-09-08T02:25:45", "a1b2c3d4", "+7.0") == (
+        "2026-09-08T02:25:45  a1b2c3d4    +7.0"
+    )
+
+
+def test_a_streamed_value_wider_than_its_lane_overruns_rather_than_lying() -> None:
+    """One row out of many is simply wider, and nothing is elided.
+
+    Which is why the one unbounded field — a node's name, a message body — goes last: it
+    can then push nothing at all.
+    """
+    lanes = script.stream(("NODE", 8), ("NAME", 6))
+    assert lanes.record("a1", "A Very Long Node Name") == "a1        A Very Long Node Name"
 
 
 # -- the console ----------------------------------------------------------------------
@@ -204,9 +344,9 @@ def test_a_node_name_is_never_read_as_rich_markup(name: str) -> None:
     parser over. Neither is hypothetical: a name is the one field a stranger controls.
     """
     table = script.columns("NAME", "TYPE")
-    table.add_row(script.quote(name), "node")
+    table.add_row(script.name(name), "node")
     record = _rendered(table).splitlines()[1]
-    assert record.startswith(script.quote(name)), record
+    assert record.startswith(script.name(name)), record
 
 
 def test_the_scripted_console_never_wraps_a_record_onto_a_second_line() -> None:
@@ -221,8 +361,8 @@ def test_the_scripted_console_never_wraps_a_record_onto_a_second_line() -> None:
 def test_the_scripted_console_leaves_no_trailing_whitespace() -> None:
     """Padding the last column to its width would put invisible spaces on every line."""
     table = script.columns("NAME", "TYPE")
-    table.add_row(script.quote("a-long-name"), "node")
-    table.add_row(script.quote("b"), "repeater")
+    table.add_row(script.name("a-long-name"), "node")
+    table.add_row(script.name("b"), "repeater")
     for line in _rendered(table).splitlines():
         assert line == line.rstrip(), repr(line)
 
@@ -235,21 +375,21 @@ def test_the_gutter_still_separates_columns_after_the_trimming() -> None:
     columns (see :class:`meshterm.ui.script._Trimmed`).
     """
     table = script.columns("NAME", "TYPE", "PKTS", right=("PKTS",))
-    table.add_row(script.quote("Alice"), "node", "12")
+    table.add_row(script.name("Alice"), "node", "12")
     header, record = _rendered(table).splitlines()
     assert header.split() == ["NAME", "TYPE", "PKTS"]
-    assert record.split() == ['"Alice"', "node", "12"]
+    assert record.split() == ["Alice", "node", "12"]
     # Spelled out, not written as `" " * script.GUTTER`: an assertion that reads the
     # constant it is checking narrows to `" " in record` when the gutter narrows, which
     # is exactly the state the gutter exists to prevent.
-    assert '"Alice"  node' in record
+    assert "Alice  node" in record
 
 
 def test_columns_align_so_every_record_splits_the_same_way() -> None:
     """Every field lands in its heading's column, whatever the widths."""
     table = script.columns("NAME", "TYPE")
-    table.add_row(script.quote("Yagi-Repeater"), "repeater")
-    table.add_row(script.quote("Al"), "node")
+    table.add_row(script.name("Yagi-Repeater"), "repeater")
+    table.add_row(script.name("Al"), "node")
     header, *records = _rendered(table).splitlines()
     starts = {line.index("re") if "repeater" in line else line.index("node") for line in records}
     assert starts == {header.index("TYPE")}  # every TYPE value opens under its heading
@@ -265,8 +405,8 @@ def test_a_numeric_column_really_right_aligns() -> None:
     still aligns. Checking where a field *starts* cannot see this; only its end can.
     """
     table = script.columns("NAME", "PKTS", right=("PKTS",))
-    table.add_row(script.quote("Alice"), "1174")
-    table.add_row(script.quote("Bob"), "3")
+    table.add_row(script.name("Alice"), "1174")
+    table.add_row(script.name("Bob"), "3")
     header, *records = _rendered(table).splitlines()
     assert len({len(line) for line in records}) == 1, records
     assert {len(line) for line in records} == {len(header)}
@@ -296,10 +436,10 @@ def test_the_trimmer_keeps_the_gutter_when_the_stream_flushes_between_columns() 
     """
     buffer = io.StringIO()
     stream = script._Trimmed(buffer)
-    for segment in ('"Alice"', "  ", "node", "  ", "12", "\n"):
+    for segment in ("Alice", "  ", "node", "  ", "12", "\n"):
         stream.write(segment)
         stream.flush()
-    assert buffer.getvalue() == '"Alice"  node  12\n'
+    assert buffer.getvalue() == "Alice  node  12\n"
 
 
 def test_the_trimmer_still_drops_the_run_that_ends_a_line() -> None:
@@ -359,7 +499,7 @@ def test_a_group_is_unframed_member_by_member() -> None:
 def test_no_rendered_line_is_a_box_drawing_rule() -> None:
     """No borders and no header rules — a listing is its header line and its records."""
     table = script.columns("NAME", "TYPE")
-    table.add_row(script.quote("Alice"), "node")
+    table.add_row(script.name("Alice"), "node")
     assert "─" not in _rendered(table)
 
 

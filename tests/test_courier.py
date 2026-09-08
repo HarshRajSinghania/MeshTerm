@@ -13,6 +13,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from meshterm.core import exitcodes
 from meshterm.core.courier_store import DONE_CAP, QUEUED, CourierStore
 from meshterm.core.models import ChatMessage, Contact, utcnow
 from meshterm.core.watch_store import WatchStore
@@ -273,7 +274,11 @@ async def test_cli_list_renders_waiting_and_finished(tmp_path: Path) -> None:
 
     result = await CourierTool().run(ctx, {"cli_action": "list"})
     assert result.summary == {"entries": 2}
-    assert ctx.ui.shown  # a table was rendered
+    # The outbox is *stated*, not printed: the tool hands back the rows and the CLI
+    # boundary picks a renderer for them (see meshterm.ui.report).
+    listing = result.report[0]
+    assert sorted(row["state"] for row in listing.rows) == ["delivered", "waiting"]
+    assert sorted(row["text"] for row in listing.rows) == ["landed", "still waiting"]
 
 
 async def test_cli_list_empty_notes_and_counts_zero(tmp_path: Path) -> None:
@@ -283,7 +288,10 @@ async def test_cli_list_empty_notes_and_counts_zero(tmp_path: Path) -> None:
     ctx = _ToolCtx(tmp_path)
     result = await CourierTool().run(ctx, {"cli_action": "list"})
     assert result.summary == {"entries": 0}
-    assert ctx.ui.shown == []
+    assert result.exit_code == exitcodes.NO_RESULT
+    # An empty listing, not an absent one: the plain face draws nothing from it and the
+    # machine face gets `[]`, which is a document a consumer can read.
+    assert result.report[0].rows == []
 
 
 async def test_cli_cancel_removes_a_waiting_entry(tmp_path: Path) -> None:

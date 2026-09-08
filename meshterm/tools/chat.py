@@ -18,7 +18,6 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 import typer
-from rich.table import Table
 from rich.text import Text
 
 from ..context import AppContext
@@ -26,19 +25,24 @@ from ..core import exitcodes
 from ..core.channels import (
     CHANNEL_SLOT_PROBE_CAP,
     DEFAULT_PUBLIC_SECRET,
+    channel_hash,
     channel_identity,
+    is_public_channel,
 )
 from ..core.connection import Device
 from ..core.events import EventKind, MeshEvent
 from ..core.models import (
     NODE_TYPE_CHAT,
+    NODE_TYPE_LABELS,
     ChatMessage,
     Contact,
     Conversation,
     is_direct_messageable,
 )
 from ..services.trace_runner import NameKeyResolver, make_name_key_resolver
+from ..ui import renderers
 from ..ui.chat import _MENTION, _split_channel_sender
+from ..ui.fields import ChannelRef, NodeRef
 from ..ui.menus import Lane, column_header, fit_cells, section_heading
 from ..ui.theme import name_style
 from ..ui.tui import Choice, DeleteRequest, Separator
@@ -47,6 +51,7 @@ from .base import Tool, ToolResult, register
 
 if TYPE_CHECKING:
     from ..ui.channels import ChannelSlot
+    from ..ui.report import Facts, Listing
 
 #: How many recent messages ``chat history`` prints by default.
 _HISTORY_LIMIT = 50
@@ -261,19 +266,22 @@ class ChatTool(Tool):
         already tell the caller: the radio accepted it either way, and whether the peer
         answered is a separate fact.
         """
-        from ..ui import script
-
         device = await ctx.device()
         text = str(params["text"])
         channel = params.get("channel")
         if channel is not None:
             await ctx.chat.send_channel(int(channel), text, label=f"#{channel}")
-            return ToolResult(summary={"channel": channel, "sent": True})
+            return ToolResult(
+                summary={"channel": channel, "sent": True},
+                report=(_sent(channel=int(channel)),),
+            )
 
         contact = _resolve_contact(await device.get_contacts(), str(params["to"]))
         message = await ctx.chat.send_direct(contact, text)
-        ctx.ui.show(script.pairs([("acked", "yes" if message.acked else "no")]))
-        return ToolResult(summary={"to": contact.name, "acked": bool(message.acked)})
+        return ToolResult(
+            summary={"to": contact.name, "acked": bool(message.acked)},
+            report=(_sent(contact=contact, acked=bool(message.acked)),),
+        )
 
     async def _cli_history(self, ctx: AppContext, params: dict[str, Any]) -> ToolResult:
         """Print a conversation's stored transcript."""
@@ -296,10 +304,9 @@ class ChatTool(Tool):
             )
             label = contact.name
 
-        if messages:
-            ctx.ui.show(_history_table(label, messages))
         return ToolResult(
             summary={"conversation": label, "messages": len(messages)},
+            report=(_transcript(messages),),
             exit_code=exitcodes.OK if messages else exitcodes.NO_RESULT,
         )
 
@@ -332,11 +339,6 @@ class ChatTool(Tool):
             highlight=False,
         )
         seen = 0
-        # One header, then a record per message. Like the monitor's tail this cannot be
-        # column-aligned (the widths arrive with the data), so the fields are gutter-
-        # separated and the two that can hold anything — the conversation and the body —
-        # are quoted and last respectively.
-        ctx.console.print("TIME  CONVERSATION  SNR_DB  TEXT", highlight=False)
 
         def on_message(event: MeshEvent) -> None:
             nonlocal seen
@@ -344,25 +346,35 @@ class ChatTool(Tool):
             if message is None:
                 return
             seen += 1
-            where = f"#{message.channel}" if message.is_channel else (message.sender or "")
-            fields = [
-                script.stamp(message.received_at),
-                script.name(where),
-                script.number(message.snr, "+.1f"),
-                script.oneline(message.text),
-            ]
-            ctx.console.print((" " * script.GUTTER).join(fields), highlight=False)
+            channel = (
+                _channel_ref(message.channel, f"#{message.channel}", None)
+                if message.is_channel
+                else None
+            )
+            emit(
+                {
+                    "received_at": message.received_at,
+                    "conversation": channel.name if channel else (message.sender or None),
+                    "direction": "in",
+                    "node": None if message.is_channel else NodeRef(hash=message.sender),
+                    "channel": channel,
+                    "snr_db": message.snr,
+                    "text": message.text,
+                    "acked": None,
+                }
+            )
 
-        unsubscribe = ctx.events.subscribe(on_message, EventKind.MESSAGE)
-        try:
-            if seconds:
-                await asyncio.sleep(seconds)
-            else:
-                await asyncio.Event().wait()  # until Ctrl-C / cancellation
-        except (KeyboardInterrupt, asyncio.CancelledError):  # pragma: no cover - interactive
-            pass
-        finally:
-            unsubscribe()
+        with renderers.stream(ctx, _live_messages()) as emit:
+            unsubscribe = ctx.events.subscribe(on_message, EventKind.MESSAGE)
+            try:
+                if seconds:
+                    await asyncio.sleep(seconds)
+                else:
+                    await asyncio.Event().wait()  # until Ctrl-C / cancellation
+            except (KeyboardInterrupt, asyncio.CancelledError):  # pragma: no cover - interactive
+                pass
+            finally:
+                unsubscribe()
         return ToolResult(
             summary={"messages": seen},
             message=f"[muted]stopped — heard {seen} message{'' if seen == 1 else 's'}[/muted]",
@@ -376,30 +388,12 @@ class ChatTool(Tool):
         contacts = await device.get_contacts()
         lasts = ctx.repo.last_chat_messages()
 
-        from ..ui import script
-
         rows = [*channels] + [
             Conversation(label=c.name, is_channel=False, contact=c) for c in contacts
         ]
-        table = script.columns(
-            "CONVERSATION", "KIND", "UNREAD", "LAST_TIME", "LAST_TEXT", right=("UNREAD",)
-        )
-        for conversation in rows:
-            last = lasts.get(conversation.key)
-            table.add_row(
-                script.name(conversation.label),
-                "channel" if conversation.is_channel else "direct",
-                str(ctx.chat.unread(conversation.key)),
-                script.stamp(last.created_at) if last is not None else script.NONE,
-                # Not truncated to 40 cells the way the picker's preview is: nothing here
-                # wraps, so there is no reason to cut a message short — but a body that
-                # holds a newline would still end the record, so it is folded flat.
-                script.oneline(last.text) if last is not None else script.NONE,
-            )
-        if rows:
-            ctx.ui.show(table)
         return ToolResult(
             summary={"conversations": len(rows)},
+            report=(_conversations(ctx, rows, lasts),),
             exit_code=exitcodes.OK if rows else exitcodes.NO_RESULT,
         )
 
@@ -831,37 +825,218 @@ def _ago(when: Any) -> str:
     return _format_age(_age_seconds(when))
 
 
-def _history_table(label: str, messages: list[ChatMessage]) -> Table:
-    """A conversation's stored messages, oldest first, one record each.
+def _channel_ref(idx: int | None, label: str, secret: bytes | None) -> ChannelRef:
+    """One channel as the shared shape, from whatever the surface knows about it.
 
-    ``DIRECTION`` carries what the transcript wrote into its sender lane as the word
+    A transcript row and a live message know a slot and a label but not the key, so
+    ``public`` is read off the name where the secret is not in hand — which is what the
+    leading ``#`` means and how a public channel is written everywhere else in the app.
+    """
+    return ChannelRef(
+        slot=int(idx or 0),
+        name=label,
+        public=is_public_channel(label, secret) if secret else label.startswith("#"),
+        hash=channel_hash(secret) if secret else None,
+    )
+
+
+def _message_columns() -> tuple:
+    """One transcript row's columns, shared by ``history`` and the ``listen`` stream.
+
+    ``DIR`` carries what the menu's transcript writes into its sender lane as the word
     "you": which way a message went is a fact of its own, and spending the name lane on it
     made our own name a value that lane could not otherwise hold. ``PEER`` is therefore
-    always the *other* party — the sender of an inbound message, and empty on a channel
-    broadcast, which has no one party it went to.
+    always the *other* party.
 
-    ``TEXT`` is last and unquoted: it is the rest of the line. A message body can hold
-    absolutely anything, which is why it goes through :func:`~meshterm.ui.script.oneline`
-    — "the rest of the line" stops being true the moment the body holds a newline, and
-    the remainder then reads as a second record with an empty ``TIME``.
-
-    Args:
-        label: The conversation's display name (the caller named it; the columns don't).
-        messages: The messages to show, oldest-first.
-
-    Returns:
-        The scripted table (see :func:`meshterm.ui.script.columns`).
+    ``TEXT`` is last and escaped: it is the rest of the line, and "the rest of the line"
+    stops being true the moment a body holds a newline — after which the remainder reads
+    as a second record with an empty time. The document carries the body raw, a JSON string
+    holding a newline natively.
     """
-    from ..ui import script
+    from ..ui import fields
 
-    table = script.columns("TIME", "DIRECTION", "PEER", "SNR_DB", "TEXT", right=("SNR_DB",))
+    return (
+        fields.when("created_at", "AGE"),
+        fields.word("direction", "DIR"),
+        # One column for whichever end the conversation had; the document keeps the two
+        # apart, because a parser cannot tell a channel from a contact by its label.
+        fields.plain_only(fields.name("conversation", "PEER")),
+        fields.node("node", lanes=()),
+        fields.channel("channel", lanes=()),
+        fields.snr("snr_db", "SNR_DB"),
+        fields.free("text", "TEXT"),
+        fields.hidden("acked"),
+    )
+
+
+def _transcript(messages: list[ChatMessage]) -> Listing:
+    """A conversation's stored messages, oldest first, one record each."""
+    from ..ui.report import Listing
+
+    rows = []
     for message in messages:
-        peer = message.peer_name or message.peer or ""
-        table.add_row(
-            script.stamp(message.created_at),
-            "out" if message.outbound else "in",
-            script.name(peer),
-            script.number(message.snr, "+.1f"),
-            script.oneline(message.text),
+        channel = (
+            _channel_ref(message.channel_idx, message.peer_name or f"#{message.channel_idx}", None)
+            if message.is_channel
+            else None
         )
-    return table
+        rows.append(
+            {
+                "created_at": message.created_at,
+                "direction": "out" if message.outbound else "in",
+                "conversation": message.peer_name or message.peer or None,
+                "node": None
+                if message.is_channel
+                else NodeRef(name=message.peer_name, hash=message.peer),
+                "channel": channel,
+                "snr_db": message.snr,
+                "text": message.text,
+                "acked": message.acked,
+            }
+        )
+    return Listing(
+        key="messages",
+        columns=_message_columns(),
+        rows=rows,
+        order=("AGE", "DIR", "PEER", "SNR_DB", "TEXT"),
+    )
+
+
+def _live_messages() -> Listing:
+    """The shape ``chat listen`` streams: what arrived, as it arrived.
+
+    ``TIME`` is absolute here where the transcript's is an age, and for the reason the
+    whole time rule turns on: every row of a live tail would read ``now``, which is no
+    information at all. There is no ``DIR`` lane — everything a tail hears came in — and
+    the body goes last, so the one field with no width can never push a lane.
+    """
+    from dataclasses import replace
+
+    from ..ui import fields
+    from ..ui.report import Listing
+
+    def pin(column, width: int):  # noqa: ANN001, ANN202 - one column in, one column out
+        return replace(column, lanes=tuple(replace(lane, width=width) for lane in column.lanes))
+
+    return Listing(
+        key="messages",
+        columns=(
+            pin(fields.instant("received_at", "TIME"), 25),
+            pin(fields.plain_only(fields.name("conversation", "PEER")), 16),
+            fields.node("node", lanes=()),
+            fields.channel("channel", lanes=()),
+            pin(fields.snr("snr_db", "SNR_DB"), 6),
+            fields.free("text", "TEXT"),
+            fields.hidden("direction"),
+            fields.hidden("acked"),
+        ),
+        order=("TIME", "PEER", "SNR_DB", "TEXT"),
+    )
+
+
+def _conversations(ctx: AppContext, rows: list, lasts: dict) -> Listing:
+    """Every channel and contact, with the last thing said in each.
+
+    ``LAST`` is an age rather than an instant: a conversation list is scanned for what is
+    warm, and ``never`` is a real answer — the conversation exists and nothing has been
+    said in it.
+    """
+    from ..ui import fields
+    from ..ui.report import Listing
+
+    records = []
+    for conversation in rows:
+        last = lasts.get(conversation.key)
+        channel = (
+            _channel_ref(conversation.channel_idx, conversation.label, conversation.secret)
+            if conversation.is_channel
+            else None
+        )
+        contact = getattr(conversation, "contact", None)
+        records.append(
+            {
+                "kind": "channel" if conversation.is_channel else "direct",
+                "conversation": conversation.label,
+                "channel": channel,
+                "node": None
+                if conversation.is_channel
+                else NodeRef(
+                    name=conversation.label,
+                    key=(getattr(contact, "public_key", "") or "").lower() or None,
+                    hash=(getattr(contact, "key_prefix", "") or "").lower() or None,
+                    type=NODE_TYPE_LABELS.get(getattr(contact, "node_type", None)),
+                ),
+                "unread": ctx.chat.unread(conversation.key),
+                "last_message_at": last.created_at if last is not None else None,
+                # Not truncated to 40 cells the way the picker's preview is: nothing here
+                # wraps, so there is no reason to cut a message short — but a body that
+                # holds a newline would still end the record, so it is folded flat.
+                "last_text": last.text if last is not None else None,
+            }
+        )
+    return Listing(
+        key="conversations",
+        columns=(
+            fields.word("kind", "KIND"),
+            fields.plain_only(fields.name("conversation", "CONVERSATION")),
+            fields.channel("channel", lanes=()),
+            fields.node("node", lanes=()),
+            fields.integer("unread", "UNREAD"),
+            fields.when("last_message_at", "LAST", absent="never"),
+            fields.free("last_text", "LAST_TEXT"),
+        ),
+        rows=records,
+        order=("CONVERSATION", "KIND", "UNREAD", "LAST", "LAST_TEXT"),
+    )
+
+
+def _sent(
+    *,
+    contact: object | None = None,
+    channel: int | None = None,
+    acked: bool | None = None,
+) -> Facts:
+    """What one ``chat send`` did.
+
+    A direct message prints its ``acked`` state, which is the one thing the send does not
+    already tell the caller: the radio accepted it either way, and whether the peer
+    answered is a separate fact. A channel broadcast prints nothing, because there *is* no
+    acknowledgement on a channel — and the document says that in the one way the plain
+    face never could, with ``null`` rather than ``false``.
+    """
+    from ..ui import fields
+    from ..ui.report import PAIRS, SILENT, Facts
+
+    node = (
+        NodeRef(
+            name=contact.name,
+            key=(getattr(contact, "public_key", "") or "").lower() or None,
+            hash=(getattr(contact, "key_prefix", "") or "").lower() or None,
+            type=NODE_TYPE_LABELS.get(getattr(contact, "node_type", None)),
+        )
+        if contact is not None
+        else None
+    )
+    return Facts(
+        key="sent",
+        fields=(
+            # `acked` is the only lane: the caller named the recipient and the radio
+            # accepting the message is what a zero exit already says, so the one fact
+            # left to report is whether the peer answered.
+            fields.hidden("kind"),
+            fields.node("node", lanes=()),
+            fields.channel("channel", lanes=()),
+            fields.hidden("sent"),
+            fields.flag("acked", "acked"),
+        ),
+        values={
+            "kind": "channel" if channel is not None else "direct",
+            "node": node,
+            "channel": (
+                _channel_ref(channel, f"#{channel}", None) if channel is not None else None
+            ),
+            "sent": True,
+            "acked": acked,
+        },
+        shape=SILENT if channel is not None else PAIRS,
+    )

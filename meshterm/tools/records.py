@@ -14,18 +14,21 @@ The CLI face prints the stored boards: ``meshterm records`` reads the tables so 
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import typer
 
 from ..context import AppContext
 from ..core import exitcodes
-from ..services.records import CATEGORIES, CATEGORY_BY_ID
+from ..services.records import CATEGORIES, CATEGORY_BY_ID, Category
+from ..ui.script import NONE
 from .base import Tool, ToolResult, register
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from ..persistence.repository import DiscoveredPath
-    from ..services.records import Category
+    from ..ui.fields import NodeRef
+    from ..ui.report import Column
 
 
 @register
@@ -76,7 +79,7 @@ class TrophyCaseTool(Tool):
     def _show_records(
         self, ctx: AppContext, *, category: str | None, width: int | None
     ) -> ToolResult:
-        """Print the stored record boards (no device, no transmissions).
+        """State the stored record boards (no device, no transmissions).
 
         Args:
             ctx: Shared application context.
@@ -87,44 +90,61 @@ class TrophyCaseTool(Tool):
             A :class:`ToolResult` with the record count.
         """
         from ..services import trace_runner
-        from ..ui import script
+        from ..ui import fields
+        from ..ui.report import Listing
 
         wanted = [CATEGORY_BY_ID[category]] if category in CATEGORY_BY_ID else CATEGORIES
         # Names come from stored history alone — no contacts, because this command reads
         # the database and must work with no radio attached at all.
         resolve = trace_runner.make_node_resolver(None, ctx.repo.node_names())
 
-        table = script.columns(
-            "CATEGORY",
-            "WIDTH",
-            "SCORE",
-            "UNIT",
-            "RECORDED",
-            "VERSION",
-            "ROUTE",
-            right=("WIDTH", "SCORE"),
-        )
-        total = 0
+        rows: list[dict] = []
         for cat in wanted:
-            rows = ctx.repo.discoveries(cat.id, width_bytes=width)
-            rows.sort(key=lambda r: (r.width_bytes, r.score if cat.ascending else -r.score))
-            for record in rows:
-                table.add_row(
-                    cat.id,
-                    str(record.width_bytes),
-                    _score(cat, record),
-                    cat.unit,
-                    script.stamp(record.discovered_at),
-                    record.app_version,
-                    _route(record, resolve),
+            found = ctx.repo.discoveries(cat.id, width_bytes=width)
+            found.sort(key=lambda r: (r.width_bytes, r.score if cat.ascending else -r.score))
+            for record in found:
+                floor = cat.id == "long_haul" and not record.stats.get("km_complete", True)
+                rows.append(
+                    {
+                        "category": cat.id,
+                        "hash_bytes": record.width_bytes,
+                        "score": _Score(record.score, cat, floor),
+                        "unit": cat.unit,
+                        "lower_bound": floor,
+                        "recorded_at": record.discovered_at,
+                        "version": record.app_version,
+                        "path": record.spec or None,
+                        "route": _route(record, resolve),
+                    }
                 )
-                total += 1
-        if total:
-            ctx.ui.show(table)
+        listing = Listing(
+            key="records",
+            columns=(
+                fields.word("category", "CATEGORY"),
+                # The contract's word for the concept. The plain heading stays WIDTH,
+                # which is what a column of 1/2/4 reads as.
+                fields.integer("hash_bytes", "WIDTH"),
+                _score_column(),
+                fields.word("unit", "UNIT"),
+                # `>=273.0` is not a number, and a consumer comparing scores must be able
+                # to see the qualifier without string-matching a prefix off its own data.
+                fields.hidden("lower_bound"),
+                fields.when("recorded_at", "RECORDED"),
+                fields.word("version", "VERSION"),
+                # The transmitted spec, hop-aligned with the route beside it. It has no
+                # column — a route line already runs off the right — but it is what a
+                # caller re-walks with, so the document carries it.
+                fields.hidden("path"),
+                fields.route(),
+            ),
+            rows=rows,
+            order=("CATEGORY", "WIDTH", "SCORE", "UNIT", "RECORDED", "VERSION", "ROUTE"),
+        )
         return ToolResult(
-            summary={"records": total},
-            message=f"{total} record{'s' if total != 1 else ''} stored",
-            exit_code=exitcodes.OK if total else exitcodes.NO_RESULT,
+            summary={"records": len(rows)},
+            message=f"{len(rows)} record{'s' if len(rows) != 1 else ''} stored",
+            report=(listing,),
+            exit_code=exitcodes.OK if rows else exitcodes.NO_RESULT,
         )
 
     def register_cli(self, app: typer.Typer) -> None:
@@ -167,54 +187,77 @@ class TrophyCaseTool(Tool):
             run_tool_command(self, tool_params)
 
 
-def _score(category: Category, record: DiscoveredPath) -> str:
-    """A record's score as a bare number, in the category's unit (which is its own column).
+@dataclass(frozen=True, slots=True)
+class _Score:
+    """A record's score, and the one thing about it a bare number cannot carry.
 
-    ``format_score`` writes ``273.0 km`` for a reader; the unit belongs in the ``UNIT``
-    column here so the ``SCORE`` column is one comparable number per row.
+    ``format_score`` writes ``273.0 km`` for a reader; the unit is its own column here so
+    the ``SCORE`` column is one comparable number per row. What has to travel *with* the
+    number is the ``>=`` on a Longest-distance walk whose kilometre total is incomplete —
+    some hop on it has no known position, so the distance is a floor rather than a
+    measurement, and dropping the qualifier would turn a lower bound into a claim.
 
-    The one qualifier that survives is the ``>=`` on a Longest-distance walk whose
-    kilometre total is incomplete — some hop on it has no known position, so the distance
-    is a floor rather than a measurement. Dropping it would turn a lower bound into a
-    claim.
-
-    Args:
-        category: The discipline the record was set in.
-        record: The record.
-
-    Returns:
-        The score, prefixed ``>=`` where it is a lower bound.
+    The plain face wears the prefix; the document keeps the number a number and says
+    ``lower_bound`` beside it, because a consumer comparing scores cannot be asked to
+    string-match a prefix off the front of its own data.
     """
-    if category.unit == "nodes":
-        value = str(int(record.score))
-    elif category.unit == "dB":
-        value = f"{record.score:+.1f}"
-    else:
-        value = f"{record.score:.1f}"
-    incomplete = category.id == "long_haul" and not record.stats.get("km_complete", True)
-    return f">={value}" if incomplete else value
+
+    value: float
+    category: Category
+    lower_bound: bool
+
+    @property
+    def text(self) -> str:
+        """The score as the SCORE column prints it, qualifier and all."""
+        if self.category.unit == "nodes":
+            drawn = str(int(self.value))
+        elif self.category.unit == "dB":
+            drawn = f"{self.value:+.1f}"
+        else:
+            drawn = f"{self.value:.1f}"
+        return f">={drawn}" if self.lower_bound else drawn
 
 
-def _route(record: DiscoveredPath, resolve: Callable[[str], str | None]) -> str:
-    """A record's walk as the CLI's path line.
+def _score_column() -> Column:
+    """The SCORE column: the qualified figure plain, the bare number in the document."""
+    from ..ui.report import Column, Lane
+
+    return Column(
+        key="score",
+        lanes=(
+            Lane(
+                header="SCORE",
+                render=lambda s: s.text if s is not None else NONE,
+                align="right",
+            ),
+        ),
+        json=lambda s: None if s is None else s.value,
+    )
+
+
+def _route(record: DiscoveredPath, resolve: Callable[[str], str | None]) -> list[NodeRef]:
+    """A record's walk as the shared route shape.
 
     Each hop is named where history knows the node and carries the hash it was actually
     transmitted at — the spec's own hop, at this record's width — so the line can be read
-    against the ``spec`` a re-walk would take. Where the two lists disagree in length the
+    against the ``path`` a re-walk would take. Where the two lists disagree in length the
     node id stands in, which is the only identity that hop has.
+
+    Our own node never appears in a record's walk: a discovery is scored on what it
+    reached, and the two ends of it are somebody else's.
 
     Args:
         record: The record whose walk to render.
         resolve: Maps a node id to a friendly name, or ``None`` when unknown.
 
     Returns:
-        The path line (see :func:`meshterm.ui.script.path`).
+        The hops in propagation order.
     """
-    from ..ui import script
+    from ..ui.fields import NodeRef
 
     spec = record.spec.split(",") if record.spec else []
-    hops: list[tuple[str, str | None]] = []
+    hops: list[NodeRef] = []
     for index, node in enumerate(record.route):
         addressed = spec[index] if index < len(spec) else node
-        hops.append((resolve(node) or node, addressed))
-    return script.path(hops)
+        hops.append(NodeRef(name=resolve(node), hash=addressed))
+    return hops

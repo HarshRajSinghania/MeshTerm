@@ -1003,7 +1003,7 @@ async def _run_now(
     """
     from ..tools.config import apply_ops
 
-    changes, artifacts = await apply_ops(ctx, device, snapshot, ops)
+    changes, artifacts, _report = await apply_ops(ctx, device, snapshot, ops)
     for artifact in artifacts:
         ctx.ui.note(f"[ok]●[/ok] wrote [accent]{artifact}[/accent]")
     await ctx.ui.present(title=title)

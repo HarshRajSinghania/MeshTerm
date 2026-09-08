@@ -1,41 +1,50 @@
-"""The scripted CLI's output language — plain text, aligned, unadorned.
+"""The plain CLI's output language — text for a person at a prompt, aligned and unadorned.
 
-MeshTerm has two front ends and they are read by different things. The menu is read by a
-person sitting in front of it, and everything else in ``meshterm/ui/`` is built for that
-reader: colour that carries meaning, glyphs that stand for concepts, frames that group.
-The CLI is read by ``awk``. So it gets its own vocabulary, and this module is all of it.
+MeshTerm has two front ends and a third face. The menu is read by a person sitting in
+front of it, and everything else in ``meshterm/ui/`` is built for that reader: colour that
+carries meaning, glyphs that stand for concepts, frames that group. ``--json`` is read by
+a program, often somewhere else and often later. This module is the third: **someone at a
+prompt who typed a command to find something out, and wants the answer legible in one
+glance.**
 
-The rules, and why each one:
+That is a change of premise. The plain face used to be a serialisation format a person
+could squint at, and several of its rules existed only to make *splitting* safe — quoted
+names, absolute timestamps, a comma between path hops. Splitting is the machine face's job
+now (see :mod:`meshterm.ui.report` and :mod:`meshterm.ui.renderers`), so those rules were
+paying rent they could not afford. What survives is everything that makes the output a
+Unix utility's output, and one new rule in place of the quoting.
 
+* **Alignment is the delimiter.** A column that lines up is already one field to the eye,
+  so a name is bare (:func:`name`). The *escaping* under the quoting is not gone and never
+  can be (:func:`_escaped`): a name is broadcast by its own node and a message body is
+  filled in by a stranger, and neither may end the record it sits in.
 * **No colour.** ``stdout`` is a pipe more often than a terminal, and a colour that
   survives into a file is noise in it. The console this module builds has
   ``color_system=None``, so Rich emits no escape sequence at all — not a dim, not a bold.
   That is stricter than ``no_color``, which keeps the attributes and drops only the hues.
-  A *highlight* colour is reserved for the one thing that would be unreadable without it
-  (a route graph's emphasised path); nothing in the CLI draws one, and nothing claims the
-  colour speculatively.
 * **No wrapping.** A record is a line. Wrapping turns one record into two and puts the
-  second one's fields under the wrong headings, so the console is made :data:`WIDTH`
-  cells wide — far past any real line — and every column is ``no_wrap``. Long output runs
-  off the right, and the terminal (or ``less -S``, or the reader's pipe) decides what to
-  do about it.
+  second one's fields under the wrong headings, so the console is made :data:`WIDTH` cells
+  wide — far past any real line — and every column is ``no_wrap``. The one deliberate
+  exception is a *written page* (``about``, ``support``), which is drawn on a console
+  :data:`PAGE_WIDTH` cells wide instead: a paragraph is not a record, it has no headings
+  to land under, and unwrapped it is a single 600-cell line no terminal can read.
 * **No frames.** No panel borders, no table boxes, no rules, no titles. The command the
   reader typed is the title; a box around the answer is a second one.
 * **Aligned columns, one header line.** ``ps`` and ``df``'s shape: an uppercase header
   row, then records, fields padded apart by :data:`GUTTER` spaces. See :func:`columns`.
-* **Names are quoted where they share a line.** A node name can hold a space, a comma,
-  even a quote, so in a listing a bare name is not a field — it is however many fields the
-  name happens to split into. Every name in a :func:`columns` row or a :func:`path` line
-  goes through :func:`quote`. A :func:`pairs` line is the exception and needs no quoting:
-  it has exactly two fields, so the value is the rest of the line whatever it holds, and
-  quotes there would only be something to strip back off.
-* **Times are absolute.** ``3h`` is for a person watching a screen; a script wants
-  something it can sort and subtract, so every timestamp is local ISO-8601 to the second
-  (:func:`stamp`). The relative ages and their recency heat stay in the menu, where the
-  colour they are half made of still exists.
-* **One token for "nothing".** :data:`NONE` — a lone ``-`` — in every column, so an
-  absent value never has to be told apart from an empty one, an ``—``, an ``n/a`` or a
-  blank.
+* **A time is an age.** ``5m``, ``3h``, ``never`` — the same ladder the menu's columns use
+  (:func:`age`), because "how long ago" is the question a person is actually asking. An
+  absolute instant survives where the instant *is* the fact: the device clock, a scheduled
+  appointment, a live capture's own clock (:func:`stamp`). ``--absolute`` swaps the whole
+  language back for anyone who wants it, and the machine face is absolute UTC regardless.
+* **A route is drawn, a path is typed.** The lexicon already splits these: a *path* is an
+  ordered hop spec you compose or force, a *route* is the concrete node sequence a walk
+  took. So a path keeps its commas (:func:`spec`) because it round-trips into ``--path``,
+  and a route takes arrows (:func:`route`) because it is a picture and visibly is not a
+  spec. Rendering both with commas promised a round trip only one of them has.
+* **One token for "nothing".** :data:`NONE` — a lone ``-`` — in every column, so an absent
+  value never has to be told apart from an empty one, an ``—``, an ``n/a`` or a blank.
+  ``never`` is a *value*, not an absence: a node that has never been heard is a fact.
 * **No trailing whitespace.** Padding the last column to its width would put invisible
   spaces at the end of every line; the console trims them on the way out
   (:class:`_Trimmed`).
@@ -105,6 +114,10 @@ def _escaped(text: str) -> str:
     true of a value that arrived over the air. Named escapes where one reads (``\n``),
     numeric escapes everywhere else, and the backslash doubled so the whole thing reads
     back unambiguously.
+
+    This is what survived the retirement of the quoting. The quotes made a name *one
+    field* for a splitter, and alignment does that now; nothing else can stop a name
+    holding a newline from ending its own record early.
     """
     out: list[str] = []
     for ch in text:
@@ -117,60 +130,27 @@ def _escaped(text: str) -> str:
     return "".join(out)
 
 
-def quote(value: str | None) -> str:
-    r"""Wrap a name in doublequotes, escaping the ones inside it.
-
-    A node name is user-supplied text that can hold a space, a comma, or a quote, so it
-    is never a field on its own — quoting is what makes it one. The escaping is the
-    ordinary backslash convention and covers the backslash and the line breaks too, so the
-    value reads back unambiguously and cannot end the record it sits in.
-
-    Args:
-        value: The name to quote. ``None`` and the empty string both give ``""``.
-
-    Returns:
-        The quoted name, e.g. ``"Yagi-Repeater"`` or ``"He said \"hi\""``.
-    """
-    return '"' + _escaped(value or "").replace('"', '\\"') + '"'
-
-
 def name(value: str | None) -> str:
-    r"""A node's name as a field: quoted when there is one, :data:`NONE` when there isn't.
+    r"""A node's name as a field: bare and escaped, or :data:`NONE` when it has none.
 
-    :func:`quote` renders a missing name as ``""``, which is a different claim — *this node
-    is called nothing* rather than *this node never told us what it is called*. The CLI has
-    one token for the second, and seven of the ten places that printed a name were making
-    the first claim by accident, so the same unnamed node read as ``""`` in one listing and
-    ``-`` in the next.
+    The quotes are gone. They existed so a name holding a space or a comma stayed one
+    field for whatever was splitting the line; the splitter reads JSON now, and in plain
+    text the column alignment already says where a field ends. What survives is the
+    escaping — a node broadcasts its own name, so every name here is remote data, and a
+    newline in one must still not end the record it sits in.
 
-    It is also the distinction the JSON rendering needs: an absent name is ``null`` and an
-    empty one is ``""``, and it cannot be recovered later from a field that flattened both.
+    An empty name is still :data:`NONE` rather than an empty cell: ``""`` says *called
+    nothing* where the token says *never said*, and those are different facts. It is also
+    the distinction the machine face needs — an absent name is ``null``, an empty one is
+    ``""`` — and it cannot be recovered from a field that flattened both.
 
     Args:
         value: The name, or ``None``/empty where the node never supplied one.
 
     Returns:
-        The quoted name, or :data:`NONE`.
+        The escaped name, or :data:`NONE`.
     """
-    return quote(value) if value else NONE
-
-
-def oneline(value: str | None) -> str:
-    r"""``value`` as a field that can end a record without breaking it.
-
-    For the one field a listing leaves unquoted because it *is* the rest of the line — a
-    message body. "The rest of the line" and "anything at all" are not compatible: a body
-    holding a newline ended its record early and left the remainder indented under the
-    other columns, reading as a second record with an empty ``TIME``. A body is also the
-    field a stranger fills in, so that is not a hypothetical shape of message.
-
-    Args:
-        value: The free text. ``None`` gives :data:`NONE`.
-
-    Returns:
-        The text with its line breaks and tabs escaped, and no quotes around it.
-    """
-    return NONE if value is None else _escaped(value)
+    return _escaped(value) if value else NONE
 
 
 def text(value: str | None) -> str:
@@ -359,34 +339,6 @@ def spec(hops: Iterable[str]) -> str:
     return ",".join(parts) if parts else NONE
 
 
-def path(hops: Iterable[tuple[str, str | None]]) -> str:
-    """Render a hop sequence as the CLI's path line.
-
-    ``"Origin" (3d),"Relay" (f2),"Us" (a1)`` — each node's name quoted (:func:`quote`),
-    its hash in parentheses *outside* the quotes, hops separated by a bare comma.
-
-    The hash is there because the CLI has no colour. On a screen a route's hops are told
-    apart by their key-derived hues, and matched to a route graph's one-byte labels the
-    same way; with the colour gone, the hash is what carries that identity.
-
-    Our own node is a hop like any other — named and hashed, never the menu's ``★``. The
-    star says "you already know who this is", which is true of a reader and false of a
-    parser.
-
-    The comma is the separator ``--path`` already takes, and the quoting is what keeps the
-    line splittable when a name contains one.
-
-    Args:
-        hops: ``(label, hash)`` pairs in propagation order; a ``None`` hash prints the
-            name alone, for a node whose identity is genuinely unknown.
-
-    Returns:
-        The joined path line, or :data:`NONE` when there are no hops.
-    """
-    parts = [f"{quote(label)} ({value})" if value else quote(label) for label, value in hops]
-    return ",".join(parts) if parts else NONE
-
-
 def columns(*headers: str, right: Sequence[str] = ()) -> Table:
     """Build the scripted table: an uppercase header line, then padded records.
 
@@ -506,50 +458,6 @@ def stream(*widths: tuple[str, int], right: Sequence[str] = ()) -> Lanes:
         The layout, which prints its own header and formats each record.
     """
     return Lanes(widths=widths, right=frozenset(right))
-
-
-def wrap(body: str, width: int = PAGE_WIDTH) -> str:
-    """Fold a written page's paragraphs to ``width``, leaving its structure alone.
-
-    The deliberate exception to "no wrapping", and the reason the rule exists says why:
-    wrapping splits a *record* and lands half its fields under the wrong headings. A
-    written page has no records and no headings — and left unwrapped, ``meshterm about``
-    prints paragraphs six hundred cells long that no terminal can read.
-
-    A line's own indent is kept and carried onto its continuations, so a bullet stays a
-    bullet and an indented block stays indented; a blank line stays blank; a line that is
-    already short is untouched.
-
-    Args:
-        body: The page, as its plain renderer laid it out.
-        width: The cell width to fold to.
-
-    Returns:
-        The page with every over-long line folded under its own indent.
-    """
-    import textwrap
-
-    out: list[str] = []
-    for line in body.splitlines():
-        stripped = line.lstrip()
-        if not stripped:
-            out.append("")
-            continue
-        indent = line[: len(line) - len(stripped)]
-        # A bullet's continuations hang under its text, not under its marker.
-        hanging = indent + ("  " if stripped[:1] in "-*•" else "")
-        out.extend(
-            textwrap.wrap(
-                stripped,
-                width=max(width - len(indent), 20),
-                initial_indent=indent,
-                subsequent_indent=hanging,
-                break_long_words=False,
-                break_on_hyphens=False,
-            )
-            or [indent + stripped]
-        )
-    return "\n".join(out)
 
 
 # -- the console ---------------------------------------------------------------------

@@ -18,16 +18,20 @@ summarizes the window when it ends.
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import typer
-from rich.table import Table
 
 from ..context import AppContext
 from ..core import exitcodes
 from ..core.events import EventKind, MeshEvent
-from ..core.models import HeardNode, Observation
+from ..core.models import NODE_TYPE_LABELS, HeardNode, Observation
+from ..ui import renderers
+from ..ui.fields import NodeRef, Position
 from .base import Tool, ToolResult, register
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from ..ui.report import Listing
 
 
 @register
@@ -88,50 +92,59 @@ class MonitorTool(Tool):
             highlight=False,
         )
         seen: list[Observation] = []
-        # One header for the live stream, then a record per packet as it arrives. The
-        # stream cannot be column-aligned — the widths are not known until it ends — so
-        # the fields are separated by the gutter and the name carries its quotes, which is
-        # what keeps the line splittable.
-        ctx.console.print("TIME  NODE  NAME  SNR_DB  RSSI_DBM  LAT  LON", highlight=False)
 
         def on_observation(event: MeshEvent) -> None:
             obs = event.observation
             if obs is None:
                 return
             seen.append(obs)
-            fields = [
-                script.stamp(obs.observed_at),
-                obs.node or script.NONE,
-                script.name(obs.name),
-                script.number(obs.snr, "+.1f"),
-                script.number(obs.rssi, ".0f"),
-                script.number(obs.lat, ".5f"),
-                script.number(obs.lon, ".5f"),
-            ]
-            ctx.console.print((" " * script.GUTTER).join(fields), highlight=False)
+            emit(
+                {
+                    "observed_at": obs.observed_at,
+                    "node": NodeRef(
+                        name=obs.name,
+                        key=(obs.public_key or "").lower() or None,
+                        hash=obs.node,
+                        type=NODE_TYPE_LABELS.get(obs.node_type),
+                    ),
+                    "kind": obs.kind,
+                    "snr_db": obs.snr,
+                    "rssi_dbm": obs.rssi,
+                    "position": _position(obs.lat, obs.lon),
+                    "path": _relays(obs.path),
+                }
+            )
 
-        unsubscribe = ctx.events.subscribe(on_observation, EventKind.OBSERVATION)
-        try:
-            if seconds:
-                await asyncio.sleep(seconds)
-            else:
-                await asyncio.Event().wait()  # until Ctrl-C / cancellation
-        except (KeyboardInterrupt, asyncio.CancelledError):  # pragma: no cover - interactive
-            pass
-        finally:
-            unsubscribe()
-            await ctx.monitor.stop()  # close the run row so the capture is a full record
+        with renderers.stream(ctx, _live_packets()) as emit:
+            unsubscribe = ctx.events.subscribe(on_observation, EventKind.OBSERVATION)
+            try:
+                if seconds:
+                    await asyncio.sleep(seconds)
+                else:
+                    await asyncio.Event().wait()  # until Ctrl-C / cancellation
+            except (KeyboardInterrupt, asyncio.CancelledError):  # pragma: no cover - interactive
+                pass
+            finally:
+                unsubscribe()
+                await ctx.monitor.stop()  # close the run row so the capture is a full record
 
         by_node: dict[str, list[Observation]] = {}
         for obs in seen:
             by_node.setdefault(obs.node, []).append(obs)
         nodes = [HeardNode.from_observations(node, group) for node, group in by_node.items()]
-        if nodes:
-            nodes.sort(key=lambda n: n.last_seen, reverse=True)
-            ctx.ui.show(script.blank())
-            ctx.ui.show(_heard_table(nodes))
+        nodes.sort(key=lambda n: n.last_seen, reverse=True)
+        # The window is over, so its facts are worth saying — on stderr, where everything
+        # about a run goes, keeping the packets a caller redirected the run for on their own.
+        script.stderr_console().print(
+            f"captured {len(seen)} packet{'' if len(seen) == 1 else 's'} "
+            f"from {len(nodes)} node{'' if len(nodes) == 1 else 's'}"
+            + (f" in {seconds}s" if seconds else ""),
+            style="muted",
+            highlight=False,
+        )
         return ToolResult(
             summary={"seconds": seconds, "packets": len(seen), "nodes": len(nodes)},
+            report=(_heard(nodes),),
             exit_code=exitcodes.OK if seen else exitcodes.NO_RESULT,
         )
 
@@ -152,38 +165,120 @@ class MonitorTool(Tool):
             run_tool_command(self, {"seconds": seconds})
 
 
-def _heard_table(heard: list[HeardNode]) -> Table:
+def _position(lat: float | None, lon: float | None) -> Position | None:
+    """A reception's shared position, or ``None`` where the packet carried none."""
+    return Position(lat, lon) if lat is not None and lon is not None else None
+
+
+def _relays(path: str | None) -> list[str] | None:
+    """A packet's relay chain as hashes, in propagation order.
+
+    Hashes rather than the shared node shape, and that is the honest answer: nothing
+    resolves a relay to a node at reception time, so a node object per hop would be four
+    ``null``s wrapped round a hash. ``[]`` is a direct reception (zero hops); ``None``
+    means the packet class carries no path at all, which is a different fact.
+    """
+    if path is None:
+        return None
+    return [hop for hop in path.split(",") if hop]
+
+
+def _live_packets() -> Listing:
+    """The shape the live capture streams: one record per packet, as it lands.
+
+    ``TIME`` is absolute where a listing's times are ages, and for the reason the whole
+    rule turns on: every row of a live tail would read ``now``. The **name goes last**, so
+    the one field with no width cannot push a lane — which is what finally let the two
+    streams have columns at all, and with them the quoting could go.
+    """
+    from dataclasses import replace
+
+    from ..ui import fields
+    from ..ui.report import Listing
+
+    def pin(column, width: int):  # noqa: ANN001, ANN202 - one column in, one column out
+        return replace(column, lanes=tuple(replace(lane, width=width) for lane in column.lanes))
+
+    node = fields.node("node", lanes=(("hash", "NODE"), ("name", "NAME")))
+    node = replace(
+        node,
+        lanes=(replace(node.lanes[0], width=8), node.lanes[1]),
+    )
+    return Listing(
+        key="observations",
+        columns=(
+            pin(fields.instant("observed_at", "TIME"), 25),
+            node,
+            # The packet class, which the plain stream has never had room for. New
+            # surface: the simulator does not exercise every class, so a consumer should
+            # treat an unfamiliar word as a word rather than an error.
+            fields.hidden("kind"),
+            pin(fields.snr("snr_db", "SNR_DB"), 6),
+            pin(fields.decimal("rssi_dbm", "RSSI_DBM", ".0f"), 8),
+            pin(fields.position(), 19),
+            fields.hidden("path"),
+        ),
+        order=("TIME", "NODE", "SNR_DB", "RSSI_DBM", "LOCATION", "NAME"),
+    )
+
+
+def _heard(heard: list[HeardNode]) -> Listing:
     """The capture window's per-node summary: what each node did over the whole window.
 
     The aggregate the live stream cannot give — a count, a median, a best — one record per
     node heard, most recently heard first.
 
+    Drawn **for a person only**. Every figure in it is computable from the records that
+    scrolled past above it, and emitting it as a second *shape* of line in the middle of an
+    otherwise homogeneous NDJSON stream would cost every consumer a discriminator it would
+    never otherwise need.
+
     Args:
         heard: Aggregated per-node statistics for the window.
 
     Returns:
-        The scripted table (see :func:`meshterm.ui.script.columns`).
+        The listing.
     """
-    from ..ui import script
+    from ..ui import fields
+    from ..ui.report import Listing
 
-    table = script.columns(
-        "NODE",
-        "NAME",
-        "PKTS",
-        "MEDIAN_SNR_DB",
-        "BEST_SNR_DB",
-        "RSSI_DBM",
-        "LAST_HEARD",
-        right=("PKTS", "MEDIAN_SNR_DB", "BEST_SNR_DB", "RSSI_DBM"),
+    return Listing(
+        key="heard",
+        columns=(
+            fields.node("node", lanes=(("hash", "NODE"), ("name", "NAME"))),
+            fields.integer("packets", "PKTS"),
+            fields.snr("median_snr_db", "MEDIAN_SNR_DB"),
+            fields.snr("best_snr_db", "BEST_SNR_DB"),
+            fields.decimal("last_rssi_dbm", "RSSI_DBM", ".0f"),
+            fields.when("last_heard_at", "HEARD"),
+            fields.position(),
+        ),
+        rows=[
+            {
+                "node": NodeRef(
+                    name=node.name,
+                    key=(node.public_key or "").lower() or None,
+                    hash=node.node,
+                    type=NODE_TYPE_LABELS.get(node.node_type),
+                ),
+                "packets": node.count,
+                "median_snr_db": node.median_snr,
+                "best_snr_db": node.best_snr,
+                "last_rssi_dbm": node.last_rssi,
+                "last_heard_at": node.last_seen,
+                "position": _position(node.lat, node.lon),
+            }
+            for node in heard
+        ],
+        order=(
+            "NODE",
+            "NAME",
+            "PKTS",
+            "MEDIAN_SNR_DB",
+            "BEST_SNR_DB",
+            "RSSI_DBM",
+            "HEARD",
+            "LOCATION",
+        ),
+        plain_only=True,
     )
-    for node in heard:
-        table.add_row(
-            node.node or script.NONE,
-            script.name(node.name),
-            str(node.count),
-            script.number(node.median_snr, "+.1f"),
-            script.number(node.best_snr, "+.1f"),
-            script.number(node.last_rssi, ".0f"),
-            script.stamp(node.last_seen),
-        )
-    return table

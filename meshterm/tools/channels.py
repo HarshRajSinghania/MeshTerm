@@ -12,7 +12,7 @@ everything to do with configuring the slots themselves.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import typer
 from rich.console import Group
@@ -21,13 +21,18 @@ from rich.text import Text
 from ..context import AppContext
 from ..core import exitcodes
 from ..core.channels import (
+    channel_hash,
     derive_secret,
+    is_public_channel,
     normalize_secret,
     parse_share_url,
     random_secret,
     share_url,
 )
 from .base import Tool, ToolResult, register
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from ..ui.report import Facts, Listing
 
 
 @register
@@ -84,23 +89,15 @@ class ChannelsTool(Tool):
 
     async def _cli_list(self, ctx: AppContext) -> ToolResult:
         """List the configured channel slots."""
-        from ..ui import script
         from ..ui.channels import read_channel_slots
 
         device = await ctx.device()
         slots = await read_channel_slots(device)
-        if not slots:
-            return ToolResult(summary={"channels": 0}, exit_code=exitcodes.NO_RESULT)
-        table = script.columns("SLOT", "NAME", "TYPE", "HASH", right=("SLOT",))
-        for slot in slots:
-            table.add_row(
-                str(slot.idx),
-                script.name(slot.name),
-                "public" if slot.is_public else "private",
-                slot.hash,
-            )
-        ctx.ui.show(table)
-        return ToolResult(summary={"channels": len(slots)})
+        return ToolResult(
+            summary={"channels": len(slots)},
+            report=(_channel_listing(slots),),
+            exit_code=exitcodes.OK if slots else exitcodes.NO_RESULT,
+        )
 
     async def _cli_add(self, ctx: AppContext, params: dict[str, Any]) -> ToolResult:
         """Add a public, private-random, or explicitly-keyed channel on a slot."""
@@ -115,8 +112,11 @@ class ChannelsTool(Tool):
         else:
             secret = normalize_secret(params["secret"]) if params.get("secret") else random_secret()
             await write_channel(ctx, device, idx, name, secret)
-        self._print_share(ctx, name, secret)
-        return ToolResult(summary={"index": idx, "name": name})
+        self._show_qr(ctx, share_url(name, secret))
+        return ToolResult(
+            summary={"index": idx, "name": name},
+            report=(_written(idx, name, secret),),
+        )
 
     async def _cli_join(self, ctx: AppContext, params: dict[str, Any]) -> ToolResult:
         """Join a channel from a name and an explicit key."""
@@ -127,7 +127,10 @@ class ChannelsTool(Tool):
         name = str(params["name"])
         secret = normalize_secret(str(params["secret"]))
         await write_channel(ctx, device, idx, name, secret)
-        return ToolResult(summary={"index": idx, "name": name})
+        return ToolResult(
+            summary={"index": idx, "name": name},
+            report=(_written(idx, name, secret, shown=False),),
+        )
 
     async def _cli_import(self, ctx: AppContext, params: dict[str, Any]) -> ToolResult:
         """Import a channel from a ``meshcore://channel/add`` link."""
@@ -140,10 +143,18 @@ class ChannelsTool(Tool):
         device = await ctx.device()
         idx = int(params["index"])
         await write_channel(ctx, device, idx, name, secret)
-        return ToolResult(summary={"index": idx, "name": name})
+        return ToolResult(
+            summary={"index": idx, "name": name},
+            report=(_written(idx, name, secret, shown=False),),
+        )
 
     async def _cli_share(self, ctx: AppContext, params: dict[str, Any]) -> ToolResult:
-        """Print a channel's share link and QR code."""
+        """Print a channel's share link, with its QR code in the menu.
+
+        The one command that names a channel's key deliberately, so it is the one place
+        the secret and the share URL leave the app at all — every other channel document
+        carries the identity and stops there.
+        """
         from ..ui.channels import read_channel_slots
 
         device = await ctx.device()
@@ -151,10 +162,15 @@ class ChannelsTool(Tool):
         slot = next((s for s in await read_channel_slots(device) if s.idx == idx), None)
         if slot is None:
             return ToolResult(
-                summary={"index": idx, "shared": False}, exit_code=exitcodes.NO_RESULT
+                summary={"index": idx, "shared": False},
+                report=(_written(idx, None, None, shown=False),),
+                exit_code=exitcodes.NO_RESULT,
             )
-        self._print_share(ctx, slot.name, slot.secret)
-        return ToolResult(summary={"index": idx, "shared": True})
+        self._show_qr(ctx, share_url(slot.name, slot.secret))
+        return ToolResult(
+            summary={"index": idx, "shared": True},
+            report=(_written(idx, slot.name, slot.secret),),
+        )
 
     async def _cli_clear(self, ctx: AppContext, params: dict[str, Any]) -> ToolResult:
         """Clear a channel slot, removing the channel from the device.
@@ -171,27 +187,29 @@ class ChannelsTool(Tool):
         slot = next((s for s in await read_channel_slots(device) if s.idx == idx), None)
         if slot is None:
             return ToolResult(
-                summary={"index": idx, "cleared": False}, exit_code=exitcodes.NO_RESULT
+                summary={"index": idx, "cleared": False},
+                report=(_cleared(idx, False),),
+                exit_code=exitcodes.NO_RESULT,
             )
         await write_channel(ctx, device, idx, "", None)  # empty name => the slot reads as unused
-        return ToolResult(summary={"index": idx, "cleared": True})
+        return ToolResult(
+            summary={"index": idx, "cleared": True},
+            report=(_cleared(idx, True),),
+        )
 
     @staticmethod
-    def _print_share(ctx: AppContext, name: str, secret: bytes) -> None:
-        """Render a channel's share link — with its QR code in the menu, without on the CLI.
+    def _show_qr(ctx: AppContext, url: str) -> None:
+        """Draw a channel's share link as a QR code — in the menu, and only there.
 
         The QR is for a phone pointed at the screen. Piped into a file it is a block of
         block characters wrapped around the one thing that is actually the answer, so a
-        scripted run prints the link alone.
+        scripted run states the link and nothing else.
         """
         from ..ui.qr import qr_text
         from ..ui.surface import TuiUi
 
-        url = share_url(name, secret)
         if isinstance(ctx.ui, TuiUi):
             ctx.ui.show(Group(qr_text(url), Text(""), Text(url, style="accent")))
-        else:
-            ctx.ui.note(url)
 
     def register_cli(self, app: typer.Typer) -> None:
         """Register the ``channels`` subcommand group.
@@ -259,3 +277,89 @@ class ChannelsTool(Tool):
             run_tool_command(self, {"cli_action": "clear", "index": index})
 
         app.add_typer(channels_app, name=self.name)
+
+
+def _channel_listing(slots: list) -> Listing:
+    """The configured slots, one record each.
+
+    The one listing whose record *is* a shared shape rather than carrying one: a row that
+    nested its only field under a ``channel`` key would make ``jq '.[].channel.name'``
+    out of a listing whose every column is already the channel.
+    """
+    from ..ui import fields
+    from ..ui.report import Listing
+
+    return Listing(
+        key="channels",
+        columns=(
+            fields.integer("slot", "SLOT"),
+            fields.name("name", "NAME"),
+            fields.word("type", "TYPE"),
+            fields.hexid("hash", "HASH"),
+        ),
+        rows=[
+            {
+                "slot": slot.idx,
+                "name": slot.name,
+                "type": "public" if slot.is_public else "private",
+                "hash": slot.hash,
+            }
+            for slot in slots
+        ],
+    )
+
+
+def _written(idx: int, name: str | None, secret: bytes | None, *, shown: bool = True) -> Facts:
+    """What a slot now holds, after ``add``, ``join``, ``import`` or ``share``.
+
+    All four write or read the same thing and all four know the key they wrote, so all
+    four state the same shape. The plain face prints the share URL alone where the caller
+    asked to be given something to pass on (``add``, ``share``) and nothing at all where
+    it did not (``join``, ``import``): those two were handed the key, and reading it back
+    to them is not an answer.
+
+    Args:
+        idx: The slot index.
+        name: The channel name, or ``None`` for a slot that turned out to be empty.
+        secret: The 16-byte key, or ``None`` for an empty slot.
+        shown: Whether the plain face prints the URL.
+
+    Returns:
+        The facts block.
+    """
+    from ..ui import fields
+    from ..ui.fields import ChannelRef
+    from ..ui.report import BARE, SILENT, Facts
+
+    channel = None
+    if name is not None and secret is not None:
+        public = is_public_channel(name, secret)
+        channel = ChannelRef(slot=idx, name=name, public=public, hash=channel_hash(secret))
+    return Facts(
+        key="channel",
+        fields=(
+            fields.channel("channel"),
+            fields.hexid("secret", "secret"),
+            fields.word("url", "url"),
+        ),
+        values={
+            "channel": channel,
+            "secret": secret.hex() if secret else None,
+            "url": share_url(name, secret) if name is not None and secret is not None else None,
+        },
+        shape=BARE if shown else SILENT,
+        bare="url",
+    )
+
+
+def _cleared(idx: int, cleared: bool) -> Facts:
+    """What ``channels clear`` did — nothing plain, since the status already said it."""
+    from ..ui import fields
+    from ..ui.report import SILENT, Facts
+
+    return Facts(
+        key="cleared",
+        fields=(fields.integer("slot", "slot"), fields.flag("cleared", "cleared")),
+        values={"slot": idx, "cleared": cleared},
+        shape=SILENT,
+    )

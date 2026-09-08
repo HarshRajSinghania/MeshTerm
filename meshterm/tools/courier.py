@@ -17,15 +17,18 @@ of the outbox screen's own Send-now, Cancel, and Clear-finished actions.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import typer
 
 from ..context import AppContext
 from ..core import exitcodes
 from ..core.connection import DeviceCommandError
-from ..ui import script
 from .base import Tool, ToolResult, register
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from ..core.courier_store import QueuedMessage
+    from ..ui.report import Facts, Listing
 
 
 @register
@@ -124,48 +127,23 @@ class CourierTool(Tool):
             f"[ok]queued[/ok] #{message.ident} for [brand]{contact.name}[/brand] — "
             f"delivers {when} (an interactive session's courier does the sending)"
         )
-        # The entry's id is the one fact a caller has to keep: it is what `courier send`
-        # and `courier cancel` take.
-        ctx.ui.show(script.pairs([("id", str(message.ident))]))
         return ToolResult(
-            summary={"queued": message.ident, "contact": contact.name, "at": params.get("at")}
+            summary={"queued": message.ident, "contact": contact.name, "at": params.get("at")},
+            report=(_queued(message, contact.name, not_before),),
         )
 
     async def _cli_list(self, ctx: AppContext) -> ToolResult:
-        """Print the outbox — waiting entries then finished ones — as a table.
+        """State the outbox — waiting entries then finished ones.
 
         A read-only view over the stored outbox: it needs no device, so it works the same
         whether or not a radio is attached (the scriptable face of the outbox screen).
         """
-        from ..core.courier_store import DELIVERED, QUEUED
-
         entries = ctx.courier_store.entries()
-        if not entries:
-            return ToolResult(summary={"entries": 0}, exit_code=exitcodes.NO_RESULT)
-
-        table = script.columns(
-            "ID", "STATE", "NODE", "SCHEDULED", "FINISHED", "TEXT", right=("ID",)
+        return ToolResult(
+            summary={"entries": len(entries)},
+            report=(_outbox(entries),),
+            exit_code=exitcodes.OK if entries else exitcodes.NO_RESULT,
         )
-        for m in entries:
-            if m.status == QUEUED:
-                state = "waiting"
-            elif m.status == DELIVERED:
-                state = "delivered"
-            else:
-                state = "gave up"
-            table.add_row(
-                str(m.ident),
-                state,
-                script.name(m.node_name),
-                # An entry with no scheduled time goes as soon as the contact is heard,
-                # which is not a time and so is not one here either.
-                script.stamp(m.not_before),
-                script.stamp(m.finished),
-                # Not shortened the way the outbox screen shortens it: nothing wraps here.
-                m.text,
-            )
-        ctx.ui.show(table)
-        return ToolResult(summary={"entries": len(entries)})
 
     async def _cli_send(self, ctx: AppContext, params: dict[str, Any]) -> ToolResult:
         """Force one delivery attempt for a waiting entry, right now.
@@ -188,18 +166,26 @@ class CourierTool(Tool):
             "gone": "[muted]that entry is no longer waiting[/muted]",
         }
         ctx.ui.ack(notes.get(outcome, outcome))
-        # The outcome word is the answer, and it is one of a closed set the help lists.
-        ctx.ui.show(script.pairs([("outcome", outcome)]))
-        return ToolResult(summary={"id": ident, "outcome": outcome})
+        return ToolResult(
+            summary={"id": ident, "outcome": outcome},
+            report=(_attempted(ident, outcome),),
+        )
 
     async def _cli_cancel(self, ctx: AppContext, params: dict[str, Any]) -> ToolResult:
         """Remove a waiting entry from the outbox (finished ones use ``clear``)."""
         ident = int(params["id"])
         if ctx.courier_store.cancel(ident):
             ctx.ui.ack(f"[warn]cancelled outbox entry #{ident}[/warn]")
-            return ToolResult(summary={"id": ident, "cancelled": True})
+            return ToolResult(
+                summary={"id": ident, "cancelled": True},
+                report=(_did(("id", ident), ("cancelled", True)),),
+            )
         ctx.ui.ack(f"[muted]no waiting entry #{ident} to cancel[/muted]")
-        return ToolResult(summary={"id": ident, "cancelled": False}, exit_code=exitcodes.NO_RESULT)
+        return ToolResult(
+            summary={"id": ident, "cancelled": False},
+            report=(_did(("id", ident), ("cancelled", False)),),
+            exit_code=exitcodes.NO_RESULT,
+        )
 
     async def _cli_clear(self, ctx: AppContext) -> ToolResult:
         """Drop every finished (delivered / given-up) entry, leaving the queue untouched."""
@@ -212,6 +198,7 @@ class CourierTool(Tool):
             ctx.ui.ack("[muted]no finished entries to clear[/muted]")
         return ToolResult(
             summary={"cleared": cleared},
+            report=(_did(("cleared", cleared)),),
             exit_code=exitcodes.OK if cleared else exitcodes.NO_RESULT,
         )
 
@@ -265,3 +252,130 @@ class CourierTool(Tool):
             run_tool_command(self, {"cli_action": "clear"})
 
         app.add_typer(courier_app, name=self.name)
+
+
+def _recipient(name: str | None, node_key: str | None) -> object:
+    """The outbox's addressee as the shared node shape.
+
+    The outbox stores a name and the 12-hex id it addresses, so three of the five fields
+    are honestly ``null`` — and the id goes in ``hash`` rather than ``key``, because that
+    is what it is. A key is the full value and is never truncated by this app's choosing;
+    calling a six-byte prefix one would hand a caller something ``--to`` cannot take.
+    """
+    from ..ui.fields import NodeRef
+
+    return NodeRef(name=name, hash=(node_key or "").lower() or None)
+
+
+def _queued(message: QueuedMessage, name: str, not_before: object) -> Facts:
+    """What ``courier queue`` put in the outbox.
+
+    The plain face prints the **id and nothing else**, because the id is the one fact a
+    caller has to keep — it is what ``send`` and ``cancel`` take — and everything else on
+    the line is what they just typed. The document carries the rest, because a caller
+    logging the queue has no other record of it.
+    """
+    from ..ui import fields
+    from ..ui.report import Facts
+
+    return Facts(
+        key="queued",
+        fields=(
+            fields.integer("id", "id"),
+            fields.node("node", lanes=()),
+            fields.hidden("scheduled_at"),
+            fields.hidden("text"),
+        ),
+        values={
+            "id": message.ident,
+            "node": _recipient(name, message.node_key),
+            "scheduled_at": not_before,
+            "text": message.text,
+        },
+    )
+
+
+def _outbox(entries: list) -> Listing:
+    """The outbox, waiting entries then finished ones.
+
+    The deliberate asymmetry between the two time columns: ``SCHEDULED`` is an
+    *appointment* the caller set with ``--at``, so it stays a wall-clock instant, and
+    ``FINISHED`` is an age, because "how long ago did it go" is what anyone reading a
+    delivered row wants. The mixed widths are the price of both columns being right, and
+    ``--absolute`` makes them uniform for anyone who dislikes it.
+    """
+    from ..core.courier_store import DELIVERED, QUEUED
+    from ..ui import fields
+    from ..ui.report import Listing
+
+    rows = []
+    for m in entries:
+        if m.status == QUEUED:
+            state = "waiting"
+        elif m.status == DELIVERED:
+            state = "delivered"
+        else:
+            state = "gave up"
+        rows.append(
+            {
+                "id": m.ident,
+                "state": state,
+                "node": _recipient(m.node_name, m.node_key),
+                # An entry with no scheduled time goes as soon as the contact is heard,
+                # which is not a time and so is not one here either.
+                "scheduled_at": m.not_before,
+                "finished_at": m.finished,
+                # Not shortened the way the outbox screen shortens it: nothing wraps here.
+                "text": m.text,
+            }
+        )
+    return Listing(
+        key="outbox",
+        columns=(
+            fields.integer("id", "ID"),
+            fields.word("state", "STATE"),
+            fields.node("node", lanes=(("name", "NODE"),)),
+            fields.instant("scheduled_at", "SCHEDULED"),
+            fields.when("finished_at", "FINISHED"),
+            fields.free("text", "TEXT"),
+        ),
+        rows=rows,
+    )
+
+
+def _attempted(ident: int, outcome: str) -> Facts:
+    """What one forced delivery attempt came to.
+
+    ``outcome`` is one of the closed set the help lists, kept verbatim — spaces and all —
+    so both faces say the same word and a script matching ``no ack`` matches what a person
+    reads.
+    """
+    from ..ui import fields
+    from ..ui.report import Facts
+
+    return Facts(
+        key="attempt",
+        fields=(fields.hidden("id"), fields.word("outcome", "outcome")),
+        values={"id": ident, "outcome": outcome},
+    )
+
+
+def _did(*facts: tuple[str, object]) -> Facts:
+    """An acknowledgement as data: nothing plain, a document for whoever is logging.
+
+    ``cancel`` and ``clear`` say everything they have to say in their exit status, which
+    is the right plain answer — but a caller that wants to record *what* was cancelled has
+    nowhere to read it, and that is what the document is for.
+    """
+    from ..ui import fields
+    from ..ui.report import SILENT, Facts
+
+    def column(key: str, value: object):  # noqa: ANN202 - one of two shapes
+        return fields.flag(key, key) if isinstance(value, bool) else fields.integer(key, key)
+
+    return Facts(
+        key="outcome",
+        fields=tuple(column(key, value) for key, value in facts),
+        values=dict(facts),
+        shape=SILENT,
+    )

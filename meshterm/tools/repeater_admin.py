@@ -14,16 +14,18 @@ per invocation, the trace tool's rule.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import typer
-from rich.text import Text
 
 from ..context import AppContext
 from ..core import exitcodes
 from ..core.connection import DeviceCommandError
-from ..core.models import LoginResult
+from ..core.models import NODE_TYPE_LABELS, Contact, LoginResult
 from .base import Tool, ToolResult, register
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from ..ui.report import Facts
 
 
 @register
@@ -93,12 +95,8 @@ class RepeaterAdminTool(Tool):
         command = str(params["command"])
         ctx.remote_store.append_history(node, command)
         reply = await device.send_remote_command(node, command, timeout=10.0)
-        if reply is not None:
-            # A remote node's reply is its own text, and it is the whole answer: printed as
-            # a Text, not as markup, so a reply containing a square bracket is a reply
-            # containing a square bracket.
-            ctx.ui.show(Text(reply))
         return ToolResult(
+            report=(_answered(node, command, reply),),
             summary={"node": name, "command": command, "replied": reply is not None},
             # Silence is not failure — the command may well have landed — but there is
             # nothing to report, and a script waiting on output should know which it got.
@@ -125,3 +123,41 @@ class RepeaterAdminTool(Tool):
             if password is not None:
                 tool_params["password"] = password
             run_tool_command(self, tool_params)
+
+
+def _answered(node: Contact, command: str, reply: str | None) -> Facts:
+    """What a remote node said back.
+
+    ``reply`` is the node's own text, whole and verbatim — the plain face prints it bare
+    (as text and never as markup, so a reply holding a square bracket is a reply holding a
+    square bracket), and the document carries it raw, multi-line where the node sent
+    several lines.
+
+    It is deliberately **not parsed**. MeshTerm does not know the remote node's CLI
+    grammar, and a document that pretended to would be inventing structure a consumer
+    would then depend on.
+    """
+    from ..ui import fields
+    from ..ui.fields import NodeRef
+    from ..ui.report import BARE, Facts
+
+    return Facts(
+        key="remote",
+        fields=(
+            fields.node("node", lanes=()),
+            fields.hidden("command"),
+            fields.word("reply", "reply"),
+        ),
+        values={
+            "node": NodeRef(
+                name=node.name,
+                key=(node.public_key or "").lower() or None,
+                hash=(node.key_prefix or "").lower() or None,
+                type=NODE_TYPE_LABELS.get(node.node_type),
+            ),
+            "command": command,
+            "reply": reply,
+        },
+        shape=BARE,
+        bare="reply",
+    )

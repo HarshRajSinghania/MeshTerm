@@ -17,9 +17,8 @@ from ..core.models import NODE_TYPE_LABELS
 from .base import Tool, ToolResult, register
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
-    from rich.table import Table
-
     from ..core.models import Contact
+    from ..ui.report import Listing
 
 
 @register
@@ -85,10 +84,10 @@ class ContactsTool(Tool):
             return ToolResult(summary={"contacts": len(contacts)})
 
         sort = ContactsSort.from_name(sort_name)
-        if contacts:
-            ctx.ui.show(_listing(ordered_contacts(contacts, counts, sort), counts))
+        listing = _listing(ordered_contacts(contacts, counts, sort), counts, prefix_bytes)
         return ToolResult(
             summary={"contacts": len(contacts)},
+            report=(listing,),
             exit_code=exitcodes.OK if contacts else exitcodes.NO_RESULT,
         )
 
@@ -117,32 +116,61 @@ class ContactsTool(Tool):
             run_tool_command(self, {"sort": sort})
 
 
-def _listing(contacts: list[Contact], counts: dict[str, int]) -> Table:
-    """The scripted contact list: one record per contact, one line each.
+def _listing(contacts: list[Contact], counts: dict[str, int], prefix_bytes: int) -> Listing:
+    """The contact list, stated once for both faces.
 
-    ``NAME`` is quoted so a name holding a space or a comma stays one field; ``TYPE`` is
-    the node's advertised role in words, where the menu draws a coloured glyph; ``HEARD``
-    is an absolute local timestamp, where the menu draws a relative age in recency heat;
-    and ``KEY`` is the full public key, never elided — a truncated key is not something a
-    caller can pass back to ``--path`` or ``--to``.
+    ``TYPE`` is the node's advertised role in words, where the menu draws a coloured glyph:
+    a monochrome ``▲`` would need a legend and the CLI has no legends. ``HEARD`` is a
+    relative age, because "recently?" is the question this listing is opened to answer.
+    ``HASH`` is the token ``--path`` and ``--to`` take — it used to have to be sliced out
+    of ``KEY`` by hand — and ``LOCATION`` is a fact the model has always carried and no
+    column had room for. ``KEY`` stays full and last, so it runs off the right harmlessly
+    and is never elided: a truncated key is not something a caller can hand back.
 
     Args:
         contacts: The contacts, already in the requested order.
         counts: Overheard-packet tallies keyed by node id (from passive monitoring).
+        prefix_bytes: The device's path-hash width, which is what makes ``HASH`` the
+            token a forced path addresses this node by rather than an arbitrary slice.
 
     Returns:
-        The scripted table (see :func:`meshterm.ui.script.columns`).
+        The listing.
     """
-    from ..ui import script
+    from ..ui import fields
+    from ..ui.report import Listing
     from ..ui.widgets import _contact_pkts
 
-    table = script.columns("NAME", "TYPE", "HEARD", "PKTS", "KEY", right=("PKTS",))
+    rows = []
     for contact in contacts:
-        table.add_row(
-            script.name(contact.name),
-            NODE_TYPE_LABELS.get(contact.node_type, "unknown"),
-            script.stamp(contact.last_seen),
-            script.number(_contact_pkts(contact, counts)),
-            (contact.public_key or contact.key_prefix or "").lower() or script.NONE,
+        key = (contact.public_key or "").lower()
+        rows.append(
+            {
+                "node": fields.NodeRef(
+                    name=contact.name,
+                    key=key or None,
+                    hash=(key or contact.key_prefix.lower())[: prefix_bytes * 2] or None,
+                    type=NODE_TYPE_LABELS.get(contact.node_type),
+                ),
+                "heard_at": contact.last_seen,
+                "packets": _contact_pkts(contact, counts),
+                "position": (
+                    fields.Position(contact.lat, contact.lon) if contact.has_location else None
+                ),
+            }
         )
-    return table
+    return Listing(
+        key="contacts",
+        columns=(
+            fields.node(
+                "node",
+                lanes=(("name", "NAME"), ("type", "TYPE"), ("hash", "HASH"), ("key", "KEY")),
+            ),
+            fields.when("heard_at", "HEARD", absent="never"),
+            fields.integer("packets", "PKTS"),
+            fields.position(),
+        ),
+        rows=rows,
+        # The node's four lanes are not contiguous: what a reader scans for — who, what,
+        # how recently, how much — comes first, and the two long hex fields go right.
+        order=("NAME", "TYPE", "HEARD", "PKTS", "HASH", "LOCATION", "KEY"),
+    )

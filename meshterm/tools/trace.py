@@ -448,8 +448,9 @@ async def _trace_once_cli(
                 device_hash=device_hash,
             )
         )
-    else:
-        _print_trace(ctx, result, target, path, device_label, resolve, device_hash)
+    report = None
+    if not isinstance(ctx.ui, TuiUi):
+        report = _trace_report(result, target, path, device_label, resolve, device_hash)
 
     summary: dict[str, Any] = {
         "target": target,
@@ -477,38 +478,47 @@ async def _trace_once_cli(
     return ToolResult(
         summary=summary,
         message=message,
+        report=report,
         exit_code=exitcodes.OK if result.success else exitcodes.NO_RESULT,
     )
 
 
-def _print_trace(
-    ctx: AppContext,
+def _trace_report(
     result: TraceResult,
     target: str,
     path: str | None,
     device_label: str,
     resolve: Any,
     device_hash: str | None,
-) -> None:
-    """Print one trace as scripted facts: the walk's outcome, then its per-hop readings.
+) -> tuple:
+    """State one trace: the walk's outcome, then its per-hop readings.
 
     Two blocks. The first is what the walk *did* — one fact per line, ``route`` among them
-    as the CLI's path line, every node named and carrying the hash it was addressed by.
-    The second is a record per hop, and it names its two ends by that same hash rather
-    than repeating the names: the route line above is where the names are, and the hash is
-    what joins the two blocks (it is what carries a node's identity here, the way its
-    colour does on a screen).
+    as a drawn line, every node named and carrying the hash it was addressed by. The
+    second is a record per hop, and it names its two ends by that same **hash** rather than
+    repeating the names: the route line above is where the names are, and the hash is what
+    joins the two blocks (it is what carries a node's identity here, the way its colour
+    does on a screen). The document embeds the whole node at both ends instead, because a
+    structural join needs no key and each edge should be readable on its own.
+
+    Our own node is a hop like any other, named and hashed. The menu draws it as ``★``
+    because a reader never has to be told which node is theirs; this line is as often read
+    out of a file by somebody who was not at the prompt when it ran.
 
     Args:
-        ctx: Shared application context.
         result: The trace that ran.
         target: The label it was addressed to.
         path: The forced route as hex, or ``None`` when the device routed it.
         device_label: Our own node's name, at both ends of the walk.
         resolve: Maps a hop hash to a friendly name when known.
         device_hash: Our own public key, so our ends carry a hash like every other hop.
+
+    Returns:
+        The report's blocks.
     """
-    from ..ui import script
+    from ..ui import fields
+    from ..ui.fields import NodeRef
+    from ..ui.report import Facts, Listing
 
     hash_bytes = result.path_hash_bytes
 
@@ -519,53 +529,65 @@ def _print_trace(
         raw = value.lower().removeprefix("0x")
         return raw[: hash_bytes * 2] if hash_bytes else raw
 
-    facts: list[tuple[str, str]] = [
-        ("target", target if target != PATH_TRACE_TARGET else script.NONE),
-        # "auto" is not a path spec, so it cannot be confused for one: every real value
-        # here is comma-separated hex.
-        ("path", path or "auto"),
-        ("success", "yes" if result.success else "no"),
-        ("hops", script.number(result.hop_count if result.success else None)),
-        ("min_snr_db", script.number(result.min_snr, "+.1f")),
-        ("rtt_ms", script.number(result.round_trip_ms, ".0f")),
-    ]
+    def node(label: str) -> NodeRef:
+        """One end of a hop as the shared node shape."""
+        if not label or label == device_label:
+            return NodeRef(name=device_label, hash=short(device_hash), is_self=True)
+        return NodeRef(name=resolve(label) or None, hash=short(label))
+
     edges = result.edges(device_label)
+    route = None
     if edges:
-        nodes = [edges[0].origin] + [edge.destination for edge in edges]
-        facts.append(
-            (
-                "route",
-                script.path(
-                    [
-                        (device_label, short(device_hash))
-                        if (not node or node == device_label)
-                        else (resolve(node) or node, short(node))
-                        for node in nodes
-                    ]
-                ),
-            )
-        )
-    ctx.ui.show(script.pairs(facts))
+        route = [node(edges[0].origin)] + [node(edge.destination) for edge in edges]
 
-    if not edges:
-        return
-    ctx.ui.show(script.blank())
-    table = script.columns("HOP", "FROM", "TO", "SNR_DB", right=("HOP", "SNR_DB"))
-
-    def end(node: str) -> str:
-        """A hop end as its addressed hash — our own device by its key, like any other."""
-        if not node or node == device_label:
-            return short(device_hash) or script.NONE
-        return short(node) or script.NONE
-
-    for edge in edges:
-        table.add_row(
-            str(edge.index),
-            end(edge.origin),
-            end(edge.destination),
-            script.number(edge.snr, "+.1f"),
-        )
-    ctx.ui.show(table)
+    facts = Facts(
+        key="trace",
+        fields=(
+            fields.word("target", "target"),
+            fields.spec(),
+            fields.flag("success", "success"),
+            fields.integer("hops", "hops"),
+            fields.snr("min_snr_db", "min_snr_db"),
+            fields.decimal("rtt_ms", "rtt_ms", ".0f"),
+            # New surface on the machine face: the model has always carried the TX power
+            # the walk ran at, and the plain facts block has no room for it.
+            fields.hidden("tx_dbm"),
+            # What `hash` means on this walk's nodes, so a consumer can join two traces
+            # that addressed the same node at different widths.
+            fields.hidden("hash_bytes"),
+            fields.route("route", "route"),
+        ),
+        values={
+            "target": target if target != PATH_TRACE_TARGET else None,
+            "path": path,
+            "success": result.success,
+            "hops": result.hop_count if result.success else None,
+            "min_snr_db": result.min_snr,
+            "rtt_ms": result.round_trip_ms,
+            "tx_dbm": result.tx_power,
+            "hash_bytes": hash_bytes,
+            "route": route,
+        },
+    )
+    hops = Listing(
+        key="edges",
+        columns=(
+            fields.integer("index", "HOP"),
+            fields.node("from", lanes=(("hash", "FROM"),)),
+            fields.node("to", lanes=(("hash", "TO"),)),
+            fields.snr("snr_db", "SNR_DB"),
+        ),
+        rows=[
+            {
+                "index": edge.index,
+                "from": node(edge.origin),
+                "to": node(edge.destination),
+                "snr_db": edge.snr,
+            }
+            for edge in edges
+        ],
+    )
+    return (facts, hops)
 
 
 def _last_traced_by_name(

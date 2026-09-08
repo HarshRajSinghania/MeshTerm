@@ -224,7 +224,7 @@ async def test_apply_setting_remembers_through_the_config_executor(ctx) -> None:
     pubkey = (await device.get_self_info())["public_key"]
     snapshot = await build_snapshot(device)
 
-    changes, _ = await apply_ops(
+    changes, _artifacts, _report = await apply_ops(
         ctx, device, snapshot, [("set", "name", "Ops-Node"), ("set", "tx_power", "18")]
     )
     assert changes == 2

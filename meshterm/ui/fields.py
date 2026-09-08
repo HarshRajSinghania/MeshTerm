@@ -106,6 +106,30 @@ class ChannelRef:
     hash: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class Rendered:
+    """A typed value beside the one plain rendering only its own registry can produce.
+
+    Almost every cell is derivable from its value alone, which is what lets a
+    :class:`~meshterm.ui.report.Lane` be a function of one argument. A *setting* is the
+    exception: what ``config set`` takes back for a given key is a question only that key's
+    spec can answer — an enum wants its number, an empty string wants ``""``, a preference
+    drops the unit its page shows — and the spec is per row, not per column.
+
+    So the row carries both halves, computed once where the spec is in hand. The plain
+    face prints ``text`` and the document emits ``value``, and neither has to parse the
+    other's output to get at what it needs, which is the same rule the rest of this module
+    keeps by other means.
+
+    Attributes:
+        value: The typed value, or ``None`` where the source never reported one.
+        text: What the plain face prints, in the form the matching ``set`` accepts back.
+    """
+
+    value: Any
+    text: str
+
+
 def node_json(ref: NodeRef | None) -> dict[str, Any] | None:
     """One node as its machine object, or ``null`` where there is no node at all."""
     if ref is None:
@@ -352,6 +376,21 @@ def spec(key: str = "path", header: str = "path") -> Column:
     )
 
 
+def rendered(key: str, header: str) -> Column:
+    """A setting's value: what ``set`` takes back plain, and the typed value in the document.
+
+    Takes a :class:`Rendered` (see there for why this one concept needs both halves in the
+    row). The round-trip claim is the plain face's whole design for these commands —
+    ``config show > f`` and feeding ``f`` back in must work — and the document's typed
+    value is the machine face's largest single gain over it: ``9`` and not ``"9"``.
+    """
+    return Column(
+        key=key,
+        lanes=(Lane(header=header, render=_rendered_cell),),
+        json=lambda r: None if r is None else r.value,
+    )
+
+
 def hexid(key: str, header: str) -> Column:
     """A hash or a key on its own, lowercase, never truncated and never elided."""
     return Column(
@@ -372,6 +411,20 @@ def note(key: str, header: str) -> Column:
     return Column(key=key, lanes=(Lane(header=header, render=script.text),), json=None)
 
 
+def plain_only(column: Column) -> Column:
+    """The same concept, drawn for a reader and left out of the document.
+
+    For a lane the machine face says *better* somewhere else rather than not at all. A
+    transcript's ``PEER`` is the case: one column holding whichever of a channel or a
+    contact the conversation had, because a reader has the conversation in front of them —
+    where the document keeps ``channel`` and ``node`` apart, since a parser has to know
+    which of the two it is holding and cannot tell from the label.
+    """
+    from dataclasses import replace
+
+    return replace(column, json=None)
+
+
 def hidden(key: str) -> Column:
     """A fact the document carries and the plain face has no room for.
 
@@ -380,6 +433,11 @@ def hidden(key: str) -> Column:
     enum's number is called, and whether the value was withheld.
     """
     return Column(key=key)
+
+
+def _rendered_cell(value: Rendered | None) -> str:
+    """One setting's cell: the text its own spec produced, or the absent token."""
+    return script.NONE if value is None else value.text
 
 
 def _position_cell(where: Position | None) -> str:

@@ -11,15 +11,17 @@ the prompt shown when the menu launches (which smoke-tests the choice before con
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import typer
-from rich.table import Table
 
 from ..context import AppContext
 from ..core import exitcodes
 from ..core.discovery import discover_all, discover_devices
 from .base import Tool, ToolResult, register
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from ..ui.report import Listing
 
 #: The ``MESHCORE`` verdict per discovery confidence tier, for devices we have *not* yet
 #: confirmed. The USB vendor ID is only a hint — a native-USB board or a bare bridge chip
@@ -40,7 +42,7 @@ class DevicesTool(Tool):
     menu_visible = False  # CLI-only: a startup diagnostic with no place in a connected session
 
     async def run(self, ctx: AppContext, params: dict[str, Any]) -> ToolResult:
-        """Enumerate serial devices and render them as a table.
+        """Enumerate attached and advertising devices, and state them as a listing.
 
         Args:
             ctx: Shared application context.
@@ -56,44 +58,25 @@ class DevicesTool(Tool):
         active = ctx.selected_device
         active_target = ctx.ble_override or ctx.port_override or (active.target if active else None)
 
-        if ctx.json_output:
-            import json
-
-            payload = [
-                {
-                    "transport": d.transport,
-                    "port": d.port,
-                    "address": d.address,
-                    "target": d.target,
-                    "label": d.label,
-                    "vendor": d.vendor_label,
-                    "model": (known[d.stable_id].hardware_model if d.stable_id in known else ""),
-                    "likely_lora": d.is_likely_lora,
-                    "confidence": d.confidence,
-                    "confirmed": d.stable_id in known,
-                    "serial_number": d.serial_number,
-                    "stable_id": d.stable_id,
-                    "remembered": remembered is not None and remembered.matches(d),
-                    "active": d.target == active_target,
-                }
-                for d in devices
-            ]
-            ctx.console.print_json(json.dumps(payload))
-            return ToolResult(summary={"count": len(devices)})
-
         if not devices:
             # Not an error: the scan ran and found nothing. Said on stderr so a caller
             # redirecting stdout still hears it, and reported as NO_RESULT so a script can
-            # branch on it without matching prose.
+            # branch on it without matching prose. The empty listing still reaches the
+            # machine face as `[]`, which is a document a consumer can read — where an
+            # empty stdout is a parse error it would have to tell apart from a real one.
             from ..ui import script
 
             script.stderr_console().print(
                 "meshterm: no companion devices detected", style="warn", highlight=False
             )
-            return ToolResult(summary={"count": 0}, exit_code=exitcodes.NO_RESULT)
 
-        ctx.ui.show(_listing(devices, known, active_target))
-        return ToolResult(summary={"count": len(devices)})
+        return ToolResult(
+            summary={"count": len(devices)},
+            report=(_listing(devices, known, remembered, active_target),),
+            # Changed from the 0 this used to return under --json: a rendering flag has no
+            # business changing the report, and the plain path has always said 5 here.
+            exit_code=exitcodes.OK if devices else exitcodes.NO_RESULT,
+        )
 
     def register_cli(self, app: typer.Typer) -> None:
         """Register the ``devices`` subcommand (inventory only; no connection).
@@ -119,8 +102,8 @@ class DevicesTool(Tool):
             run_tool_command(self, {"ble": ble})
 
 
-def _listing(devices: list, known: dict, active_target: str | None) -> Table:
-    """The scripted device inventory: one line per attached or advertising device.
+def _listing(devices: list, known: dict, remembered: object, active_target: str | None) -> Listing:
+    """The device inventory, stated once for both faces.
 
     ``TARGET`` leads because it is the field a caller acts on — it is what ``--port`` and
     ``--ble`` take, verbatim. The menu's two markers become columns of their own
@@ -130,32 +113,57 @@ def _listing(devices: list, known: dict, active_target: str | None) -> Table:
     ``MESHCORE`` is three-valued and stays that way: ``yes`` only once a connection has
     proved the device speaks the protocol, ``maybe`` for a USB vendor ID that suggests a
     LoRa board or a bridge chip, ``no`` for anything else. A vendor ID is a hint, and the
-    column would be lying if it rounded one up.
+    column would be lying if it rounded one up — which is why the machine face carries the
+    same three words rather than the boolean it used to.
 
     Args:
         devices: The discovered devices.
         known: Remembered device records, keyed by stable id.
+        remembered: The remembered default device, if there is one.
         active_target: The target this invocation is (or would be) using.
 
     Returns:
-        The scripted table (see :func:`meshterm.ui.script.columns`).
+        The listing.
     """
-    from ..ui import script
+    from ..ui import fields
+    from ..ui.report import Listing
 
-    table = script.columns(
-        "TARGET", "TRANSPORT", "NAME", "HARDWARE", "MESHCORE", "SERIAL", "ACTIVE"
-    )
+    rows = []
     for device in devices:
         confirmed = known.get(device.stable_id)
-        name = (confirmed.node_name if confirmed else "") or device.label
-        hardware = (confirmed.hardware_model if confirmed else "") or device.vendor_label
-        table.add_row(
-            device.target,
-            device.transport,
-            script.name(name),
-            script.quote(hardware) if hardware else script.NONE,
-            "yes" if confirmed else _MAYBE.get(device.confidence, "no"),
-            device.serial_number or script.NONE,
-            "yes" if device.target == active_target else "no",
+        rows.append(
+            {
+                "target": device.target,
+                "transport": device.transport,
+                "port": device.port,
+                "address": device.address,
+                "label": (confirmed.node_name if confirmed else "") or device.label,
+                "hardware": (confirmed.hardware_model if confirmed else "") or device.vendor_label,
+                "meshcore": "yes" if confirmed else _MAYBE.get(device.confidence, "no"),
+                "confidence": device.confidence,
+                "serial_number": device.serial_number,
+                "stable_id": device.stable_id,
+                "confirmed": confirmed is not None,
+                "remembered": remembered is not None and remembered.matches(device),
+                "active": device.target == active_target,
+            }
         )
-    return table
+    return Listing(
+        key="devices",
+        columns=(
+            fields.word("target", "TARGET"),
+            fields.word("transport", "TRANSPORT"),
+            fields.name("label", "NAME"),
+            fields.name("hardware", "HARDWARE"),
+            fields.word("meshcore", "MESHCORE"),
+            # What the "maybe" was derived from. A person reading the column has the
+            # vendor label beside it and can see for themselves; a program cannot.
+            fields.hidden("confidence"),
+            fields.word("serial_number", "SERIAL"),
+            fields.hidden("stable_id"),
+            fields.hidden("confirmed"),
+            fields.hidden("remembered"),
+            fields.flag("active", "ACTIVE"),
+        ),
+        rows=rows,
+    )
