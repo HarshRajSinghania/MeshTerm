@@ -125,7 +125,7 @@ class PreferencesTool(Tool):
 
         if changes:
             prefs.save()
-        if scripted and applied is not None and any(op[0] in ("set", "reset") for op in ops):
+        if scripted and any(op[0] in ("set", "reset") for op in ops):
             blocks.append(_written(applied, prefs))
 
         plural = "" if changes == 1 else "s"

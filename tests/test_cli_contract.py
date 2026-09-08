@@ -269,10 +269,12 @@ def test_contacts_names_every_node_bare_and_ages_every_time(run) -> None:  # noq
         age = line.split()[2]
         assert age in ("now", "never") or age[-1] in "mhdw"
 
+    # `--absolute` asks for a different *form* of time, not for one fewer fact, so
+    # `never` survives it: a node that has never been heard has no instant to print.
     absolute = result_lines(run("--absolute", "contacts"))[1:]
     for line in absolute:
         stamp = line.split()[2]
-        assert stamp == "-" or stamp[:4].isdigit()
+        assert stamp in ("-", "never") or stamp[:4].isdigit()
 
 
 def test_contacts_never_elides_a_key(run) -> None:  # noqa: ANN001

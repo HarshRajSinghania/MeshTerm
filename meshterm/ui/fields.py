@@ -451,10 +451,17 @@ def _flag_cell(value: bool | None) -> str:
 
 
 def _time(value: Any, *, absent: str) -> str:
-    """Render a time in whichever language this run speaks (see :func:`when`)."""
-    if isinstance(value, datetime) or value is None:
-        return script.stamp(value) if _absolute() else script.age(value, absent=absent)
-    return normalise(value)  # pragma: no cover - a row holding something else is a bug
+    """Render a time in whichever language this run speaks (see :func:`when`).
+
+    ``absent`` survives the switch to timestamps, because it is not a rendering choice:
+    ``never`` says the event has not happened, and ``--absolute`` was asked for a different
+    *form* of time, not for one fewer fact.
+    """
+    if not isinstance(value, datetime) and value is not None:
+        return normalise(value)  # pragma: no cover - a row holding something else is a bug
+    if value is None:
+        return absent
+    return script.stamp(value) if _absolute() else script.age(value, absent=absent)
 
 
 def _absolute() -> bool:
