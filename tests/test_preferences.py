@@ -414,6 +414,9 @@ class _ScriptedUi:
     def note(self, markup: str) -> None:
         pass
 
+    def ack(self, markup: str) -> None:
+        pass
+
 
 @pytest.fixture()
 def ctx(tmp_path: Path) -> AppContext:

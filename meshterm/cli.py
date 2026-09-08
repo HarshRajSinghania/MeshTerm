@@ -17,7 +17,7 @@ import typer
 from rich.console import Console
 
 from .context import AppContext
-from .core import win32dll
+from .core import exitcodes, win32dll
 from .core.admin_store import AdminStore
 from .core.config import Settings
 from .core.connection import DeviceCommandError, is_connection_lost
@@ -31,48 +31,24 @@ from .persistence.repository import Repository
 from .platforms import Resolution, resolve, set_platform, without_emoji
 from .tools import all_tools
 from .tools.base import Tool, ToolResult
+from .ui import script
 from .ui.termfont import emoji_support
 from .ui.theme import make_console
 
-
-def _unframe_help_panels() -> None:
-    """Render Typer's help/error sections as coloured headings instead of boxed panels.
-
-    Typer's rich help gives us the colour we want — yellow usage, cyan options, green
-    switches — but wraps each Options/Commands/Error section in a rounded :class:`Panel`,
-    the boxed framing scripted output is meant to be free of. There's no constant to drop
-    that box, so we swap the ``Panel`` the help formatter calls for a thin stand-in that
-    keeps the colour and the section title (as a bold heading, indigo like the app accent,
-    red for errors) but no border — the same heading-over-content shape tool results use
-    (see :func:`~meshterm.ui.surface._deframe`). The inner tables are already box-less.
-    """
-    import typer.rich_utils as rich_utils
-    from rich.console import Group
-    from rich.text import Text
-
-    def _bare_panel(
-        renderable: object,
-        *,
-        title: object = None,
-        border_style: str = "",
-        **_: object,
-    ) -> Group:
-        style = "bold red" if border_style == "red" else "bold #818cf8"
-        heading = Text(str(title), style=style) if title else Text("")
-        return Group(Text(""), heading, renderable)  # type: ignore[list-item]
-
-    rich_utils.Panel = _bare_panel  # type: ignore[assignment,misc]
-
-
-_unframe_help_panels()
+#: The exit-status table, printed under every ``--help``. A documented return value is
+#: half of what makes the CLI scriptable (the other half is :mod:`meshterm.ui.script`),
+#: and a caller should not have to find it in a README.
+EXIT_STATUS_EPILOG = "Exit status: " + " · ".join(
+    f"{code} {meaning}" for code, meaning in exitcodes.MEANINGS.items()
+)
 
 app = typer.Typer(
     add_completion=False,
     no_args_is_help=False,
-    # Rich help for its colour (usage, option flags, metavars), but with the boxed
-    # section panels flattened to plain headings by _unframe_help_panels() above — a
-    # splash of colour, none of the framing.
-    rich_markup_mode="rich",
+    # Click's own plain help, not Typer's rich one: no boxed Options/Commands panels, no
+    # colour, no markup to strip out of a piped `--help`. The CLI is read by scripts, and
+    # its help is read the way every other utility's is (see meshterm.ui.script).
+    rich_markup_mode=None,
     # The one description, same as the package summary and the PyPI page. See
     # `meshterm.__doc__` — if this drifts from that, one of them is lying.
     help=(
@@ -80,6 +56,7 @@ app = typer.Typer(
         "Supports USB, Bluetooth and TCP companion connection. "
         "For Windows, macOS and Linux."
     ),
+    epilog=EXIT_STATUS_EPILOG,
 )
 
 # The context built by the callback and consumed by subcommands within one process.
@@ -152,14 +129,25 @@ def main_callback(
     if db_path is not None:
         settings.db_path = db_path
 
-    console = make_console()
+    # Two front ends, two consoles, and which one this process gets is settled here — a
+    # named subcommand is a scripted run, so it prints on the plain, colourless,
+    # never-wrapping console the CLI's output language is written for (see
+    # meshterm.ui.script); no subcommand means the menu, which needs the themed one.
+    scripted = ctx.invoked_subcommand is not None
+    console = script.console() if scripted else make_console()
     # Loaded before logging is configured, because how much goes in the file is one of
     # them — and handed to the context afterwards so the file is not read twice.
     prefs = Preferences.load(settings.config_dir / "preferences.yaml")
     configure_logging(
-        console,
+        # A scripted run's stdout carries its answer and nothing else, so log records go
+        # to stderr instead of interleaving with the data a caller is parsing.
+        script.stderr_console() if scripted else console,
         settings.config_dir,
-        level=logging.INFO,
+        # And it only hears about faults. Every *expected* failure is already reported on
+        # stderr in one line and in the exit status (see `_reported`), so echoing the same
+        # thing again as a WARNING record would say it twice; the file keeps both either
+        # way. The menu stays at INFO, where the log pane is the only place these show.
+        level=logging.ERROR if scripted else logging.INFO,
         file_level=level_from_name(prefs.log_level),
         quiet=quiet or json_output,
     )
@@ -453,22 +441,22 @@ def platform_command() -> None:
     (see :func:`meshterm.ui.termfont.emoji_support`).
     """
     assert _platform_resolution is not None  # set by the callback that always runs first
+    assert _state is not None  # ditto
     r = _platform_resolution
-    console = make_console()
-    console.print(f"platform: [accent]{r.platform.name}[/accent]  (source: {r.source})")
-    console.print(f"  --platform:              {r.flag or '(not passed)'}")
-    console.print(f"  MESHTERM_PLATFORM:       {r.env or '(not set)'}")
-    console.print(f"  /proc/device-tree/model: {r.detected_model or '(unavailable)'}")
-
     emoji = emoji_support()
-    verdict = "yes" if emoji.supported else "no — icons use the compact glyphs"
-    console.print(f"icons:    [accent]{verdict}[/accent]  (source: {emoji.source})")
-    if not emoji.supported and emoji.source == "console":
-        console.print(
-            "  this is the classic Windows console, which draws no emoji whatever font\n"
-            "  it is set to. Windows Terminal and VS Code's terminal both do — running\n"
-            "  MeshTerm in one gets the icons back. MESHTERM_EMOJI=1 overrides this."
+    _state.console.print(
+        script.pairs(
+            [
+                ("platform", r.platform.name),
+                ("platform_source", r.source),
+                ("flag", r.flag or script.NONE),
+                ("env", r.env or script.NONE),
+                ("device_tree_model", r.detected_model or script.NONE),
+                ("icons", "yes" if emoji.supported else "no"),
+                ("icons_source", emoji.source),
+            ]
         )
+    )
 
 
 @app.command(name="specimen")
@@ -479,6 +467,11 @@ def specimen_command() -> None:
     theme and glyph machinery the TUI uses — so on the PicoCalc console it is the
     font/palette acceptance screen, and with ``--platform picocalc`` on a desktop it
     previews that flavour. See :mod:`meshterm.ui.specimen`.
+
+    The one command that keeps its colour, and it builds its own themed console to do it
+    (rather than the plain one every other subcommand prints on — see
+    :mod:`meshterm.ui.script`). This is not scripted output that happens to be pretty: the
+    colour *is* the output. A monochrome specimen would test nothing.
     """
     from .ui.specimen import specimen_lines
 
@@ -499,44 +492,83 @@ def run_tool_command(tool: Tool, params: dict) -> None:
     """
     assert _state is not None  # set by the callback before any subcommand runs
     try:
-        asyncio.run(_drive(_execute_and_render(tool, params, _state), _state))
-    except (DeviceSelectionError, DeviceConfigError, DeviceCommandError, PreferenceError) as exc:
-        # Expected user-facing error (ambiguous/absent device, a bad config or preference
-        # value, or a transient command failure): show the message, not a traceback. Logged
-        # at warning because it is a thing that went wrong, even though it is an ordinary
-        # one — a log that only holds crashes cannot answer "what happened before it".
-        get_logger().warning("%s failed: %s", tool.name, exc)
-        _state.console.print(f"[err]✗[/err] {exc}")
-        raise typer.Exit(1) from exc
+        result = asyncio.run(_drive(_execute_and_render(tool, params, _state), _state))
+    except DeviceSelectionError as exc:
+        # No companion could be picked at all: nothing was transmitted, and no retry is
+        # going to help until the caller attaches a device or names one.
+        raise _reported(tool, exc, exitcodes.NO_DEVICE) from exc
+    except DeviceCommandError as exc:
+        # A device was reached and the operation failed. Worth retrying.
+        raise _reported(tool, exc, exitcodes.DEVICE) from exc
+    except (DeviceConfigError, PreferenceError) as exc:
+        # A value we were given is wrong — a bad setting key, an out-of-range preference.
+        # Retrying changes nothing; the caller has to change what it asked for.
+        raise _reported(tool, exc, exitcodes.FAILURE) from exc
+    except (typer.BadParameter, typer.Abort, typer.Exit):
+        # A tool that rejected one of its own arguments (an unresolvable `--to`, a
+        # malformed path) raised the same thing the parser would have. It is a usage
+        # error, Click already knows how to print it and what to exit with, and it is not
+        # a fault — so it passes through without a traceback or a pointer to the log.
+        raise
     except Exception as exc:
-        # A dropped serial link (device unplugged/powered off mid-command) can't be recovered
-        # from in a one-shot scripted run the way the interactive menu offers — but it should
-        # still read as a clean message, not a traceback.
+        # A dropped serial link (device unplugged/powered off mid-command) can't be
+        # recovered from in a one-shot scripted run the way the interactive menu offers —
+        # but it reads as a clean message, not a traceback, and as a device failure.
         if is_connection_lost(exc):
-            get_logger().warning("%s lost the device connection: %s", tool.name, exc)
-            _state.console.print(
-                "[err]✗[/err] the connection to your device was lost "
-                "(it may have been unplugged or powered off)."
-            )
-            raise typer.Exit(1) from exc
+            raise _reported(
+                tool,
+                "the connection to the device was lost (it may have been unplugged or powered off)",
+                exitcodes.DEVICE,
+            ) from exc
         # Anything else is a real fault. It still reaches the terminal as a traceback,
         # because a person looking at one wants to see it — but it also lands in the log,
         # which is the copy that survives the terminal being closed and is the one thing
         # worth attaching to a bug report.
         get_logger().exception("%s raised an unhandled error", tool.name)
-        _report_log_location(_state.console, _state.settings.config_dir)
+        _report_log_location(script.stderr_console(), _state.settings.config_dir)
         raise
+    if result.exit_code != exitcodes.OK:
+        raise typer.Exit(result.exit_code)
 
 
-async def _drive(coro, ctx: AppContext) -> None:
+def _reported(tool: Tool, problem: object, code: int) -> typer.Exit:
+    """Log a failure, say so on stderr, and build the exit it should end on.
+
+    The message goes to stderr in the ``program: what went wrong`` shape every utility
+    uses, so a caller redirecting stdout still sees it and a caller parsing stdout never
+    has to filter it out. It carries no mark and no colour — the exit status is what says
+    this failed, which is why it is classified (see :mod:`meshterm.core.exitcodes`).
+
+    It is logged at warning rather than error because these are the *ordinary* failures —
+    an absent device, a wrong password — and a log holding only crashes cannot answer
+    "what happened just before it".
+
+    Args:
+        tool: The tool that failed, for the log line.
+        problem: The exception or message to report.
+        code: The status to exit with.
+
+    Returns:
+        The :class:`typer.Exit` for the caller to raise.
+    """
+    get_logger().warning("%s failed: %s", tool.name, problem)
+    script.stderr_console().print(f"meshterm: {problem}", style="err", highlight=False)
+    return typer.Exit(code)
+
+
+async def _drive(coro, ctx: AppContext):  # noqa: ANN201 - passes the awaited value through
     """Await a coroutine then disconnect the device (but keep the repo open).
 
     Args:
         coro: The coroutine to run (a tool execution or the menu loop).
         ctx: The application context whose device should be closed afterward.
+
+    Returns:
+        Whatever ``coro`` returned — a :class:`~meshterm.tools.base.ToolResult` on the
+        scripted path, whose ``exit_code`` the caller turns into the process status.
     """
     try:
-        await coro
+        return await coro
     finally:
         if ctx._device is not None:
             try:
@@ -547,7 +579,12 @@ async def _drive(coro, ctx: AppContext) -> None:
 
 
 async def _execute_and_render(tool: Tool, params: dict, ctx: AppContext) -> ToolResult:
-    """Run a tool and print its closing message and artifact list.
+    """Run a tool and print any file it produced.
+
+    A tool's ``message`` is not printed here. It is the menu's closing line — "✓ applied
+    3 changes", "✓ traced Alice" — and on the command line it restates what the output
+    above it already showed and what ``$?`` already says. Where a scripted run has a fact
+    to report that the listing does not carry, the tool prints that fact itself.
 
     Args:
         tool: The tool to execute.
@@ -558,10 +595,10 @@ async def _execute_and_render(tool: Tool, params: dict, ctx: AppContext) -> Tool
         The tool's :class:`ToolResult`.
     """
     result = await tool.execute(ctx, params)
-    if result.message:
-        ctx.console.print(result.message)
+    # A produced file is a fact, and its path is the whole of it: bare, one per line, so
+    # `meshterm config backup out.toml` can be read by the thing that runs it.
     for artifact in result.artifacts:
-        ctx.console.print(f"[ok]●[/ok] wrote [accent]{artifact}[/accent]")
+        ctx.console.print(artifact, highlight=False)
     return result
 
 

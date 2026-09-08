@@ -1178,36 +1178,6 @@ def ctx(tmp_path: Path):
     context.repo.close()
 
 
-async def test_map_tool_static_render_plots_contacts(ctx) -> None:
-    """The CLI path plots the device's located contacts and reports the breakdown.
-
-    The mock companion's contacts carry two located repeaters and one located leaf node
-    (a fourth, Alice, has no fix), so the contact list — not the observation history — is
-    what fills the map.
-    """
-    # Seed an observation whose key matches a located contact, so its reception detail is
-    # merged onto that contact's marker.
-    run_id = ctx.repo.start_run("monitor", {})
-    ctx.repo.record_observation(
-        run_id,
-        Observation(
-            node="a1b2c3d4",
-            name="Yagi-Repeater",
-            node_type=NODE_TYPE_REPEATER,
-            snr=6.0,
-            observed_at=utcnow(),
-        ),
-    )
-    result = await MapTool().run(ctx, {"static": True, "basemap": False})
-    assert result.summary["located"] == 3
-    assert result.summary["repeaters"] == 2
-    assert result.summary["nodes"] == 1
-    assert result.summary["self_located"] is False
-    out = ctx.console.file.getvalue()
-    assert out != ""
-    assert "1 pkts" in out  # the seeded observation's detail merged onto the contact
-
-
 def test_usable_fix_rejects_out_of_range_and_null_island() -> None:
     """A fix is usable only in valid lat/lon range and away from the 0/0 no-GPS sentinel."""
     from meshterm.core.geo import usable_fix
@@ -2565,41 +2535,16 @@ def test_each_road_class_keeps_its_own_colour_through_the_per_tile_style_memo() 
         assert mark_rgb(expected[0]) in painted, f"{cls} lost its own colour"
 
 
-def _run_map_cli(monkeypatch, *args: str):
-    """Invoke the ``map`` subcommand with the tool itself stubbed out.
+def test_the_map_registers_no_cli_command() -> None:
+    """The map is menu-only: a picture has no scripted face.
 
-    Returns the params dict the command would have handed :func:`run_tool_command`,
-    or ``None`` if the invocation failed before getting there.
+    Its answer is a drawing whose nodes are told apart by colour, which the scripted CLI
+    does not have (see :mod:`meshterm.ui.script`) — so the tool registers nothing rather
+    than printing an unparseable block of braille. The located nodes stay scriptable
+    through ``meshterm contacts``.
     """
     import typer
-    from typer.testing import CliRunner
 
-    from meshterm import cli
-
-    captured: dict = {}
-    monkeypatch.setattr(cli, "run_tool_command", lambda tool, params: captured.update(params))
     app = typer.Typer()
     MapTool().register_cli(app)
-    result = CliRunner().invoke(app, list(args))
-    return result, (captured or None)
-
-
-def test_map_cli_fraction_defaults_to_the_preference(monkeypatch) -> None:
-    """No ``--fraction`` means *ask the preferences*, which is a ``None`` to pass on.
-
-    The bounds check used to compare that ``None`` against 0.0, so the plain
-    ``meshterm map`` — the one invocation nobody passes a flag to — was the one that
-    raised.
-    """
-    result, params = _run_map_cli(monkeypatch)
-    assert result.exit_code == 0, result.output
-    assert params is not None and params["fraction"] is None
-
-
-@pytest.mark.parametrize("value,ok", [("0", False), ("0.5", True), ("1.0", True)])
-def test_map_cli_fraction_bounds(monkeypatch, value: str, ok: bool) -> None:
-    """A fraction of zero frames nothing, so it is refused; anything up to 1.0 stands."""
-    result, params = _run_map_cli(monkeypatch, "--fraction", value)
-    assert (result.exit_code == 0) is ok, result.output
-    if ok:
-        assert params is not None and params["fraction"] == float(value)
+    assert app.registered_commands == []

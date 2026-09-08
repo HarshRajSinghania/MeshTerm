@@ -198,7 +198,7 @@ def test_contacts_table_breaks_metric_ties_by_name_ascending() -> None:
     from datetime import timedelta
 
     from meshterm.core.models import Contact, utcnow
-    from meshterm.ui.widgets import ContactsSort, _ordered_contacts
+    from meshterm.ui.widgets import ContactsSort, ordered_contacts
 
     same = utcnow() - timedelta(minutes=5)
     contacts = [
@@ -209,7 +209,7 @@ def test_contacts_table_breaks_metric_ties_by_name_ascending() -> None:
 
     def order(ascending: bool) -> list[str]:
         sort = ContactsSort(column="heard", ascending=ascending)
-        return [c.name for c in _ordered_contacts(contacts, {}, sort)]
+        return [c.name for c in ordered_contacts(contacts, {}, sort)]
 
     # Freshest first: the two 5-min contacts lead, ordered Alice→Charlie, then Bob (3h).
     assert order(ascending=True) == ["Alice", "Charlie", "Bob"]
@@ -219,23 +219,25 @@ def test_contacts_table_breaks_metric_ties_by_name_ascending() -> None:
 
 async def test_contacts_tool_opens_sorted_by_heard(monkeypatch: pytest.MonkeyPatch) -> None:
     """The Contacts list opens most-recently-heard first — who's out there now, not a roll call."""
+    from meshterm.core.models import Contact
     from meshterm.tools.contacts import ContactsTool
     from meshterm.ui import widgets
 
     captured: dict = {}
+    real_order = widgets.ordered_contacts
 
-    def fake_table(self_name, self_key, contacts, prefix_bytes, counts, sort):
+    def fake_order(contacts, counts, sort):  # noqa: ANN001, ANN202
         captured["sort"] = sort
-        return ""
+        return real_order(contacts, counts, sort)
 
-    monkeypatch.setattr(widgets, "contacts_table", fake_table)
+    monkeypatch.setattr(widgets, "ordered_contacts", fake_order)
 
     class _Devstate:
         async def self_info(self) -> dict:
             return {"name": "Us", "public_key": "aa" * 32}
 
         async def contacts(self) -> list:
-            return []
+            return [Contact(name="Alice", public_key="d4" * 32)]
 
         async def path_hash_mode(self) -> int:
             return 0

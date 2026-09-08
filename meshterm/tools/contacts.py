@@ -1,13 +1,25 @@
-"""The ``contacts`` tool: list this node and the contacts it knows about."""
+"""The ``contacts`` tool: list the contacts this node knows about.
+
+The menu opens the sortable Contacts screen, which leads with our own node; the CLI
+prints the contact list alone, because our own node is not a contact — ``meshterm info``
+reports it, in far more detail than a row could hold.
+"""
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import typer
 
 from ..context import AppContext
+from ..core import exitcodes
+from ..core.models import NODE_TYPE_LABELS
 from .base import Tool, ToolResult, register
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from rich.table import Table
+
+    from ..core.models import Contact
 
 
 @register
@@ -32,7 +44,7 @@ class ContactsTool(Tool):
             A :class:`ToolResult` summarizing the number of known contacts.
         """
         from ..ui.surface import TuiUi
-        from ..ui.widgets import ContactsSort, contacts_table
+        from ..ui.widgets import ContactsSort, ordered_contacts
 
         # Read through the session cache: on a busy node the contacts table is a slow
         # round-trip, and re-fetching it (plus self-info) on every menu visit is a chief cause
@@ -63,18 +75,22 @@ class ContactsTool(Tool):
 
         # In the menu, hand the list to the interactive screen so the Ctrl+arrows re-sort it
         # live — its ring spans the shared contact list's four columns (hash included); on the
-        # scripted CLI, render the static table once in the requested order.
+        # scripted CLI, print the plain listing once in the requested order.
         if isinstance(ctx.ui, TuiUi):
             from ..ui.contactlist import SORT_COLUMNS, SORT_OPENS_ASCENDING
             from ..ui.contacts_screen import open_contacts
 
             sort = ContactsSort.from_name(sort_name, SORT_COLUMNS, SORT_OPENS_ASCENDING)
             await open_contacts(ctx, self_name, self_key, contacts, prefix_bytes, counts, sort)
-        else:
-            sort = ContactsSort.from_name(sort_name)
-            ctx.ui.show(contacts_table(self_name, self_key, contacts, prefix_bytes, counts, sort))
+            return ToolResult(summary={"contacts": len(contacts)})
 
-        return ToolResult(summary={"contacts": len(contacts)})
+        sort = ContactsSort.from_name(sort_name)
+        if contacts:
+            ctx.ui.show(_listing(ordered_contacts(contacts, counts, sort), counts))
+        return ToolResult(
+            summary={"contacts": len(contacts)},
+            exit_code=exitcodes.OK if contacts else exitcodes.NO_RESULT,
+        )
 
     def register_cli(self, app: typer.Typer) -> None:
         """Register the ``contacts`` subcommand.
@@ -91,3 +107,34 @@ class ContactsTool(Tool):
             ),
         ) -> None:
             run_tool_command(self, {"sort": sort})
+
+
+def _listing(contacts: list[Contact], counts: dict[str, int]) -> Table:
+    """The scripted contact list: one record per contact, one line each.
+
+    ``NAME`` is quoted so a name holding a space or a comma stays one field; ``TYPE`` is
+    the node's advertised role in words, where the menu draws a coloured glyph; ``HEARD``
+    is an absolute local timestamp, where the menu draws a relative age in recency heat;
+    and ``KEY`` is the full public key, never elided — a truncated key is not something a
+    caller can pass back to ``--path`` or ``--to``.
+
+    Args:
+        contacts: The contacts, already in the requested order.
+        counts: Overheard-packet tallies keyed by node id (from passive monitoring).
+
+    Returns:
+        The scripted table (see :func:`meshterm.ui.script.columns`).
+    """
+    from ..ui import script
+    from ..ui.widgets import _contact_pkts
+
+    table = script.columns("NAME", "TYPE", "HEARD", "PKTS", "KEY", right=("PKTS",))
+    for contact in contacts:
+        table.add_row(
+            script.quote(contact.name),
+            NODE_TYPE_LABELS.get(contact.node_type, "unknown"),
+            script.stamp(contact.last_seen),
+            script.number(_contact_pkts(contact, counts)),
+            (contact.public_key or contact.key_prefix or "").lower() or script.NONE,
+        )
+    return table

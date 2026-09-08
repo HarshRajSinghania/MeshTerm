@@ -22,6 +22,7 @@ from rich.table import Table
 from rich.text import Text
 
 from ..context import AppContext
+from ..core import exitcodes
 from ..core.channels import (
     CHANNEL_SLOT_PROBE_CAP,
     DEFAULT_PUBLIC_SECRET,
@@ -252,19 +253,26 @@ class ChatTool(Tool):
         return await self._cli_list(ctx)
 
     async def _cli_send(self, ctx: AppContext, params: dict[str, Any]) -> ToolResult:
-        """Send a channel or direct message and report the outcome."""
+        """Send a channel or direct message and report whether it was acknowledged.
+
+        A channel broadcast has nothing to report — there is no acknowledgement on a
+        channel — so it prints nothing and lets the exit status say it went out. A direct
+        message prints its ``acked`` state, which is the one thing the send does not
+        already tell the caller: the radio accepted it either way, and whether the peer
+        answered is a separate fact.
+        """
+        from ..ui import script
+
         device = await ctx.device()
         text = str(params["text"])
         channel = params.get("channel")
         if channel is not None:
             await ctx.chat.send_channel(int(channel), text, label=f"#{channel}")
-            ctx.ui.note(f"[ok]✓[/ok] sent to channel [brand]{channel}[/brand]")
             return ToolResult(summary={"channel": channel, "sent": True})
 
         contact = _resolve_contact(await device.get_contacts(), str(params["to"]))
         message = await ctx.chat.send_direct(contact, text)
-        state = "[ok]✓ delivered[/ok]" if message.acked else "[warn]? no ack[/warn]"
-        ctx.ui.note(f"[ok]✓[/ok] sent to [brand]{contact.name}[/brand] — {state}")
+        ctx.ui.show(script.pairs([("acked", "yes" if message.acked else "no")]))
         return ToolResult(summary={"to": contact.name, "acked": bool(message.acked)})
 
     async def _cli_history(self, ctx: AppContext, params: dict[str, Any]) -> ToolResult:
@@ -288,11 +296,12 @@ class ChatTool(Tool):
             )
             label = contact.name
 
-        if not messages:
-            ctx.ui.note(f"[muted]no messages with {label} yet[/muted]")
-        else:
+        if messages:
             ctx.ui.show(_history_table(label, messages))
-        return ToolResult(summary={"conversation": label, "messages": len(messages)})
+        return ToolResult(
+            summary={"conversation": label, "messages": len(messages)},
+            exit_code=exitcodes.OK if messages else exitcodes.NO_RESULT,
+        )
 
     async def _cli_listen(self, ctx: AppContext, params: dict[str, Any]) -> ToolResult:
         """Tail inbound messages live in the console (and record them to history).
@@ -309,14 +318,25 @@ class ChatTool(Tool):
         Returns:
             A :class:`ToolResult` with how many messages were seen.
         """
+        from ..ui import script
+
         seconds = params.get("seconds") or 0
         await ctx.device()
         await ctx.chat.start()  # begins recording inbound to history too
-        ctx.console.print(
-            "[muted]listening for messages"
-            f"{f' for {seconds}s' if seconds else ' — press Ctrl-C to stop'}…[/muted]"
+        # About the run, not part of its answer: stderr, so a redirected stdout holds
+        # nothing but messages.
+        script.stderr_console().print(
+            "listening for messages"
+            + (f" for {seconds}s" if seconds else " — press Ctrl-C to stop"),
+            style="muted",
+            highlight=False,
         )
         seen = 0
+        # One header, then a record per message. Like the monitor's tail this cannot be
+        # column-aligned (the widths arrive with the data), so the fields are gutter-
+        # separated and the two that can hold anything — the conversation and the body —
+        # are quoted and last respectively.
+        ctx.console.print("TIME  CONVERSATION  SNR_DB  TEXT", highlight=False)
 
         def on_message(event: MeshEvent) -> None:
             nonlocal seen
@@ -324,13 +344,14 @@ class ChatTool(Tool):
             if message is None:
                 return
             seen += 1
-            stamp = message.received_at.astimezone().strftime("%H:%M:%S")
-            if message.is_channel:
-                who = f"#{message.channel}"
-            else:
-                who = message.sender or "?"
-            snr = f" [muted]({message.snr:+.0f} dB)[/muted]" if message.snr is not None else ""
-            ctx.console.print(f"[muted]{stamp}[/muted] [accent]{who}[/accent]: {message.text}{snr}")
+            where = f"#{message.channel}" if message.is_channel else (message.sender or "")
+            fields = [
+                script.stamp(message.received_at),
+                script.quote(where) if where else script.NONE,
+                script.number(message.snr, "+.1f"),
+                message.text,
+            ]
+            ctx.console.print((" " * script.GUTTER).join(fields), highlight=False)
 
         unsubscribe = ctx.events.subscribe(on_message, EventKind.MESSAGE)
         try:
@@ -345,6 +366,7 @@ class ChatTool(Tool):
         return ToolResult(
             summary={"messages": seen},
             message=f"[muted]stopped — heard {seen} message{'' if seen == 1 else 's'}[/muted]",
+            exit_code=exitcodes.OK if seen else exitcodes.NO_RESULT,
         )
 
     async def _cli_list(self, ctx: AppContext) -> ToolResult:
@@ -354,23 +376,31 @@ class ChatTool(Tool):
         contacts = await device.get_contacts()
         lasts = ctx.repo.last_chat_messages()
 
-        table = Table(title="Conversations", border_style="muted", expand=False)
-        table.add_column("CONVERSATION")
-        table.add_column("UNREAD", justify="right")
-        table.add_column("LAST MESSAGE")
+        from ..ui import script
+
         rows = [*channels] + [
             Conversation(label=c.name, is_channel=False, contact=c) for c in contacts
         ]
+        table = script.columns(
+            "CONVERSATION", "KIND", "UNREAD", "LAST_TIME", "LAST_TEXT", right=("UNREAD",)
+        )
         for conversation in rows:
             last = lasts.get(conversation.key)
-            snippet = ""
-            if last is not None:
-                who = "you: " if last.outbound else ""
-                snippet = f"{who}{last.text[:40]}"
-            unread = ctx.chat.unread(conversation.key)
-            table.add_row(conversation.label, str(unread) if unread else "·", snippet)
-        ctx.ui.show(table)
-        return ToolResult(summary={"conversations": len(rows)})
+            table.add_row(
+                script.quote(conversation.label),
+                "channel" if conversation.is_channel else "direct",
+                str(ctx.chat.unread(conversation.key)),
+                script.stamp(last.created_at) if last is not None else script.NONE,
+                # Not truncated to 40 cells the way the picker's preview is: nothing here
+                # wraps, so there is no reason to cut a message short.
+                last.text if last is not None else script.NONE,
+            )
+        if rows:
+            ctx.ui.show(table)
+        return ToolResult(
+            summary={"conversations": len(rows)},
+            exit_code=exitcodes.OK if rows else exitcodes.NO_RESULT,
+        )
 
     def register_cli(self, app: typer.Typer) -> None:
         """Register the ``chat`` subcommand group.
@@ -380,7 +410,7 @@ class ChatTool(Tool):
         """
         from ..cli import run_tool_command
 
-        chat_app = typer.Typer(help=self.help, no_args_is_help=True, rich_markup_mode="rich")
+        chat_app = typer.Typer(help=self.help, no_args_is_help=True, rich_markup_mode=None)
 
         @chat_app.command("send", help="Send a message to a contact or channel")
         def _send_cmd(
@@ -801,24 +831,34 @@ def _ago(when: Any) -> str:
 
 
 def _history_table(label: str, messages: list[ChatMessage]) -> Table:
-    """Render a conversation's stored messages as a table.
+    """A conversation's stored messages, oldest first, one record each.
+
+    ``DIRECTION`` carries what the transcript wrote into its sender lane as the word
+    "you": which way a message went is a fact of its own, and spending the name lane on it
+    made our own name a value that lane could not otherwise hold. ``PEER`` is therefore
+    always the *other* party — the sender of an inbound message, and empty on a channel
+    broadcast, which has no one party it went to.
+
+    ``TEXT`` is last and unquoted: it is the rest of the line, and a message body is the
+    one field that can hold absolutely anything.
 
     Args:
-        label: The conversation's display name.
+        label: The conversation's display name (the caller named it; the columns don't).
         messages: The messages to show, oldest-first.
 
     Returns:
-        A Rich :class:`Table` of time, sender, and text.
+        The scripted table (see :func:`meshterm.ui.script.columns`).
     """
-    table = Table(title=f"History — {label}", border_style="muted", expand=False)
-    table.add_column("TIME")
-    table.add_column("FROM")
-    table.add_column("MESSAGE")
+    from ..ui import script
+
+    table = script.columns("TIME", "DIRECTION", "PEER", "SNR_DB", "TEXT", right=("SNR_DB",))
     for message in messages:
-        stamp = message.created_at.astimezone().strftime("%m-%d %H:%M")
-        if message.outbound:
-            who = Text("you", style="accent")
-        else:
-            who = Text(message.peer_name or message.peer or "?", style="brand")
-        table.add_row(stamp, who, message.text)
+        peer = message.peer_name or message.peer or ""
+        table.add_row(
+            script.stamp(message.created_at),
+            "out" if message.outbound else "in",
+            script.quote(peer) if peer else script.NONE,
+            script.number(message.snr, "+.1f"),
+            message.text,
+        )
     return table

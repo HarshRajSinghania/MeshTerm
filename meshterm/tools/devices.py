@@ -17,21 +17,15 @@ import typer
 from rich.table import Table
 
 from ..context import AppContext
+from ..core import exitcodes
 from ..core.discovery import discover_all, discover_devices
 from .base import Tool, ToolResult, register
 
-#: "MeshCore?" table cell per discovery confidence tier, for devices we have *not* yet
+#: The ``MESHCORE`` verdict per discovery confidence tier, for devices we have *not* yet
 #: confirmed. The USB vendor ID is only a hint — a native-USB board or a bare bridge chip
 #: is a "maybe", never a "yes" — so nothing is billed as MeshCore until a connection proves
-#: it (see ``_confirmed_cell``).
-_MAYBE_CELL: dict[str, str] = {
-    "board": "[warn]maybe[/warn]",
-    "bridge": "[warn]maybe[/warn]",
-    "unknown": "[muted]—[/muted]",
-}
-
-#: "MeshCore?" cell for a device already confirmed to speak the protocol.
-_CONFIRMED_CELL = "[ok]yes[/ok]"
+#: it.
+_MAYBE: dict[str, str] = {"board": "maybe", "bridge": "maybe", "unknown": "no"}
 
 
 @register
@@ -88,47 +82,17 @@ class DevicesTool(Tool):
             return ToolResult(summary={"count": len(devices)})
 
         if not devices:
-            ctx.ui.note(
-                "[warn]No companion devices detected.[/warn] "
-                "Connect one over USB or power on a Bluetooth companion nearby, or use "
-                "[accent]--mock[/accent] for the simulator."
-            )
-            return ToolResult(summary={"count": 0})
+            # Not an error: the scan ran and found nothing. Said on stderr so a caller
+            # redirecting stdout still hears it, and reported as NO_RESULT so a script can
+            # branch on it without matching prose.
+            from ..ui import script
 
-        table = Table(title="Companion devices", border_style="muted", expand=False)
-        table.add_column("", style="ok", no_wrap=True)  # active/confirmed markers
-        table.add_column("PORT / ADDRESS", style="brand")
-        table.add_column("DEVICE")
-        # "Hardware" (not "Vendor"): for a confirmed device this holds the firmware's own model
-        # string ("Seeed Tracker T1000-E") — the only reliable source of what the box is — and
-        # for a merely-attached serial port it falls back to the USB vendor name ("Espressif").
-        # One column spans both because a maker name and a model name are the same question:
-        # "what hardware is this?". A BLE device that's never connected has neither, so it's "?".
-        table.add_column("HARDWARE", style="muted")
-        table.add_column("MESHCORE?", justify="center")
-        table.add_column("SERIAL", style="muted")
-        for d in devices:
-            confirmed = known.get(d.stable_id)  # the remembered record, if ever confirmed
-            is_active = d.target == active_target
-            marker = ("●" if is_active else "") + ("★" if confirmed else "")
-            device_name = d.name or d.product or d.description or "[muted]?[/muted]"
-            if confirmed and confirmed.node_name:  # the mesh name learned on connect
-                device_name = f"{confirmed.node_name}  [muted]({device_name})[/muted]"
-            # Prefer the connected-time model; fall back to the USB vendor for unconnected ports.
-            hardware = (confirmed.hardware_model if confirmed else "") or d.vendor_label
-            table.add_row(
-                marker,
-                d.target,
-                device_name,
-                hardware or "[muted]?[/muted]",
-                _CONFIRMED_CELL if confirmed else _MAYBE_CELL[d.confidence],
-                d.serial_number or "[muted]—[/muted]",
+            script.stderr_console().print(
+                "meshterm: no companion devices detected", style="warn", highlight=False
             )
-        ctx.ui.show(table)
-        ctx.ui.note(
-            "[muted]● active   ★ confirmed MeshCore device. "
-            "Pass --port <PORT> or --ble <ADDRESS> to select on the CLI.[/muted]"
-        )
+            return ToolResult(summary={"count": 0}, exit_code=exitcodes.NO_RESULT)
+
+        ctx.ui.show(_listing(devices, known, active_target))
         return ToolResult(summary={"count": len(devices)})
 
     def register_cli(self, app: typer.Typer) -> None:
@@ -139,10 +103,59 @@ class DevicesTool(Tool):
         """
         from ..cli import run_tool_command
 
-        @app.command(name=self.name, help=self.help)
+        @app.command(
+            name=self.name,
+            help=self.help,
+            # The listing used to close with a line explaining its own markers and how to
+            # act on a row. That is help, and this is where help goes.
+            epilog="Select a device with --port TARGET or --ble TARGET, using the "
+            "TARGET column verbatim.",
+        )
         def _devices(
             ble: bool = typer.Option(
                 True, "--ble/--no-ble", help="Include a Bluetooth LE scan (adds a few seconds)"
             ),
         ) -> None:
             run_tool_command(self, {"ble": ble})
+
+
+def _listing(devices: list, known: dict, active_target: str | None) -> Table:
+    """The scripted device inventory: one line per attached or advertising device.
+
+    ``TARGET`` leads because it is the field a caller acts on — it is what ``--port`` and
+    ``--ble`` take, verbatim. The menu's two markers become columns of their own
+    (``ACTIVE``, and ``MESHCORE`` for the confirmed star), because a glyph in a margin is
+    something to look at rather than something to test.
+
+    ``MESHCORE`` is three-valued and stays that way: ``yes`` only once a connection has
+    proved the device speaks the protocol, ``maybe`` for a USB vendor ID that suggests a
+    LoRa board or a bridge chip, ``no`` for anything else. A vendor ID is a hint, and the
+    column would be lying if it rounded one up.
+
+    Args:
+        devices: The discovered devices.
+        known: Remembered device records, keyed by stable id.
+        active_target: The target this invocation is (or would be) using.
+
+    Returns:
+        The scripted table (see :func:`meshterm.ui.script.columns`).
+    """
+    from ..ui import script
+
+    table = script.columns(
+        "TARGET", "TRANSPORT", "NAME", "HARDWARE", "MESHCORE", "SERIAL", "ACTIVE"
+    )
+    for device in devices:
+        confirmed = known.get(device.stable_id)
+        name = (confirmed.node_name if confirmed else "") or device.label
+        hardware = (confirmed.hardware_model if confirmed else "") or device.vendor_label
+        table.add_row(
+            device.target,
+            device.transport,
+            script.quote(name),
+            script.quote(hardware) if hardware else script.NONE,
+            "yes" if confirmed else _MAYBE.get(device.confidence, "no"),
+            device.serial_number or script.NONE,
+            "yes" if device.target == active_target else "no",
+        )
+    return table

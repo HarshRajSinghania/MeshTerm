@@ -12,6 +12,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from ..core import exitcodes
+
 if TYPE_CHECKING:  # avoid importing typer/context at module load for fast startup
     import typer
 
@@ -24,13 +26,22 @@ class ToolResult:
 
     Attributes:
         summary: JSON-serializable summary persisted to the run record.
-        message: Optional human-readable closing message.
+        message: Optional human-readable closing message. The *menu's* closing line — a
+            scripted run does not print it (see
+            :func:`~meshterm.cli._execute_and_render`), because on the command line it
+            restates the output above it and the exit status below it.
         artifacts: Paths to any files produced (e.g. generated visualizations).
+        exit_code: The status a scripted run should exit with — see
+            :mod:`meshterm.core.exitcodes`. Left at ``OK`` by everything that worked;
+            set to ``NO_RESULT`` by a tool that ran fine and found nothing to report, so
+            a caller can tell an empty mesh from a full one without counting lines. A
+            *failure* is raised, not returned, so this never carries one.
     """
 
     summary: dict[str, Any] = field(default_factory=dict)
     message: str | None = None
     artifacts: list[str] = field(default_factory=list)
+    exit_code: int = exitcodes.OK
 
 
 class Tool(ABC):
@@ -123,7 +134,9 @@ class Tool(ABC):
         Raises:
             Exception: Re-raises any error from :meth:`run` after recording it.
         """
-        from ..core.connection import DeviceCommandError
+        import typer
+
+        from ..core.connection import DeviceCommandError, is_connection_lost
         from ..core.device_config import DeviceConfigError
         from ..core.preferences import PreferenceError
         from ..core.selection import DeviceSelectionError
@@ -137,16 +150,27 @@ class Tool(ABC):
             DeviceConfigError,
             DeviceCommandError,
             PreferenceError,
+            # A tool rejecting one of its own arguments (an unresolvable `--to`) raises
+            # what the parser would have. It is a usage error, not a fault.
+            typer.BadParameter,
+            typer.Abort,
+            typer.Exit,
         ) as exc:
             # Expected user-facing condition (no/ambiguous device, a bad config or
-            # preference value, or a transient command failure): record it but don't dump
-            # a traceback; callers print the message cleanly.
+            # preference value, a bad argument, or a transient command failure): record it
+            # but don't dump a traceback; callers print the message cleanly.
             ctx.repo.finish_run(run_id, "error", {"error": str(exc)})
             ctx.log.debug("run %s aborted: %s", run_id, exc)
             raise
         except Exception as exc:  # noqa: BLE001 - we record then re-raise
             ctx.repo.finish_run(run_id, "error", {"error": str(exc)})
-            ctx.log.exception("run %s failed: %s", run_id, exc)
+            if is_connection_lost(exc):
+                # The radio was unplugged or powered off mid-command. Every layer above
+                # already knows how to say that in one line; a stack of serial internals
+                # describes how the driver found out, which is not the same question.
+                ctx.log.warning("run %s lost the device connection: %s", run_id, exc)
+            else:
+                ctx.log.exception("run %s failed: %s", run_id, exc)
             raise
         ctx.repo.finish_run(run_id, "ok", result.summary)
         ctx.log.debug("run %s ok", run_id)

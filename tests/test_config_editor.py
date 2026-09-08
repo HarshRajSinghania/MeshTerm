@@ -687,6 +687,10 @@ class _ScriptedUi:
     def note(self, markup: str) -> None:
         self.notes.append(markup)
 
+    def ack(self, markup: str) -> None:
+        # The menu's answer: an acknowledgement is a note. (The scripted CLI drops it.)
+        self.note(markup)
+
     def show(self, *renderables: Any) -> None:
         pass
 

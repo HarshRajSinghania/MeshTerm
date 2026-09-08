@@ -32,7 +32,14 @@ from typing import TYPE_CHECKING, Any
 import typer
 
 from ..context import AppContext
-from ..core.models import LOCAL_DEVICE_LABEL, PATH_TRACE_TARGET, Contact, TraceStats
+from ..core import exitcodes
+from ..core.models import (
+    LOCAL_DEVICE_LABEL,
+    PATH_TRACE_TARGET,
+    Contact,
+    TraceResult,
+    TraceStats,
+)
 from ..services import trace_runner
 from ..ui.widgets import stats_panel
 from .base import Tool, ToolResult, register
@@ -397,6 +404,8 @@ async def _trace_once_cli(
     Returns:
         A :class:`ToolResult` with the trace's outcome.
     """
+    from ..ui.surface import TuiUi
+
     is_walk = target == PATH_TRACE_TARGET
     device = await ctx.device()
 
@@ -419,9 +428,6 @@ async def _trace_once_cli(
     path: str | None = None
     if path_spec:
         path = trace_runner.parse_trace_path(path_spec, contacts)
-        ctx.ui.note(f"[muted]forcing path:[/muted] [brand]{path}[/brand]")
-    else:
-        ctx.ui.note("[muted]path: auto (device-routed)[/muted]")
 
     with ctx.ui.progress("trace") as progress:
         task = progress.add_task("walking the path" if is_walk else f"tracing {target}", total=1)
@@ -429,18 +435,21 @@ async def _trace_once_cli(
         ctx.repo.record_trace(run_id, result)
         progress.advance(task)
 
-    # The stats panel renders route + per-hop readings for the single trace (its
-    # medians collapse to the readings themselves).
     stats = TraceStats.from_traces(target, [result])
-    ctx.ui.show(
-        stats_panel(
-            stats,
-            device_label,
-            resolve,
-            route=result if result.success else None,
-            device_hash=device_hash,
+    if isinstance(ctx.ui, TuiUi):
+        # The stats panel renders route + per-hop readings for the single trace (its
+        # medians collapse to the readings themselves).
+        ctx.ui.show(
+            stats_panel(
+                stats,
+                device_label,
+                resolve,
+                route=result if result.success else None,
+                device_hash=device_hash,
+            )
         )
-    )
+    else:
+        _print_trace(ctx, result, target, path, device_label, resolve, device_hash)
 
     summary: dict[str, Any] = {
         "target": target,
@@ -453,15 +462,110 @@ async def _trace_once_cli(
         summary["path"] = path
     via = f" via [brand]{path}[/brand]" if path else ""
     if is_walk:
-        if result.success:
-            message = f"[ok]✓[/ok] the path came home{via}"
-        else:
-            message = f"[err]✗[/err] no reply{via}"
+        message = (
+            f"[ok]✓[/ok] the path came home{via}"
+            if result.success
+            else f"[err]✗[/err] no reply{via}"
+        )
     elif result.success:
         message = f"[ok]✓[/ok] traced [brand]{target}[/brand]{via}"
     else:
         message = f"[err]✗[/err] no reply from [brand]{target}[/brand]{via}"
-    return ToolResult(summary=summary, message=message)
+    # A trace that never came home is not a failure of the command — the radio did
+    # transmit and the walk did run. It is a walk with nothing to report, which is what
+    # NO_RESULT says, and it is the answer a script most often branches on.
+    return ToolResult(
+        summary=summary,
+        message=message,
+        exit_code=exitcodes.OK if result.success else exitcodes.NO_RESULT,
+    )
+
+
+def _print_trace(
+    ctx: AppContext,
+    result: TraceResult,
+    target: str,
+    path: str | None,
+    device_label: str,
+    resolve: Any,
+    device_hash: str | None,
+) -> None:
+    """Print one trace as scripted facts: the walk's outcome, then its per-hop readings.
+
+    Two blocks. The first is what the walk *did* — one fact per line, ``route`` among them
+    as the CLI's path line, every node named and carrying the hash it was addressed by.
+    The second is a record per hop, and it names its two ends by that same hash rather
+    than repeating the names: the route line above is where the names are, and the hash is
+    what joins the two blocks (it is what carries a node's identity here, the way its
+    colour does on a screen).
+
+    Args:
+        ctx: Shared application context.
+        result: The trace that ran.
+        target: The label it was addressed to.
+        path: The forced route as hex, or ``None`` when the device routed it.
+        device_label: Our own node's name, at both ends of the walk.
+        resolve: Maps a hop hash to a friendly name when known.
+        device_hash: Our own public key, so our ends carry a hash like every other hop.
+    """
+    from ..ui import script
+
+    hash_bytes = result.path_hash_bytes
+
+    def short(value: str | None) -> str | None:
+        """A hash at the width this trace addressed nodes by."""
+        if not value:
+            return None
+        raw = value.lower().removeprefix("0x")
+        return raw[: hash_bytes * 2] if hash_bytes else raw
+
+    facts: list[tuple[str, str]] = [
+        ("target", target if target != PATH_TRACE_TARGET else script.NONE),
+        # "auto" is not a path spec, so it cannot be confused for one: every real value
+        # here is comma-separated hex.
+        ("path", path or "auto"),
+        ("success", "yes" if result.success else "no"),
+        ("hops", script.number(result.hop_count if result.success else None)),
+        ("min_snr_db", script.number(result.min_snr, "+.1f")),
+        ("rtt_ms", script.number(result.round_trip_ms, ".0f")),
+    ]
+    edges = result.edges(device_label)
+    if edges:
+        nodes = [edges[0].origin] + [edge.destination for edge in edges]
+        facts.append(
+            (
+                "route",
+                script.path(
+                    [
+                        (device_label, short(device_hash))
+                        if (not node or node == device_label)
+                        else (resolve(node) or node, short(node))
+                        for node in nodes
+                    ]
+                ),
+            )
+        )
+    ctx.ui.show(script.pairs(facts))
+
+    if not edges:
+        return
+    ctx.ui.show(script.blank())
+    table = script.columns("HOP", "FROM", "TO", "SNR_DB", right=("HOP", "SNR_DB"))
+
+    def end(node: str) -> str:
+        """A hop end as its addressed hash — our own device by its key, like any other."""
+        if not node or node == device_label:
+            return short(device_hash) or script.NONE
+        return short(node) or script.NONE
+
+    for edge in edges:
+        table.add_row(
+            str(edge.index),
+            end(edge.origin),
+            end(edge.destination),
+            script.number(edge.snr, "+.1f"),
+        )
+    ctx.ui.show(table)
 
 
 def _last_traced_by_name(

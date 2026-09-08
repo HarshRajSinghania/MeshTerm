@@ -22,9 +22,9 @@ from typing import Any
 
 import typer
 from rich.table import Table
-from rich.text import Text
 
 from ..context import AppContext
+from ..core import exitcodes
 from ..core.events import EventKind, MeshEvent
 from ..core.models import HeardNode, Observation
 from .base import Tool, ToolResult, register
@@ -74,27 +74,41 @@ class MonitorTool(Tool):
         Returns:
             A :class:`ToolResult` with the window's packet and node counts.
         """
+        from ..ui import script
+
         seconds = int(params.get("seconds") or 0)
         await ctx.device()  # surface connection problems before announcing the capture
         await ctx.monitor.start()  # register history recording before the hub pumps
         await ctx.events.start()
-        ctx.console.print(
-            "[muted]monitoring"
-            f"{f' for {seconds}s' if seconds else ' — press Ctrl-C to stop'}…[/muted]"
+        # The announcement is about the run, not part of its answer, so it goes to stderr
+        # and stays out of `meshterm monitor -s 60 > packets.txt`.
+        script.stderr_console().print(
+            "monitoring" + (f" for {seconds}s" if seconds else " — press Ctrl-C to stop"),
+            style="muted",
+            highlight=False,
         )
         seen: list[Observation] = []
+        # One header for the live stream, then a record per packet as it arrives. The
+        # stream cannot be column-aligned — the widths are not known until it ends — so
+        # the fields are separated by the gutter and the name carries its quotes, which is
+        # what keeps the line splittable.
+        ctx.console.print("TIME  NODE  NAME  SNR_DB  RSSI_DBM  LAT  LON", highlight=False)
 
         def on_observation(event: MeshEvent) -> None:
             obs = event.observation
             if obs is None:
                 return
             seen.append(obs)
-            stamp = obs.observed_at.astimezone().strftime("%H:%M:%S")
-            who = obs.name or obs.node or "?"
-            snr = f" [muted]{obs.snr:+.1f} dB[/muted]" if obs.snr is not None else ""
-            rssi = f" [muted]{obs.rssi:.0f} dBm[/muted]" if obs.rssi is not None else ""
-            loc = " [ok]●[/ok]" if obs.lat is not None else ""
-            ctx.console.print(f"[muted]{stamp}[/muted] [accent]{who}[/accent]{snr}{rssi}{loc}")
+            fields = [
+                script.stamp(obs.observed_at),
+                obs.node or script.NONE,
+                script.quote(obs.name),
+                script.number(obs.snr, "+.1f"),
+                script.number(obs.rssi, ".0f"),
+                script.number(obs.lat, ".5f"),
+                script.number(obs.lon, ".5f"),
+            ]
+            ctx.console.print((" " * script.GUTTER).join(fields), highlight=False)
 
         unsubscribe = ctx.events.subscribe(on_observation, EventKind.OBSERVATION)
         try:
@@ -114,14 +128,11 @@ class MonitorTool(Tool):
         nodes = [HeardNode.from_observations(node, group) for node, group in by_node.items()]
         if nodes:
             nodes.sort(key=lambda n: n.last_seen, reverse=True)
+            ctx.ui.show(script.blank())
             ctx.ui.show(_heard_table(nodes))
         return ToolResult(
             summary={"seconds": seconds, "packets": len(seen), "nodes": len(nodes)},
-            message=(
-                f"[ok]✓[/ok] heard [brand]{len(seen)}[/brand] "
-                f"packet{'' if len(seen) == 1 else 's'} from "
-                f"[brand]{len(nodes)}[/brand] node{'' if len(nodes) == 1 else 's'}"
-            ),
+            exit_code=exitcodes.OK if seen else exitcodes.NO_RESULT,
         )
 
     def register_cli(self, app: typer.Typer) -> None:
@@ -142,32 +153,37 @@ class MonitorTool(Tool):
 
 
 def _heard_table(heard: list[HeardNode]) -> Table:
-    """Render the capture window's heard-node summary table.
+    """The capture window's per-node summary: what each node did over the whole window.
+
+    The aggregate the live stream cannot give — a count, a median, a best — one record per
+    node heard, most recently heard first.
 
     Args:
         heard: Aggregated per-node statistics for the window.
 
     Returns:
-        A Rich :class:`Table` of node, packet count, SNR, RSSI, and location.
+        The scripted table (see :func:`meshterm.ui.script.columns`).
     """
-    from ..ui.theme import snr_style
+    from ..ui import script
 
-    table = Table(title=f"Heard nodes ({len(heard)})", border_style="muted", expand=False)
-    table.add_column("NODE")
-    table.add_column("PKTS", justify="right")
-    table.add_column("MEDIAN SNR", justify="right")
-    table.add_column("BEST SNR", justify="right")
-    table.add_column("RSSI", justify="right")
-    table.add_column("LOC", justify="center")
+    table = script.columns(
+        "NODE",
+        "NAME",
+        "PKTS",
+        "MEDIAN_SNR_DB",
+        "BEST_SNR_DB",
+        "RSSI_DBM",
+        "LAST_HEARD",
+        right=("PKTS", "MEDIAN_SNR_DB", "BEST_SNR_DB", "RSSI_DBM"),
+    )
     for node in heard:
-        label = node.name or node.node or "?"
-        median = node.median_snr
-        best = node.best_snr
-        median_cell = (
-            Text(f"{median:+.1f}", style=snr_style(median)) if median is not None else Text("—")
+        table.add_row(
+            node.node or script.NONE,
+            script.quote(node.name),
+            str(node.count),
+            script.number(node.median_snr, "+.1f"),
+            script.number(node.best_snr, "+.1f"),
+            script.number(node.last_rssi, ".0f"),
+            script.stamp(node.last_seen),
         )
-        best_cell = Text(f"{best:+.1f}", style=snr_style(best)) if best is not None else Text("—")
-        rssi_cell = f"{node.last_rssi:.0f}" if node.last_rssi is not None else "—"
-        loc_cell = Text("●", style="ok") if node.has_location else Text("·", style="muted")
-        table.add_row(str(label), str(node.count), median_cell, best_cell, rssi_cell, loc_cell)
     return table

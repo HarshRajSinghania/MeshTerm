@@ -17,6 +17,74 @@ allowed to change behaviour, not just add to it.
 
 ## [Unreleased]
 
+### Changed
+
+- **The CLI now prints like a standard Unix utility.** It had grown the menu's manners —
+  colour, boxes, section headings, glyph columns, a closing ✓ — and all of that is in the
+  way of the thing the CLI is actually for, which is being piped into something else.
+
+  Output is now plain text and nothing else: no escape sequences at all (not a colour, not
+  a bold), no borders or boxes or rules, no titles, no legends. Listings are an uppercase
+  header line and space-aligned records the way `ps` prints them; `info` and `config show`
+  are `key value` lines the way `sysctl -a` prints them; `config get` and `preferences get`
+  print the bare value alone, ready for `$(...)`. **Nothing wraps** — a record is a line,
+  and a long one runs off the right rather than folding its fields onto a second one.
+
+- **Node names are quoted, and paths are made of them.** A name can hold a space or a
+  comma, so a bare one is not a field. Every name in a listing is `"quoted"`, and a route
+  now reads `"Origin" (3d),"Relay" (f2),"Us" (a1)` — each node's hash in parentheses
+  outside the quotes, hops joined by a bare comma, our own node a hop like any other rather
+  than a `★`. The hash is there because the CLI has no colour: on a screen a route's hops
+  are told apart by their hues, and the hash is what carries that identity in plain text.
+
+- **Times are absolute.** `2026-09-07T18:22:41-04:00`, not `3h`. A relative age is for a
+  person watching a screen; a script wants something it can sort and subtract. `-` is now
+  the one token for a value that is absent, unknown, or does not apply.
+
+- **A value read out of `show` can be typed back into `set`.** The settings dump printed an
+  enum as `0 (off)` and an unset string as `(not set)`, neither of which `config set` would
+  take back. It prints the number and `""` now, and names every setting by the key
+  `get`/`set` use rather than by its screen label.
+
+- **`--help` is Click's own plain help** — no boxed Options/Commands panels, no colour, no
+  markup to strip out of a piped `--help`.
+
+### Added
+
+- **Documented exit statuses**, listed under every `--help`: `0` success, `1` failure, `2`
+  usage error, `3` no device found, `4` the device was reached but the operation failed,
+  `5` nothing to report.
+
+  `5` is the one worth knowing about. A command that ran fine and found nothing — an empty
+  contact list, a trace that never came home, a conversation with no messages — prints
+  nothing and returns `5`, so a script can tell "found nothing" from "worked" without
+  counting output lines. `3` and `4` split the failures a retry might fix from the ones it
+  won't.
+
+### Fixed
+
+- **Errors go to stderr**, in the `meshterm: what went wrong` shape every utility uses, so
+  a caller redirecting stdout still sees them and a caller parsing stdout never has to
+  filter them out. Progress bars moved there too, and draw nothing at all when stderr is
+  not a terminal.
+
+- **An expected failure no longer dumps a traceback.** A lost serial link, or an argument a
+  command rejected on its own (an unresolvable `--to`), read as one line and the right exit
+  status; the log keeps the detail, and a genuine fault still gets its full traceback.
+
+### Removed
+
+- **`meshterm map`.** A map is a picture — braille cells whose meaning is their position on
+  a grid, and whose nodes are told apart by colour. Stripped of colour to match the rest of
+  the CLI it would be unreadable, and left coloured it was the one command whose output
+  could not be piped anywhere useful. The map stays in the menu, where it works; the located
+  nodes stay scriptable through `meshterm contacts`, coordinates and all.
+
+- **The QR codes** from `channels share`, `config share` and the About pages' scripted face.
+  A QR is a second rendering of a link the output already prints, drawn for a phone pointed
+  at a screen; redirected into a file it was a block of block characters wrapped around the
+  one thing that was actually the answer. The menu still draws them.
+
 ## [0.2.8] — 2026-09-07
 
 ### Fixed

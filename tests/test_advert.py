@@ -131,6 +131,10 @@ class _NoteUi:
     def note(self, markup: str) -> None:
         self.notes.append(markup)
 
+    def ack(self, markup: str) -> None:
+        # The menu's answer: an acknowledgement is a note. (The scripted CLI drops it.)
+        self.note(markup)
+
 
 async def test_scheduler_first_pass_arms_without_sending(ctx: AppContext) -> None:
     """The first look at a fresh device starts the countdown; nothing is transmitted."""

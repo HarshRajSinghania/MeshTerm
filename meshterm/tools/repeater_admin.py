@@ -17,8 +17,10 @@ from __future__ import annotations
 from typing import Any
 
 import typer
+from rich.text import Text
 
 from ..context import AppContext
+from ..core import exitcodes
 from ..core.connection import DeviceCommandError
 from ..core.models import LoginResult
 from .base import Tool, ToolResult, register
@@ -91,11 +93,17 @@ class RepeaterAdminTool(Tool):
         command = str(params["command"])
         ctx.remote_store.append_history(node, command)
         reply = await device.send_remote_command(node, command, timeout=10.0)
-        if reply is None:
-            ctx.ui.note("[warn]no reply — the command may still have landed[/warn]")
-        else:
-            ctx.ui.note(reply)
-        return ToolResult(summary={"node": name, "command": command, "replied": reply is not None})
+        if reply is not None:
+            # A remote node's reply is its own text, and it is the whole answer: printed as
+            # a Text, not as markup, so a reply containing a square bracket is a reply
+            # containing a square bracket.
+            ctx.ui.show(Text(reply))
+        return ToolResult(
+            summary={"node": name, "command": command, "replied": reply is not None},
+            # Silence is not failure — the command may well have landed — but there is
+            # nothing to report, and a script waiting on output should know which it got.
+            exit_code=exitcodes.OK if reply is not None else exitcodes.NO_RESULT,
+        )
 
     def register_cli(self, app: typer.Typer) -> None:
         """Register the ``repeater-admin`` subcommand.

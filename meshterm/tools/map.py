@@ -5,11 +5,12 @@ Nodes that share their location in adverts are collected from the passive-monito
 its position is known, and everything is drawn over a real street basemap rendered as Unicode
 braille (streets, rivers, place names — the same terminal-map idea as ``mapscii``).
 
-In the menu it opens a full-screen, pannable/zoomable map (see
-:mod:`meshterm.ui.map_screen`). On the CLI it prints a one-shot render fitted to the nodes.
-Repeaters are prioritised over ordinary nodes: a distinct marker, drawn on top, listed first.
-The basemap is best-effort — with no network (and no cached tiles) the nodes are plotted on a
-blank grid instead, and the tool still works offline.
+Menu-only: it opens a full-screen, pannable/zoomable map (see
+:mod:`meshterm.ui.map_screen`) and registers no CLI subcommand, because a map is a picture
+and the scripted CLI deals in facts (see :meth:`MapTool.register_cli`). Repeaters are
+prioritised over ordinary nodes: a distinct marker, drawn on top. The basemap is
+best-effort — with no network (and no cached tiles) the nodes are plotted on a blank grid
+instead, and the tool still works offline.
 """
 
 from __future__ import annotations
@@ -17,9 +18,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 import typer
-from rich.console import Group
-from rich.table import Table
-from rich.text import Text
 
 from ..context import AppContext
 from ..core.geo import usable_fix
@@ -61,17 +59,18 @@ class MapTool(Tool):
     order = 10
 
     async def run(self, ctx: AppContext, params: dict[str, Any]) -> ToolResult:
-        """Gather located nodes and open the interactive map, or render a static one.
+        """Gather the located nodes and open the interactive map.
+
+        Menu-only (see :meth:`register_cli`), so there is one path through here.
 
         Args:
             ctx: Shared application context.
-            params: Optional ``static`` (force one-shot render), ``width``, ``zoom``,
-                ``basemap`` (set ``False`` to skip fetching tiles).
+            params: Optional ``fraction`` — how much of the mesh to open framed on.
 
         Returns:
             A :class:`ToolResult` summarizing how many nodes were plotted.
         """
-        from ..ui.surface import TuiUi
+        from ..ui.map_screen import open_map
 
         markers = await self._gather(ctx)
         if not markers:
@@ -81,13 +80,7 @@ class MapTool(Tool):
             )
             return ToolResult(summary={"located": 0})
 
-        interactive = isinstance(ctx.ui, TuiUi) and not params.get("static")
-        if interactive:
-            from ..ui.map_screen import open_map
-
-            await open_map(ctx, markers, fraction=_fraction(ctx, params))
-        else:
-            await self._render_static(ctx, markers, params)
+        await open_map(ctx, markers, fraction=_fraction(ctx, params))
 
         repeaters = sum(1 for m in markers if m.is_repeater and not m.is_self)
         self_located = any(m.is_self for m in markers)
@@ -98,12 +91,6 @@ class MapTool(Tool):
                 "nodes": len(markers) - repeaters - (1 if self_located else 0),
                 "self_located": self_located,
             },
-            message=None
-            if interactive
-            else (
-                f"[ok]✓[/ok] mapped [brand]{len(markers)}[/brand] located nodes "
-                f"([accent]{repeaters}[/accent] repeaters)"
-            ),
         )
 
     # -- marker gathering -------------------------------------------------------
@@ -112,90 +99,22 @@ class MapTool(Tool):
         """Collect every located node to plot (see :func:`gather_markers`)."""
         return await gather_markers(ctx)
 
-    # -- static (CLI) render ----------------------------------------------------
-
-    async def _render_static(
-        self, ctx: AppContext, markers: list[MapMarker], params: dict[str, Any]
-    ) -> None:
-        """Fetch tiles synchronously and print a one-shot map fitted to the nodes."""
-        import asyncio
-
-        from ..core.geo import Viewport
-        from ..ui.map_render import render_map
-        from ..ui.map_screen import basemap_source
-
-        cell_w = int(params.get("width") or min(ctx.console.size.width - 2, 160))
-        cell_h = max(12, cell_w * 4 // 13)  # keep roughly the terminal's aspect
-        dot_w, dot_h = cell_w * 2, cell_h * 4
-
-        source = basemap_source(ctx)
-        max_zoom = await asyncio.to_thread(lambda: source.max_zoom)
-        coords = [(m.lat, m.lon) for m in markers]
-        if params.get("zoom") is not None:
-            from ..core.geo import BBox
-
-            center = BBox.around(coords).center
-            vp = Viewport(center[0], center[1], int(params["zoom"]), dot_w, dot_h)
-        else:
-            vp = Viewport.fit(
-                coords,
-                dot_w,
-                dot_h,
-                max_zoom=max_zoom,
-                fraction=_fraction(ctx, params),
-            )
-
-        tiles = {}
-        if params.get("basemap", True):
-            for tile in vp.tiles(max_zoom):
-                tiles[tile] = await asyncio.to_thread(source.load_tile, *tile)
-
-        lines = render_map(vp, tiles, markers)
-        body = Text.from_ansi("\n".join(lines))
-        ctx.ui.show(Group(body, Text(""), _legend(markers)))
-
     def register_cli(self, app: typer.Typer) -> None:
-        """Register the ``map`` subcommand.
+        """Register no CLI command — a map is a picture, and pictures are menu-only.
+
+        Every other feature has a scripted face because its answer is a set of facts a
+        script can act on. A map's answer is a *drawing*: braille cells whose meaning is
+        their position on a grid and whose nodes are told apart by colour, which is
+        exactly what the scripted CLI does not have (see :mod:`meshterm.ui.script`). A
+        one-shot render there would be an unparseable block of glyphs, and stripping its
+        colour to match the rest of the CLI would make it unreadable as well.
+
+        The located nodes themselves are still scriptable — ``meshterm contacts`` lists
+        every one of them, coordinates included.
 
         Args:
-            app: The Typer application.
+            app: The Typer application (untouched).
         """
-        from ..cli import run_tool_command
-
-        @app.command(name=self.name, help=self.help)
-        def _map(
-            width: int | None = typer.Option(
-                None, "--width", "-w", help="Map width in character cells"
-            ),
-            zoom: int | None = typer.Option(
-                None, "--zoom", "-z", help="Fixed zoom level (omit to fit the nodes)"
-            ),
-            fraction: float | None = typer.Option(
-                None,
-                "--fraction",
-                "-f",
-                min=0.0,
-                max=1.0,
-                help="Fraction of nodes to frame: the densest that many, so distant "
-                "outliers don't zoom the view out. 1.0 fits every node. Ignored with "
-                "--zoom. Defaults to the 'Opening frame' preference",
-            ),
-            basemap: bool = typer.Option(
-                True, "--basemap/--no-basemap", help="Draw the OpenStreetMap street basemap"
-            ),
-        ) -> None:
-            if fraction is not None and not 0.0 < fraction <= 1.0:
-                raise typer.BadParameter("--fraction must be greater than 0 and at most 1")
-            params: dict[str, Any] = {
-                "static": True,
-                "basemap": basemap,
-                "fraction": fraction,
-            }
-            if width is not None:
-                params["width"] = width
-            if zoom is not None:
-                params["zoom"] = zoom
-            run_tool_command(self, params)
 
 
 async def gather_markers(ctx: AppContext) -> list[MapMarker]:
@@ -283,35 +202,6 @@ async def _self_marker(ctx: AppContext) -> MapMarker | None:
         is_self=True,
         key=str(info.get("public_key") or "") or None,
     )
-
-
-def _legend(markers: list[MapMarker]) -> Table:
-    """A compact legend: self → repeaters → leaf nodes, with coordinates and detail.
-
-    Names take their key-derived hue (our own the pure-white ``you``), matching the
-    interactive map's labels; the glyph keeps the marker's type colour.
-    """
-    from ..ui.map_render import _NODE, _REPEATER, _SELF
-    from ..ui.theme import name_style
-
-    table = Table(box=None, padding=(0, 2, 0, 0), expand=False)
-    table.add_column("")
-    table.add_column("NODE")
-    table.add_column("TYPE")
-    table.add_column("COORDS", justify="right")
-    table.add_column("HEARD")
-    ordered = sorted(markers, key=lambda m: -m._rank())
-    for m in ordered:
-        glyph, color = _SELF if m.is_self else (_REPEATER if m.is_repeater else _NODE)
-        kind = "you" if m.is_self else ("repeater" if m.is_repeater else "node")
-        table.add_row(
-            Text(glyph, style=color),
-            Text(m.label, style="you" if m.is_self else name_style(m.label, m.key)),
-            Text(kind, style="muted"),
-            Text(f"{m.lat:.4f}, {m.lon:.4f}", style="muted"),
-            Text(m.detail, style="muted"),
-        )
-    return table
 
 
 def _signal_detail(node: object) -> str:

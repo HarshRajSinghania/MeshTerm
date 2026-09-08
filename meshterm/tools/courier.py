@@ -22,7 +22,9 @@ from typing import Any
 import typer
 
 from ..context import AppContext
+from ..core import exitcodes
 from ..core.connection import DeviceCommandError
+from ..ui import script
 from .base import Tool, ToolResult, register
 
 
@@ -118,10 +120,13 @@ class CourierTool(Tool):
             if not_before is not None
             else "when the contact is next heard"
         )
-        ctx.ui.note(
+        ctx.ui.ack(
             f"[ok]queued[/ok] #{message.ident} for [brand]{contact.name}[/brand] — "
             f"delivers {when} (an interactive session's courier does the sending)"
         )
+        # The entry's id is the one fact a caller has to keep: it is what `courier send`
+        # and `courier cancel` take.
+        ctx.ui.show(script.pairs([("id", str(message.ident))]))
         return ToolResult(
             summary={"queued": message.ident, "contact": contact.name, "at": params.get("at")}
         )
@@ -132,45 +137,32 @@ class CourierTool(Tool):
         A read-only view over the stored outbox: it needs no device, so it works the same
         whether or not a radio is attached (the scriptable face of the outbox screen).
         """
-        from rich.table import Table
-        from rich.text import Text
-
         from ..core.courier_store import DELIVERED, QUEUED
-        from ..core.models import utcnow
-        from ..ui.courier_screen import _local_stamp, _shorten
-        from ..ui.widgets import _age_seconds, format_ago
 
         entries = ctx.courier_store.entries()
         if not entries:
-            ctx.ui.note("[muted]the outbox is empty[/muted]")
-            return ToolResult(summary={"entries": 0})
+            return ToolResult(summary={"entries": 0}, exit_code=exitcodes.NO_RESULT)
 
-        table = Table(title="Courier outbox", border_style="muted", expand=False)
-        table.add_column("ID", justify="right")
-        table.add_column("STATE")
-        table.add_column("NODE")
-        table.add_column("MESSAGE")
-        table.add_column("WHEN")
-        now = utcnow()
+        table = script.columns(
+            "ID", "STATE", "NODE", "SCHEDULED", "FINISHED", "TEXT", right=("ID",)
+        )
         for m in entries:
             if m.status == QUEUED:
-                state = Text("⏳ waiting", style="warn")
-                if m.not_before is not None and now < m.not_before:
-                    when = f"scheduled {_local_stamp(m.not_before)}"
-                else:
-                    when = "when next heard"
+                state = "waiting"
             elif m.status == DELIVERED:
-                state = Text("✓ delivered", style="ok")
-                when = f"delivered {format_ago(_age_seconds(m.finished or m.created))}"
+                state = "delivered"
             else:
-                state = Text("✗ gave up", style="err")
-                when = f"gave up {format_ago(_age_seconds(m.finished or m.created))}"
+                state = "gave up"
             table.add_row(
                 str(m.ident),
                 state,
-                Text(m.node_name, style="brand"),
-                _shorten(m.text),
-                Text(when, style="muted"),
+                script.quote(m.node_name),
+                # An entry with no scheduled time goes as soon as the contact is heard,
+                # which is not a time and so is not one here either.
+                script.stamp(m.not_before),
+                script.stamp(m.finished),
+                # Not shortened the way the outbox screen shortens it: nothing wraps here.
+                m.text,
             )
         ctx.ui.show(table)
         return ToolResult(summary={"entries": len(entries)})
@@ -195,17 +187,19 @@ class CourierTool(Tool):
             "busy": "[muted]another delivery is in flight — try again in a moment[/muted]",
             "gone": "[muted]that entry is no longer waiting[/muted]",
         }
-        ctx.ui.note(notes.get(outcome, outcome))
+        ctx.ui.ack(notes.get(outcome, outcome))
+        # The outcome word is the answer, and it is one of a closed set the help lists.
+        ctx.ui.show(script.pairs([("outcome", outcome)]))
         return ToolResult(summary={"id": ident, "outcome": outcome})
 
     async def _cli_cancel(self, ctx: AppContext, params: dict[str, Any]) -> ToolResult:
         """Remove a waiting entry from the outbox (finished ones use ``clear``)."""
         ident = int(params["id"])
         if ctx.courier_store.cancel(ident):
-            ctx.ui.note(f"[warn]cancelled outbox entry #{ident}[/warn]")
+            ctx.ui.ack(f"[warn]cancelled outbox entry #{ident}[/warn]")
             return ToolResult(summary={"id": ident, "cancelled": True})
-        ctx.ui.note(f"[muted]no waiting entry #{ident} to cancel[/muted]")
-        return ToolResult(summary={"id": ident, "cancelled": False})
+        ctx.ui.ack(f"[muted]no waiting entry #{ident} to cancel[/muted]")
+        return ToolResult(summary={"id": ident, "cancelled": False}, exit_code=exitcodes.NO_RESULT)
 
     async def _cli_clear(self, ctx: AppContext) -> ToolResult:
         """Drop every finished (delivered / given-up) entry, leaving the queue untouched."""
@@ -213,10 +207,13 @@ class CourierTool(Tool):
         ctx.courier_store.clear_done()
         cleared = before - len(ctx.courier_store.entries())
         if cleared:
-            ctx.ui.note(f"[ok]cleared {cleared} finished entr{'y' if cleared == 1 else 'ies'}[/ok]")
+            ctx.ui.ack(f"[ok]cleared {cleared} finished entr{'y' if cleared == 1 else 'ies'}[/ok]")
         else:
-            ctx.ui.note("[muted]no finished entries to clear[/muted]")
-        return ToolResult(summary={"cleared": cleared})
+            ctx.ui.ack("[muted]no finished entries to clear[/muted]")
+        return ToolResult(
+            summary={"cleared": cleared},
+            exit_code=exitcodes.OK if cleared else exitcodes.NO_RESULT,
+        )
 
     def register_cli(self, app: typer.Typer) -> None:
         """Register the ``courier`` subcommand group.
@@ -226,7 +223,7 @@ class CourierTool(Tool):
         """
         from ..cli import run_tool_command
 
-        courier_app = typer.Typer(help=self.help, no_args_is_help=True, rich_markup_mode="rich")
+        courier_app = typer.Typer(help=self.help, no_args_is_help=True, rich_markup_mode=None)
 
         @courier_app.command(
             "queue", help="Queue a message for delivery when the contact is next heard"

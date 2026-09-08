@@ -323,6 +323,49 @@ as a grouped list does. Filling a page in is editing its `.md`; no Python follow
 - Radio traffic: single transmissions or a user-chosen sample count with cooldown pacing
   — never bursts.
 
+### The scripted CLI
+
+Everything above describes the **menu**, which is read by a person. The **CLI** is read by
+`awk`, and it gets its own vocabulary: `meshterm/ui/script.py` is all of it, and a scripted
+surface is written through it rather than by folding a screen's renderable flat. The seam
+is `PlainUi`, chosen in `cli.main_callback` by whether a subcommand was named; a tool
+branches on `isinstance(ctx.ui, TuiUi)` where the two faces genuinely differ.
+
+- **No colour, no wrapping, no frames.** The console is `color_system=None` (no escape
+  sequence at all, not even a bold), 16384 cells wide so nothing folds, and every table is
+  box-less. `script.flatten` is the net under a shared renderable that still arrives boxed
+  — it makes output printable, not right. A highlight colour is reserved for the one thing
+  that would be unreadable without it (a route graph's emphasised path); nothing claims it
+  today.
+- **Listings** go through `script.columns` — uppercase header line, space-aligned records,
+  numbers right. **Key/value blocks** go through `script.pairs` (`sysctl -a`'s shape), and
+  a `get` prints the bare value alone. No titles, no legends, no glyph columns: a node type
+  is the word `repeater`, not `▲`.
+- **Names are quoted** (`script.quote`) wherever they share a line with other fields; a
+  `pairs` value is the rest of the line and needs none. **Paths** are `script.path`:
+  `"Name" (hash)` joined by a bare comma, our own node a hop like any other — never the
+  menu's `★`, and never an arrow. The hash carries the identity that colour carries on a
+  screen.
+- **Times are absolute** (`script.stamp`, local ISO-8601); the relative ages and their heat
+  stay in the menu. **`script.NONE`** (`-`) is the one token for absent.
+- **A value must round-trip.** `config show` prints what `config set` takes — an enum's
+  number, not its label — so a line read out can be typed back in.
+- **stdout is the answer; everything else is stderr.** Errors read `meshterm: what went
+  wrong`, progress bars draw on stderr and go silent off a terminal, and log records go
+  there too (at ERROR, since an expected failure is already reported once).
+- **`ui.ack` vs `ui.note`.** A *note* is output. An *acknowledgement* — "✓ device clock
+  set" — is reassurance a person needs and a script does not, so `ack` prints in the menu
+  and is dropped on the CLI. A `ToolResult.message` is menu-only for the same reason.
+- **The exit status is the report** (`core/exitcodes.py`, and the `--help` epilog): 0 ok ·
+  1 failure · 2 usage · 3 no device · 4 device failed · 5 nothing to report. A tool that
+  ran fine and found nothing returns `NO_RESULT` and prints nothing; a failure is *raised*,
+  never returned.
+- **Some features have no scripted face at all**, and that is the honest answer rather than
+  a degraded one: the map (a picture whose nodes are told apart by colour), the dashboard,
+  the live feed, the watchtower, the mesh walk. `specimen` is the deliberate exception that
+  keeps its colour — its output *is* the colour, and it builds its own themed console.
+- `tests/test_script_output.py` and `tests/test_cli_contract.py` are the enforcement points.
+
 ### Platforms
 
 One codebase, two flavours: **regular** (desktop/ssh, 72 cols, truecolor, emoji) and

@@ -198,7 +198,7 @@ here with its scripted equivalent, where one exists.
 | **💬 Chat** | Live full-screen channel and direct messaging — a scrolling transcript with a pinned input line where sent and received messages stream together. Every message is logged; unread counts show in the menu header. | `meshterm chat send / history / list` |
 | **📻 Channels** | Create, join, reorder, mute, and share mesh channels — with QR codes and `meshcore://` share links. | `meshterm channels list / add / join / import / share / clear` |
 | **📨 Courier** | Store-and-forward outbox for contacts that aren't reachable yet. Queue a message; it goes out (with ack tracking and polite exponential backoff) the moment the contact is next heard, or at a scheduled time. | `meshterm courier queue / list / send / cancel / clear` |
-| **👥 Contacts** | This node and its known contacts — a recency heat-map, overheard packet counts, and full public keys with the path-hash prefix highlighted. | `meshterm contacts` |
+| **👥 Contacts** | This node and its known contacts — a recency heat-map, overheard packet counts, and full public keys with the path-hash prefix highlighted. The scripted listing is the contacts alone (this node is `meshterm info`'s answer, in far more detail). | `meshterm contacts` |
 
 ### 📊 Watch — what the mesh is doing, and what it did
 
@@ -214,7 +214,7 @@ here with its scripted equivalent, where one exists.
 
 | Feature | What it does | Scripted |
 | --- | --- | --- |
-| **🌍 Map** | Located nodes plotted over a real OpenStreetMap street basemap rendered as Unicode braille (streets, rivers, place names). Pannable and zoomable; repeaters highlighted and drawn on top. Falls back to a blank grid offline. | `meshterm map` (one-shot render) |
+| **🌍 Map** | Located nodes plotted over a real OpenStreetMap street basemap rendered as Unicode braille (streets, rivers, place names). Pannable and zoomable; repeaters highlighted and drawn on top. Falls back to a blank grid offline. | — (a map is a picture; `meshterm contacts` lists the same nodes) |
 | **🌐 Mesh walk** | The mesh's *observed shape*, walked one node at a time: an evidence graph built from trace walks, firmware routes, overheard relay chains, and repeater neighbour tables. SNR-coloured braille edges, quality bars, Enter to walk, ⌫ to backtrack, type to find any node. The map answers *where*; the walk answers *how it hangs together*. | — |
 | **🎯 Trace target** | A live trace screen: pick a target and watch each trace stream in hop by hop, with running per-hop medians and reliability. Compose or force a route through specific repeaters. A trace transmits **exactly once** (repeaters can blacklist nodes that burst) — sample more by running it again. | `meshterm trace --target …` |
 | **👣 Trace path** | The other half of tracing: compose the whole circuit by hand — out and back whichever way you choose — and walk it. The path composer suggests each next hop from the links actually observed, strongest first, and can fetch a repeater's neighbour table over the mesh when you hold its admin password. | `meshterm trace --path …` |
@@ -269,7 +269,8 @@ meshterm courier send 3               # force one delivery attempt now
 meshterm repeater-admin Bravo-Repeater "get name"
 
 # Device configuration: view, set, back up, restore
-meshterm config                       # show all current settings
+meshterm config                       # show all current settings, one `key value` per line
+meshterm config get name              # just the value, ready for $(...)
 meshterm config set radio_sf 9        # change one setting
 meshterm config backup node.toml      # archive every setting to TOML
 meshterm config restore node.toml --dry-run
@@ -282,6 +283,47 @@ meshterm monitor --seconds 60
 
 Global options (before the subcommand): `--profile/-p`, `--port`, `--ble`, `--ble-pin`,
 `--tcp`, `--mock`, `--db`, `--json`, `--quiet/-q`.
+
+### What the output looks like
+
+The CLI is meant to be piped, so it prints like a standard Unix utility and nothing else:
+plain text, no colour, no borders, and one record per line — nothing is ever wrapped, so a
+long line runs off the right rather than folding its fields onto a second one.
+
+- **Listings** are an uppercase header line and space-aligned records, `ps`-style.
+- **Node names are quoted** — `"YUL Cartierville"` — so a name holding a space or a comma
+  is still exactly one field.
+- **Paths** are quoted names with their hash in parentheses outside the quotes, joined by
+  a bare comma: `"Origin" (3d),"Relay" (f2),"Us" (a1)`. Our own node is a hop like any
+  other. The hash is what identifies a node where a screen would use colour.
+- **Key/value output** (`info`, `config show`) is a key and the rest of the line as its
+  value; `config get` and `preferences get` print the bare value alone.
+- **Times** are absolute local ISO-8601 (`2026-09-07T18:22:41-04:00`), never `3h ago`.
+- **`-`** is the one token for a value that is absent, unknown, or does not apply.
+- **Errors** go to stderr as `meshterm: what went wrong`; stdout carries only the answer.
+  Progress bars go to stderr too, and are silent when it is not a terminal.
+
+### Exit status
+
+| Code | Meaning |
+| --- | --- |
+| `0` | Success. |
+| `1` | Failure with no more specific code — a bad value, an unreadable file, a fault. |
+| `2` | Usage error: an unknown flag, a missing argument, a value the parser rejected. |
+| `3` | No companion device could be selected. Nothing was transmitted. |
+| `4` | A device was reached but the operation failed — a command error, a timeout, a lost link. Retrying is reasonable. |
+| `5` | The command completed with **nothing to report**: an empty list, a target that never answered, a conversation with no messages. stdout is empty; this is not an error. |
+
+`5` is the one worth knowing about: it lets a script tell "found nothing" from "worked"
+without counting output lines.
+
+```bash
+if meshterm contacts > contacts.txt; then
+    echo "$(wc -l < contacts.txt) contacts"
+elif [ $? -eq 5 ]; then
+    echo "no contacts yet"
+fi
+```
 
 ## Configuration
 

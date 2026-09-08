@@ -1061,7 +1061,7 @@ class ContactsSort:
         self.ascending = self.opens_ascending[self.column]
 
 
-def _ordered_contacts(
+def ordered_contacts(
     contacts: list[Contact], counts: dict[str, int], sort: ContactsSort
 ) -> list[Contact]:
     """Contacts sorted per ``sort`` (our own node is pinned separately, above these).
@@ -1294,7 +1294,7 @@ def contacts_table(
         highlighted_hash(self_key, prefix_bytes) if self_key else unknown,
     )
     table.add_section()
-    for c in _ordered_contacts(contacts, counts, sort):
+    for c in ordered_contacts(contacts, counts, sort):
         secs = _age_seconds(c.last_seen)
         glyph, glyph_style = _NODE_GLYPHS.get(c.node_type, _DEFAULT_GLYPH)
         pkts = _contact_pkts(c, counts)

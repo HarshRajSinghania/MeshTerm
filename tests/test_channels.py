@@ -372,6 +372,9 @@ class _ScriptedUi:
     def note(self, markup: str) -> None:
         pass
 
+    def ack(self, markup: str) -> None:
+        pass
+
     async def view(self, renderable, *, title: str = "", footer_hint: str = "") -> None:  # noqa: ANN001
         pass
 

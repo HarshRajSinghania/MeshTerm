@@ -22,8 +22,9 @@ from typing import Any
 import typer
 
 from ..context import AppContext
+from ..core import exitcodes
 from ..core.connection import DeviceCommandError
-from ..core.models import Contact, LoginResult
+from ..core.models import Contact, LoginResult, TxOptResult
 from ..services import trace_runner, tx_optimizer
 from ..ui.widgets import tx_opt_summary, tx_opt_table
 from .base import Tool, ToolResult, register
@@ -257,6 +258,8 @@ class TxOptimizeTool(Tool):
         Returns:
             A :class:`ToolResult` with the optimum and any chart path.
         """
+        from ..ui.surface import TuiUi
+
         run_id = params["_run_id"]
         device = await ctx.device()
         contacts = await device.get_contacts()
@@ -268,14 +271,14 @@ class TxOptimizeTool(Tool):
 
         samples = max(1, min(MAX_SAMPLES, int(params.get("samples", 3))))
         if int(params.get("samples", 3)) > MAX_SAMPLES:
-            ctx.ui.note(f"[warn]capping at {MAX_SAMPLES} traces per level[/warn]")
+            ctx.ui.ack(f"[warn]capping at {MAX_SAMPLES} traces per level[/warn]")
 
-        ctx.ui.note(
+        ctx.ui.ack(
             f"[muted]logging in to[/muted] [brand]{admin_node.name}[/brand] [muted]…[/muted]"
         )
         await self._login(ctx, admin_node, params)
 
-        ctx.ui.note(
+        ctx.ui.ack(
             f"[muted]tuning[/muted] [brand]{admin_node.name}[/brand] "
             f"[muted]→ target[/muted] [brand]{target_label}[/brand]  "
             f"[muted]via {path}[/muted]"
@@ -316,8 +319,11 @@ class TxOptimizeTool(Tool):
         if result.applied:
             ctx.log.info("set TX power %s on %s", result.best_tx, admin_node.name)
 
-        ctx.ui.show(tx_opt_table(result))
-        ctx.ui.show(tx_opt_summary(result))
+        if isinstance(ctx.ui, TuiUi):
+            ctx.ui.show(tx_opt_table(result))
+            ctx.ui.show(tx_opt_summary(result))
+        else:
+            _print_sweep(ctx, result, path)
 
         if no_result:
             restored = (
@@ -335,6 +341,9 @@ class TxOptimizeTool(Tool):
             )
 
         return ToolResult(
+            # No level got a trace through, so nothing was measured and nothing was tuned:
+            # the sweep ran and has nothing to report.
+            exit_code=exitcodes.NO_RESULT if no_result else exitcodes.OK,
             summary={
                 "target": result.target,
                 "admin_node": result.admin_node,
@@ -524,3 +533,48 @@ def _fmt_snr(snr: float | None) -> str:
         A short fixed-width string like ``+5.1`` or ``  n/a``.
     """
     return f"{snr:+.1f}" if snr is not None else " n/a"
+
+
+def _print_sweep(ctx: AppContext, result: TxOptResult, path: str) -> None:
+    """Print a TX sweep as scripted facts: the outcome, then every level measured.
+
+    The winner comes first, because it is what the command was asked for and what a caller
+    acts on; the per-level records follow, so the choice can be checked against the
+    measurements it was made from. The menu's ``★`` on the winning row has no column here
+    — ``optimal_tx`` above the table already names it, and a mark is something to look at
+    rather than something to test.
+
+    Args:
+        ctx: Shared application context.
+        result: The completed sweep.
+        path: The forced route the traces walked, as hex hops.
+    """
+    from ..ui import script
+
+    ctx.ui.show(
+        script.pairs(
+            [
+                ("tuning_node", result.admin_node),
+                ("target", result.target),
+                ("path", path),
+                ("optimal_tx_dbm", script.number(result.best_tx)),
+                ("target_snr_db", script.number(result.best_snr, "+.1f")),
+                ("reliability", f"{result.best_success_rate:.2f}"),
+                ("previous_tx_dbm", script.number(result.original_tx)),
+                ("applied", "yes" if result.applied else "no"),
+            ]
+        )
+    )
+    if not result.levels:
+        return
+    ctx.ui.show(script.blank())
+    lanes = ("TX_DBM", "TARGET_SNR_DB", "SUCCESSES", "SAMPLES")
+    table = script.columns(*lanes, right=lanes)
+    for level in result.sorted_by_tx():
+        table.add_row(
+            str(level.tx_power),
+            script.number(level.target_snr, "+.1f"),
+            str(level.successes),
+            str(level.samples),
+        )
+    ctx.ui.show(table)

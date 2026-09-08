@@ -98,11 +98,14 @@ class Block:
         heading: Whether this block is one of the page's section landmarks (see
             :attr:`MarkdownDoc.sections`).
         label: The heading's plain text, for a landmark; empty otherwise.
+        qr: Whether this block is a ``qr`` fence's scannable code. Marked so a surface
+            that cannot use one can drop it (see :meth:`MarkdownDoc.without_qr`).
     """
 
     renderable: RenderableType
     heading: bool = False
     label: str = ""
+    qr: bool = False
 
 
 class MarkdownDoc:
@@ -123,6 +126,27 @@ class MarkdownDoc:
     def sections(self) -> tuple[str, ...]:
         """The page's section headings, in order — the landmarks a jump steps by."""
         return tuple(block.label for block in self.blocks if block.heading)
+
+    def without_qr(self) -> MarkdownDoc:
+        """The same page with its scannable codes left out — and the blank line each left behind.
+
+        A QR is a second rendering of a URL the page already prints as a link, drawn for a
+        phone pointed at a screen. Redirected into a file it is a block of block characters
+        wrapped around nothing new, so the scripted CLI takes this copy instead.
+
+        Returns:
+            A new document; this one is untouched.
+        """
+        kept: list[Block] = []
+        for block in self.blocks:
+            if block.qr:
+                # The blank separator that opened the QR's own block goes with it, so
+                # dropping a code does not leave two blank lines where it stood.
+                if kept and isinstance(kept[-1].renderable, Text) and not kept[-1].renderable.plain:
+                    kept.pop()
+                continue
+            kept.append(block)
+        return MarkdownDoc(kept)
 
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
         """Render every block in order (what makes the document a plain renderable)."""
@@ -190,8 +214,9 @@ def _document(nodes: Sequence[SyntaxTreeNode]) -> list[Block]:
             continue
         heading = node.type == "heading" and node.tag == landmark
         label = _inline(node.children[0], heading=True).plain if heading else ""
+        qr = node.type == "fence" and node.info.strip() == "qr"
         for rendered in _block(node, indent=INDENT, depth=0):
-            blocks.append(Block(rendered, heading=heading, label=label))
+            blocks.append(Block(rendered, heading=heading, label=label, qr=qr))
             heading = False  # a heading is one block; never mark a stray second
     return blocks
 

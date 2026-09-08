@@ -69,6 +69,10 @@ class _AboutTool(Tool):
     async def run(self, ctx: AppContext, params: dict[str, Any]) -> ToolResult:
         """Print the page — only reachable from the CLI (the menu opens the screen).
 
+        Without its scannable codes: a QR is a second rendering of a link the page already
+        prints, drawn for a phone pointed at a screen, and redirected into a file it is a
+        block of block characters around nothing new.
+
         Args:
             ctx: Shared application context.
             params: Unused beyond the injected ``_run_id``.
@@ -76,7 +80,7 @@ class _AboutTool(Tool):
         Returns:
             A :class:`ToolResult` naming the page that was shown.
         """
-        ctx.ui.show(self.page())
+        ctx.ui.show(self.page().without_qr())
         return ToolResult(summary={"page": self.name})
 
 
