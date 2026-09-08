@@ -323,48 +323,137 @@ as a grouped list does. Filling a page in is editing its `.md`; no Python follow
 - Radio traffic: single transmissions or a user-chosen sample count with cooldown pacing
   — never bursts.
 
-### The scripted CLI
+### The command line — one answer, two faces
 
-Everything above describes the **menu**, which is read by a person. The **CLI** is read by
-`awk`, and it gets its own vocabulary: `meshterm/ui/script.py` is all of it, and a scripted
-surface is written through it rather than by folding a screen's renderable flat. The seam
-is `PlainUi`, chosen in `cli.main_callback` by whether a subcommand was named; a tool
-branches on `isinstance(ctx.ui, TuiUi)` where the two faces genuinely differ.
+Everything above describes the **menu**, which is read by a person sitting in front of it.
+The command line has two readers and it no longer pretends they are the same one: the
+**plain face** is for somebody at a prompt who typed a command to find something out, and
+the **JSON face** (`--json`) is for a program, often on another machine and often later.
 
-- **No colour, no wrapping, no frames.** The console is `color_system=None` (no escape
-  sequence at all, not even a bold), 16384 cells wide so nothing folds, and every table is
-  box-less. `script.flatten` is the net under a shared renderable that still arrives boxed
-  — it makes output printable, not right. A highlight colour is reserved for the one thing
-  that would be unreadable without it (a route graph's emphasised path); nothing claims it
-  today.
-- **Listings** go through `script.columns` — uppercase header line, space-aligned records,
-  numbers right. **Key/value blocks** go through `script.pairs` (`sysctl -a`'s shape), and
-  a `get` prints the bare value alone. No titles, no legends, no glyph columns: a node type
-  is the word `repeater`, not `▲`.
-- **Names are quoted** (`script.quote`) wherever they share a line with other fields; a
-  `pairs` value is the rest of the line and needs none. **Paths** are `script.path`:
-  `"Name" (hash)` joined by a bare comma, our own node a hop like any other — never the
-  menu's `★`, and never an arrow. The hash carries the identity that colour carries on a
-  screen.
-- **Times are absolute** (`script.stamp`, local ISO-8601); the relative ages and their heat
-  stay in the menu. **`script.NONE`** (`-`) is the one token for absent.
-- **A value must round-trip.** `config show` prints what `config set` takes — an enum's
-  number, not its label — so a line read out can be typed back in.
-- **stdout is the answer; everything else is stderr.** Errors read `meshterm: what went
-  wrong`, progress bars draw on stderr and go silent off a terminal, and log records go
-  there too (at ERROR, since an expected failure is already reported once).
-- **`ui.ack` vs `ui.note`.** A *note* is output. An *acknowledgement* — "✓ device clock
-  set" — is reassurance a person needs and a script does not, so `ack` prints in the menu
-  and is dropped on the CLI. A `ToolResult.message` is menu-only for the same reason.
-- **The exit status is the report** (`core/exitcodes.py`, and the `--help` epilog): 0 ok ·
-  1 failure · 2 usage · 3 no device · 4 device failed · 5 nothing to report. A tool that
-  ran fine and found nothing returns `NO_RESULT` and prints nothing; a failure is *raised*,
-  never returned.
-- **Some features have no scripted face at all**, and that is the honest answer rather than
-  a degraded one: the map (a picture whose nodes are told apart by colour), the dashboard,
-  the live feed, the watchtower, the mesh walk. `specimen` is the deliberate exception that
-  keeps its colour — its output *is* the colour, and it builds its own themed console.
-- `tests/test_script_output.py` and `tests/test_cli_contract.py` are the enforcement points.
+The seam that makes two faces possible is the rule everything else here hangs off:
+
+> **A tool states its answer as data. A renderer turns data into bytes. The CLI boundary
+> picks the renderer.**
+
+`exit_code` already worked this way — the tool states it, the boundary turns it into a
+process status, no tool calls `sys.exit`. The answer travels the same way now. A tool that
+*prints* its answer has given it away: it is rendered and gone by the time anything could
+offer it in another format, which is why `--json` reached two commands out of twenty and
+stopped, each one growing an `if ctx.json_output:` branch above the rendering that restated
+the whole answer in a dialect nobody else could reuse.
+
+- `ui/report.py` — `Listing` (records) and `Facts` (one thing, key by key). **A row holds
+  the typed value** (`6.0`, `None`, a `datetime`), never a formatted cell; each `Column`
+  carries both projections, a plain `Lane` and a JSON function. A `Facts` block also covers
+  the one-scalar answer, through `shape=BARE` (`config get` prints its value alone because
+  the caller named the key) and the acknowledgement, through `shape=SILENT`.
+- `ui/fields.py` — **the shared shapes, one constructor per concept**: `node`, `channel`,
+  `position`, `route`, `spec`, `when`, `instant`, `snr`, `flag`, `free`. A listing that
+  mentions a node asks for `fields.node`, so every document speaks the same five-key object
+  and every listing names its lanes the same way — by construction, not by review.
+  `fields.node` is the one that earns the design: **one machine key expands to as many
+  plain columns as the surface has room for**, four in `contacts` and one in a hop table.
+- `ui/renderers.py` — `PlainRenderer` and `JsonRenderer`, chosen by `ctx.output`.
+  **A third format is a new renderer and nothing else**: no tool is touched, no report
+  changes. `ctx.output` is an `OutputFormat`, never a boolean, because the boolean was
+  already being asked questions it could not answer.
+- `ToolResult.report` is `None` for the menu path and for a feature with no scripted face
+  (the map, the dashboard). It is **not** `summary`: that is the run log's record of what an
+  invocation did, written to the `runs` table on every execution, and folding a five-hour
+  `monitor` capture into it would be the price of one field fewer.
+- **`ui/surface.py` is untouched by all of this.** `PlainUi`/`TuiUi` is the *menu-vs-terminal*
+  split and stays exactly what it is; a report is **returned**, not shown, so `ctx.ui` never
+  grows a `report()` method and `TuiUi` never sees one.
+- **Streaming is a second, narrower seam** and deliberately not the general path:
+  `monitor` and `chat listen` run until a window closes, so their answer cannot be a value
+  handed back at the end. They open `renderers.stream(...)` and emit one typed row per
+  record. Two commands use it; anything that can build a whole report builds one.
+
+#### The plain face — for a person at a prompt
+
+It is still a Unix utility's output — one record per line, no colour, no frames, stdout is
+the answer, the exit status is half the report — but every rule that existed *only* to make
+splitting safe has gone, because splitting is the machine face's job now.
+`meshterm/ui/script.py` is the whole vocabulary and carries the reasoning; the rules:
+
+- **Alignment is the delimiter.** A name is bare (`script.name`). The *escaping* under the
+  quoting stays and always will (`script._escaped`): a node broadcasts its own name and a
+  stranger fills in a message body, and neither may end the record it sits in.
+- **A time is an age** — `now`, `5m`, `3h`, `never` (`script.age`, delegating to
+  `widgets._format_age` so the two faces cannot drift). An absolute instant survives where
+  the instant *is* the fact (`script.stamp`, `fields.instant`): the device clock, an
+  appointment set with `--at`, a live capture's own `TIME`, every column under `--absolute`.
+  `--absolute` is an override of the `cli_time_format` **preference**, not a switch beside
+  it — behaviour belongs in the registry.
+- **A route is drawn and a path is typed.** `script.route` joins hops with ` → `; a hop is
+  `Name (hash)`, or whichever half is known, never an empty `()`. `script.spec` is the
+  comma-joined hex `--path` takes back, and it is the one line on either face that
+  round-trips, so nothing creeps into it. **Our own node is a hop like any other** — the
+  menu's `★` says "you already know who this is", which is true of the reader and false of
+  whoever opens the file afterwards.
+- **`unknown` is a word and `-` is an absence.** `script.NONE` is the one token for absent;
+  `never` is a *value* (a node not yet heard is a fact). A node type stays the word
+  `repeater` — a monochrome `▲` would need a legend and the CLI has no legends.
+- **A live stream pins its lanes** (`script.stream`), because a capture cannot measure
+  columns it has not seen. A value wider than its lane overruns and pushes the row right;
+  nothing is elided, and the one unbounded field goes **last** so it can push nothing.
+- **A value that round-trips is untouchable.** `config show` prints what `config set` takes
+  — an enum's number, `""` for an empty string — and gains nothing cosmetic. `fields.rendered`
+  carries the typed value beside the text its own spec produced, so neither face parses the
+  other's output.
+- **No wrapping, with one exception**: the four written pages (`about`, `about-author`,
+  `discord`, `support`) draw on a `script.PAGE_WIDTH` console. The no-wrap rule exists so a
+  *record* is never split with its fields under the wrong headings; a paragraph has no
+  fields, and unwrapped it is a 600-cell line no terminal can read. **Never wrap a listing.**
+- **stdout is the answer; everything else is stderr** — errors (`meshterm: what went
+  wrong`), progress bars, log records, `ui.ack`, and a `ToolResult.message`. The last two
+  used to be dropped; stderr keeps the promise the dropping was made to keep (a redirect
+  catches only the answer) while giving the person at the prompt back their ✓ and their
+  count. `script.stderr_console()` stops wrapping off a terminal, because a sentence folded
+  at 80 columns is a sentence `grep` cannot find.
+
+#### The JSON face — the machine contract
+
+`--json` prints **the answer itself**, and the report a caller needs is still `$?`.
+
+- **No envelope.** An array for a listing, an object for a set of facts, so
+  `contacts --json | jq '.[].node.name'` reads what it looks like. A multi-block report is
+  one object: each `Listing` under its own key, each `Facts` merged at the top level.
+- **One compact line, `\n`-terminated**, UTF-8 with no ASCII escaping, keys in the order the
+  report declares them. A stream is one document per record, **all the same shape** — no
+  discriminator, because every reader would pay for it and only a stream would use it.
+- **Absent is `null`, never an omitted key**, and typed values throughout: `9` not `"9"`,
+  `false` not `"false"`, a body raw and unescaped. `unknown` becomes `null`; a consumer
+  already has one spelling for "nothing here".
+- **Timestamps are UTC, RFC 3339, `Z`, to the second** — twenty characters, so string
+  comparison is time comparison. `--absolute` does not touch this: a local offset is a fact
+  about the machine that ran the command, not about the event.
+- **A numeric field carries its unit in its key** (`snr_db`, `uptime_s`, `rtt_ms`), never in
+  its value, and a key/hash is lowercase hex. **A key is never truncated** — a truncated key
+  cannot go back into `--to` or `--path`, so a short id is a `hash`.
+- **`--json` changes the rendering, never the report.** Same exit status, same records. An
+  empty result prints its empty document (`[]`, or the object with its `null`s) **and still
+  exits 5**; a failure prints **nothing on stdout** and keeps its sentence on stderr.
+- **"Prints nothing" is never a legitimate JSON answer.** A command whose plain face is
+  silent (`config advert`, `channels join`, `courier cancel`) still emits what it did.
+- **A command with no data face refuses, loudly.** `--json specimen` is a usage error (exit
+  2): its output *is* the colour, and a document of it would be a lie or an empty gesture.
+  So is `--json` with no subcommand. The map, the dashboard, the live feed, the watchtower
+  and the mesh walk have no subcommand to refuse from, and that stays the honest answer
+  rather than a degraded one.
+
+#### The exit status is the report
+
+`core/exitcodes.py`, and the `--help` epilog: 0 ok · 1 failure · 2 usage · 3 no device ·
+4 device failed · 5 nothing to report. A tool that ran fine and found nothing returns
+`NO_RESULT`; a failure is *raised*, never returned. Two classifications worth restating
+because both were wrong somewhere: **nothing transmitted is not a device failure** (a bad
+argument is exit 2), and **a rendering flag never moves the status**.
+
+`tests/test_report.py` is the enforcement point for the seam, `tests/test_script_output.py`
+for the plain vocabulary, and `tests/test_cli_contract.py` for the commands — including a
+derived sweep that runs **every** registered command twice, once plain and once under
+`--json`, and pins that the two agree about the exit status.
 
 ### Platforms
 
