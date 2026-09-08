@@ -96,6 +96,14 @@ def parse_value(spec: SettingSpec, raw: Any, snapshot: dict | None = None) -> An
     """
     text = str(raw).strip()
     if spec.value_type == "str":
+        # `config show` prints an empty string as the two characters `""`, because a key
+        # with nothing after it reads as a truncated line rather than as an empty value.
+        # A value the dump prints has to be one `set` takes back (CLAUDE.md, "A value must
+        # round-trip"), so the quotes come off here — otherwise feeding a dump back in
+        # silently replaces every empty setting with a pair of quote marks, and the next
+        # dump looks identical, so nothing ever tells you.
+        if text == '""':
+            text = ""
         if spec.max_length is not None and len(text) > spec.max_length:
             raise DeviceConfigError(
                 f"{spec.key}: must be at most {spec.max_length} characters, got {len(text)}"

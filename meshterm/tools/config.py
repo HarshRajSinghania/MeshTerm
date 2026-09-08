@@ -364,7 +364,8 @@ async def _show(ctx: AppContext, device: Device, snapshot: dict) -> None:
     for _category, specs in settings_by_category():
         for spec in specs:
             value = _script_value(spec, spec.getter(snapshot))
-            rows.append((spec.key, conceal(value) if spec.key == PIN_KEY else value))
+            masked = conceal(value, absent=script.NONE) if spec.key == PIN_KEY else value
+            rows.append((spec.key, masked))
     # Custom variables are experimental firmware fields with no spec, so they are namespaced
     # rather than mixed in — a reader can tell which lines `config set` will take.
     rows.extend((f"custom.{key}", value) for key, value in sorted(custom.items()))

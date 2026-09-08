@@ -101,8 +101,14 @@ def configure_logging(
     logger.propagate = False
 
     if not quiet:
+        # markup=False: a log line carries whatever the device said — a node name, a
+        # firmware error — and Rich would read `[...]` in it as a style tag. That made the
+        # *error path* the one most likely to fail: reporting a fault on a node called
+        # `[/]Bob` raised MarkupError from inside the handler, replacing the diagnostic
+        # with a traceback about the diagnostic. No log call in the package marks up its
+        # message, so parsing them buys nothing.
         rich_handler = RichHandler(
-            console=console, rich_tracebacks=True, show_path=False, markup=True
+            console=console, rich_tracebacks=True, show_path=False, markup=False
         )
         rich_handler.setLevel(level)
         logger.addHandler(rich_handler)

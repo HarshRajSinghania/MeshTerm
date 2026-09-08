@@ -80,7 +80,7 @@ class _AboutTool(Tool):
         Returns:
             A :class:`ToolResult` naming the page that was shown.
         """
-        ctx.ui.show(self.page().without_qr())
+        ctx.ui.show(self.page().for_script())
         return ToolResult(summary={"page": self.name})
 
 

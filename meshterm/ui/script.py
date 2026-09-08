@@ -153,7 +153,15 @@ def columns(*headers: str, right: Sequence[str] = ()) -> Table:
             header,
             justify="right" if header in wanted else "left",
             no_wrap=True,
-            overflow="ignore",
+            # "crop", not "ignore". Both refuse to elide — neither ever writes the "…"
+            # that would make a key or a route unusable to the caller — but Rich's
+            # ``Text.wrap`` returns early on "ignore" (text.py: ``if overflow ==
+            # "ignore": lines.append(line); continue``) and that early return is *above*
+            # the justify step, so "ignore" silently discards ``justify="right"``. The
+            # two settings differ only past the console's 16384 cells, where "crop" cuts
+            # and "ignore" also cuts; they differ on every line before that, where only
+            # "crop" aligns.
+            overflow="crop",
         )
     return table
 
@@ -179,8 +187,8 @@ def pairs(rows: Iterable[tuple[str, str]]) -> Table:
         expand=False,
         padding=(0, GUTTER, 0, 0),
     )
-    table.add_column(no_wrap=True, overflow="ignore")
-    table.add_column(no_wrap=True, overflow="ignore")
+    table.add_column(no_wrap=True, overflow="crop")
+    table.add_column(no_wrap=True, overflow="crop")
     for key, value in rows:
         table.add_row(key, value)
     return table
@@ -294,6 +302,12 @@ def console(stream: Any = None) -> Console:
         soft_wrap=True,
         highlight=False,
         emoji=False,
+        # A node broadcasts its own name, so every name on this console is remote data.
+        # Rich reads `[...]` as a style tag: `[bold]Loud` printed as `Loud` — silently
+        # corrupted, and no longer the string that identifies the node — while `[/]Bob`
+        # raised MarkupError and took the whole command down with it. Nothing the scripted
+        # CLI prints is ever marked up, so the parser has nothing to do here but misfire.
+        markup=False,
     )
 
 
@@ -312,7 +326,7 @@ def stderr_console() -> Console:
 
     from .theme import active_theme
 
-    return Console(file=sys.stderr, theme=active_theme())
+    return Console(file=sys.stderr, theme=active_theme(), markup=False, emoji=False)
 
 
 # -- the safety net ------------------------------------------------------------------
@@ -349,7 +363,7 @@ def flatten(renderable: RenderableType) -> list[RenderableType]:
         renderable.padding = (0, GUTTER, 0, 0)
         for column in renderable.columns:
             column.no_wrap = True
-            column.overflow = "ignore"
+            column.overflow = "crop"
             column.ratio = None
         return [renderable]
     if isinstance(renderable, Group):

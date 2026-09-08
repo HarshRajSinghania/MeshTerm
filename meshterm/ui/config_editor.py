@@ -306,7 +306,7 @@ PIN_KEY = "device_pin"
 _PIN_WIDTH = len(str(get_spec(PIN_KEY).maximum))
 
 
-def conceal(value: str) -> str:
+def conceal(value: str, *, absent: str = "?") -> str:
     """``value`` as a row of :data:`_PIN_WIDTH` mask bullets.
 
     A value the device could not report is not a secret, it is an absence: ``format_value``
@@ -314,8 +314,16 @@ def conceal(value: str) -> str:
     something to reveal when there is nothing. So only a real value is concealed, and
     :func:`has_pin` asks the same question the other way round — a page with nothing to
     conceal advertises no key for it.
+
+    Args:
+        value: The already-rendered value to mask.
+        absent: How *this* surface writes "the device never reported one". The menu's
+            token is ``?``; the scripted CLI's is :data:`~meshterm.ui.script.NONE`. The
+            rule is the same on both and the glyph is not, so the caller names it — a
+            ``conceal`` that knew only the menu's token masked the CLI's absence too, and
+            six bullets told the reader the radio was PIN-locked when it was not.
     """
-    return value if value == "?" else MASK_MARK * _PIN_WIDTH
+    return value if value == absent else MASK_MARK * _PIN_WIDTH
 
 
 def has_pin(snapshot: dict) -> bool:

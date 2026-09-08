@@ -148,6 +148,25 @@ def test_the_scripted_console_emits_no_escape_sequence_at_all() -> None:
     assert not _ANSI.search(_rendered(loud))
 
 
+@pytest.mark.parametrize(
+    "name",
+    ["[bold]Loud", "[/]Bob", "[red]a[/red]", ":fire:Hot", "[[weird]]", "100% [done]"],
+)
+def test_a_node_name_is_never_read_as_rich_markup(name: str) -> None:
+    """A node broadcasts its own name, so every name printed here is remote data.
+
+    Rich reads ``[...]`` as a style tag unless told not to. That made a name into two
+    different bugs: ``[bold]Loud`` printed as ``Loud`` — silently corrupted, and no longer
+    the string that identifies the node to whoever reads the output — and ``[/]Bob`` raised
+    ``MarkupError`` and took the whole command down. ``:fire:`` is the same hazard one
+    parser over. Neither is hypothetical: a name is the one field a stranger controls.
+    """
+    table = script.columns("NAME", "TYPE")
+    table.add_row(script.quote(name), "node")
+    record = _rendered(table).splitlines()[1]
+    assert record.startswith(script.quote(name)), record
+
+
 def test_the_scripted_console_never_wraps_a_record_onto_a_second_line() -> None:
     """A record is a line: wrapping would put half its fields under the wrong headings."""
     table = script.columns("KEY", "VALUE")
@@ -189,6 +208,36 @@ def test_columns_align_so_every_record_splits_the_same_way() -> None:
     header, *records = _rendered(table).splitlines()
     starts = {line.index("re") if "repeater" in line else line.index("node") for line in records}
     assert starts == {header.index("TYPE")}  # every TYPE value opens under its heading
+
+
+def test_a_numeric_column_really_right_aligns() -> None:
+    """A column of magnitudes is only comparable by eye if the digits line up.
+
+    Rich's ``Text.wrap`` returns early on ``overflow="ignore"`` — and that early return
+    sits *above* the justify step, so asking for ``overflow="ignore"`` throws
+    ``justify="right"`` away without a word. Every ``right=`` in the CLI was a no-op
+    until the columns asked for ``"crop"``, which refuses to elide just as firmly and
+    still aligns. Checking where a field *starts* cannot see this; only its end can.
+    """
+    table = script.columns("NAME", "PKTS", right=("PKTS",))
+    table.add_row(script.quote("Alice"), "1174")
+    table.add_row(script.quote("Bob"), "3")
+    header, *records = _rendered(table).splitlines()
+    assert len({len(line) for line in records}) == 1, records
+    assert {len(line) for line in records} == {len(header)}
+
+
+def test_no_column_elides_however_long_its_value_runs() -> None:
+    """A key cut short is not something a caller can hand back to ``--to`` or ``--path``.
+
+    The guard against eliding and the guard against mis-alignment are the same setting,
+    so a change to one silently moves the other; both are pinned here.
+    """
+    table = script.columns("KEY", "PKTS", right=("PKTS",))
+    table.add_row("d4" * 32, "7")
+    out = _rendered(table)
+    assert "…" not in out
+    assert "d4" * 32 in out
 
 
 # -- framing --------------------------------------------------------------------------

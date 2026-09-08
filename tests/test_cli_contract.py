@@ -41,10 +41,20 @@ _LISTINGS: list[tuple[str, list[str], list[str]]] = [
 
 
 @pytest.fixture()
-def run(tmp_path: Path):  # noqa: ANN201 - a closure over the runner
-    """Invoke the real CLI against the simulator and a scratch database."""
+def run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):  # noqa: ANN201 - a closure
+    """Invoke the real CLI against the simulator, in a config directory of its own.
+
+    ``--db`` moves the history and *nothing else*: the contact cache, the outbox, the
+    channel cache, the stored admin passwords and any device profiles all live in the
+    config directory regardless. So a suite that set only ``--db`` read whatever was in
+    the developer's own ``~/.meshterm`` — which is how a contact named ``[/]Bob``, planted
+    by hand on one machine, could crash this suite on that machine and pass everywhere
+    else. ``$MESHTERM_HOME`` is the override that moves the whole directory, and it is
+    the one a test wants.
+    """
     from meshterm.cli import app
 
+    monkeypatch.setenv("MESHTERM_HOME", str(tmp_path / "home"))
     runner = CliRunner()
 
     def invoke(*args: str):  # noqa: ANN202
@@ -118,6 +128,70 @@ def test_a_config_line_can_be_typed_back_into_config_set(run) -> None:  # noqa: 
     # An enum prints its number, not the reader's label: `parse_value` takes the number.
     assert values["adv_loc_policy"].isdigit()
     assert run("config", "get", "name").output.strip() == "MockCompanion"
+
+
+def test_every_setting_show_prints_is_one_set_takes_back(run) -> None:  # noqa: ANN001
+    """The round-trip claim, checked on every setting rather than on the two easy ones.
+
+    ``config show > f`` and feeding ``f`` back in is the obvious thing to do with a dump,
+    and the failure mode is silent: an empty string printed as ``""`` used to parse back
+    as *the two quote characters*, and the next dump looked identical, so nothing ever
+    said the setting had been replaced. A refusal is fine here — you cannot set a value
+    the firmware never reported — but a value that parses to something else is not.
+    """
+    from meshterm.core import device_config as dc
+    from meshterm.tools.config import _script_value
+
+    probes = {
+        "str": ["", "Yagi-Repeater", "a name with spaces"],
+        "bool": [True, False],
+        "int": [0, 1, 12],
+        "float": [0.0, 3.5],
+    }
+    checked = 0
+    for _category, specs in dc.settings_by_category():
+        for spec in specs:
+            if spec.value_type == "enum" and spec.choices:
+                values: list = list(spec.choices)
+            else:
+                values = probes.get(spec.value_type, [])
+            for value in values:
+                printed = _script_value(spec, value)
+                try:
+                    parsed = dc.parse_value(spec, printed, {})
+                except dc.DeviceConfigError:
+                    continue  # a loud refusal is honest; a wrong value is not
+                checked += 1
+                assert parsed == value, f"{spec.key}: show printed {printed!r} -> {parsed!r}"
+    assert checked > 40, f"only {checked} round-trips exercised"
+
+
+def test_an_unreported_pin_is_not_masked_as_though_one_were_set(run) -> None:  # noqa: ANN001
+    """Bullets say "there is a secret here". An absence must not borrow that claim.
+
+    ``conceal`` already declines to mask the *menu's* absence token for exactly this
+    reason, but the scripted token is ``-``, which it had never been shown — so a radio
+    that had never reported a PIN dumped six bullets, and the reader (or the bug report
+    they pasted it into) read that as PIN-locked.
+    """
+    from meshterm.ui import script
+    from meshterm.ui.config_editor import MASK_MARK, conceal
+
+    # The rule at the boundary where it broke: a real value is masked, an absence is not,
+    # and each surface says which glyph it writes an absence with.
+    assert conceal("1234", absent=script.NONE) == MASK_MARK * 6
+    assert conceal(script.NONE, absent=script.NONE) == script.NONE
+    assert conceal("?") == "?"
+
+    # And the two surfaces must never disagree about the same radio: `show` wears bullets
+    # only where `get` has something to conceal.
+    values = dict(
+        line.split(None, 1) for line in result_lines(run("config", "show")) if " " in line
+    )
+    got = run("config", "get", "device_pin").output.strip()
+    assert (MASK_MARK in values["device_pin"]) == (got != script.NONE), (
+        f"show says {values['device_pin']!r} while get says {got!r}"
+    )
 
 
 def test_config_get_prints_the_bare_value(run) -> None:  # noqa: ANN001

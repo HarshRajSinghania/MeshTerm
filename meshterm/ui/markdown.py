@@ -99,13 +99,17 @@ class Block:
             :attr:`MarkdownDoc.sections`).
         label: The heading's plain text, for a landmark; empty otherwise.
         qr: Whether this block is a ``qr`` fence's scannable code. Marked so a surface
-            that cannot use one can drop it (see :meth:`MarkdownDoc.without_qr`).
+            that cannot use one can drop it (see :meth:`MarkdownDoc.for_script`).
+        rule: Whether this block is a ``---`` horizontal rule. Marked for the same
+            reason: a rule is drawn to the full width of whatever prints it, and the
+            scripted console is 16384 cells wide.
     """
 
     renderable: RenderableType
     heading: bool = False
     label: str = ""
     qr: bool = False
+    rule: bool = False
 
 
 class MarkdownDoc:
@@ -127,21 +131,28 @@ class MarkdownDoc:
         """The page's section headings, in order — the landmarks a jump steps by."""
         return tuple(block.label for block in self.blocks if block.heading)
 
-    def without_qr(self) -> MarkdownDoc:
-        """The same page with its scannable codes left out — and the blank line each left behind.
+    def for_script(self) -> MarkdownDoc:
+        """The same page with what only a screen can use left out, and no gap where it stood.
 
-        A QR is a second rendering of a URL the page already prints as a link, drawn for a
-        phone pointed at a screen. Redirected into a file it is a block of block characters
-        wrapped around nothing new, so the scripted CLI takes this copy instead.
+        Two blocks are drawn for an eye and are worse than useless in a pipe:
+
+        * A **QR** is a second rendering of a URL the page already prints as a link, drawn
+          for a phone pointed at a screen. Redirected into a file it is a block of block
+          characters wrapped around nothing new.
+        * A **rule** is sized to the console it is printed on, and the scripted console is
+          :data:`~meshterm.ui.script.WIDTH` cells wide — so the ``---`` above a colophon
+          arrives as one 16384-character line, tens of kilobytes of ``─`` in a page of
+          prose. It is also a frame, which the scripted CLI does not draw. The blank line
+          on each side already says what the rule said.
 
         Returns:
             A new document; this one is untouched.
         """
         kept: list[Block] = []
         for block in self.blocks:
-            if block.qr:
-                # The blank separator that opened the QR's own block goes with it, so
-                # dropping a code does not leave two blank lines where it stood.
+            if block.qr or block.rule:
+                # The blank separator that opened the dropped block goes with it, so
+                # taking one out does not leave two blank lines where it stood.
                 if kept and isinstance(kept[-1].renderable, Text) and not kept[-1].renderable.plain:
                     kept.pop()
                 continue
@@ -215,8 +226,9 @@ def _document(nodes: Sequence[SyntaxTreeNode]) -> list[Block]:
         heading = node.type == "heading" and node.tag == landmark
         label = _inline(node.children[0], heading=True).plain if heading else ""
         qr = node.type == "fence" and node.info.strip() == "qr"
+        rule = node.type == "hr"
         for rendered in _block(node, indent=INDENT, depth=0):
-            blocks.append(Block(rendered, heading=heading, label=label, qr=qr))
+            blocks.append(Block(rendered, heading=heading, label=label, qr=qr, rule=rule))
             heading = False  # a heading is one block; never mark a stray second
     return blocks
 
