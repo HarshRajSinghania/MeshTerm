@@ -153,6 +153,10 @@ def _listing(devices: list, known: dict, remembered: object, active_target: str 
         columns=(
             fields.word("target", "TARGET"),
             fields.word("transport", "TRANSPORT"),
+            # The two halves `target` is one of, kept apart for a caller that has to know
+            # which transport it is holding without parsing the target for a colon.
+            fields.hidden("port"),
+            fields.hidden("address"),
             fields.name("label", "NAME"),
             fields.name("hardware", "HARDWARE"),
             fields.word("meshcore", "MESHCORE"),

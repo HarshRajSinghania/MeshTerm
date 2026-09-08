@@ -100,14 +100,22 @@ class PlainRenderer(Renderer):
         self.console = console
 
     def render(self, report: Report | None) -> None:
-        """Draw each block in order, one blank line between them."""
-        for index, block in enumerate(report or ()):
+        """Draw each block in order, one blank line between them.
+
+        The separator is counted off what was *drawn* rather than off the block index: a
+        block can render to nothing (a listing with no rows, an acknowledgement whose plain
+        answer is its exit status), and a blank line above the first visible block would be
+        a line of output the command did not have.
+        """
+        drawn_any = False
+        for block in report or ():
             drawn = self._block(block)
             if drawn is None:
                 continue
-            if index:
+            if drawn_any:
                 self.console.print(script.blank())
             self.console.print(drawn)
+            drawn_any = True
 
     def _block(self, block: Block) -> Any:
         """The renderable for one block, or ``None`` where it prints nothing."""

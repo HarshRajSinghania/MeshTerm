@@ -270,6 +270,24 @@ def test_a_block_drawn_only_for_a_person_never_reaches_the_document() -> None:
     assert _json(facts, summary) == {"packets": 2}
 
 
+def test_a_block_that_prints_nothing_leaves_no_blank_line_where_it_stood() -> None:
+    """The separator is counted off what was drawn, not off the block index.
+
+    ``config restore --dry-run`` states its outcome silently and its plan as a listing, and
+    counting positions instead opened the command with an empty line — output it did not
+    have, in whatever was reading it.
+    """
+    silent = Facts(
+        key="restore", fields=(fields.flag("dry_run", "dry_run"),), values={}, shape=SILENT
+    )
+    plan = Listing(
+        key="operations",
+        columns=(fields.word("operation", "OPERATION"),),
+        rows=[{"operation": "set"}],
+    )
+    assert _plain(silent, plan).splitlines()[0] == "OPERATION"
+
+
 # -- the document's own rules ----------------------------------------------------------
 
 
