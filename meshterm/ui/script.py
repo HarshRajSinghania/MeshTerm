@@ -72,16 +72,36 @@ GUTTER = 2
 NONE = "-"
 
 
-#: The characters that would end a record early, and the escape each one takes. A record
-#: is a line, so a value carrying a newline is not a value this format can hold — and the
-#: fields most likely to carry one (a node name, a message body) are exactly the fields a
-#: stranger fills in. The convention is the ordinary backslash one, so it reads back.
+#: The characters with a readable escape of their own. Everything else that cannot travel
+#: in a record falls through to ``\xNN``/``\uNNNN`` below.
 _BREAKS = {"\\": "\\\\", "\n": "\\n", "\r": "\\r", "\t": "\\t"}
+
+#: Codepoints that must never reach stdout unescaped, as a *category* rather than a list:
+#: every C0 and C1 control, plus the two Unicode separators a terminal also breaks a line
+#: on. A four-entry table caught the newline and the tab and let ESC through — and an ESC
+#: inside a node name is a live colour run written into the caller's file, which is the
+#: one thing "no colour, not a single escape sequence" exists to prevent. A BEL was worse:
+#: silently dropped, so the printed name was not the advertised one.
+_UNPRINTABLE = frozenset([*range(0x00, 0x20), 0x7F, *range(0x80, 0xA0), 0x2028, 0x2029])
 
 
 def _escaped(text: str) -> str:
-    """``text`` with its backslashes doubled and its line breaks folded into escapes."""
-    return "".join(_BREAKS.get(ch, ch) for ch in text)
+    r"""``text`` with everything that cannot travel inside one record folded into an escape.
+
+    A record is a line and a field is a run of printable cells; this is what makes both
+    true of a value that arrived over the air. Named escapes where one reads (``\n``),
+    numeric escapes everywhere else, and the backslash doubled so the whole thing reads
+    back unambiguously.
+    """
+    out: list[str] = []
+    for ch in text:
+        if ch in _BREAKS:
+            out.append(_BREAKS[ch])
+        elif ord(ch) in _UNPRINTABLE:
+            out.append(f"\\x{ord(ch):02x}" if ord(ch) < 0x100 else f"\\u{ord(ch):04x}")
+        else:
+            out.append(ch)
+    return "".join(out)
 
 
 def quote(value: str | None) -> str:

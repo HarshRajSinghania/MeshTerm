@@ -239,7 +239,10 @@ def test_the_gutter_still_separates_columns_after_the_trimming() -> None:
     header, record = _rendered(table).splitlines()
     assert header.split() == ["NAME", "TYPE", "PKTS"]
     assert record.split() == ['"Alice"', "node", "12"]
-    assert " " * script.GUTTER in record
+    # Spelled out, not written as `" " * script.GUTTER`: an assertion that reads the
+    # constant it is checking narrows to `" " in record` when the gutter narrows, which
+    # is exactly the state the gutter exists to prevent.
+    assert '"Alice"  node' in record
 
 
 def test_columns_align_so_every_record_splits_the_same_way() -> None:
@@ -280,6 +283,50 @@ def test_no_column_elides_however_long_its_value_runs() -> None:
     out = _rendered(table)
     assert "…" not in out
     assert "d4" * 32 in out
+
+
+def test_the_trimmer_keeps_the_gutter_when_the_stream_flushes_between_columns() -> None:
+    """Rich's legacy-Windows renderer writes a row one segment at a time, flushing each.
+
+    ``LegacyWindowsTerm.write_text`` is ``write(text); flush()``, so on that path a flush
+    lands *between two columns* as often as at the end of a line. A wrapper that emptied
+    its held run at flush destroyed every gutter in real use while the in-process tests —
+    which see one write and one flush per ``print`` — went on passing. That is not a
+    hypothetical: it shipped, and this drives the stream the way that renderer does.
+    """
+    buffer = io.StringIO()
+    stream = script._Trimmed(buffer)
+    for segment in ('"Alice"', "  ", "node", "  ", "12", "\n"):
+        stream.write(segment)
+        stream.flush()
+    assert buffer.getvalue() == '"Alice"  node  12\n'
+
+
+def test_the_trimmer_still_drops_the_run_that_ends_a_line() -> None:
+    """The other half of the rule: holding padding back is only right if it is still cut.
+
+    Held whitespace is emitted when something follows it on the line, and dropped at the
+    newline and at the end of the stream — otherwise every record would end in the
+    invisible padding of its last column.
+    """
+    buffer = io.StringIO()
+    stream = script._Trimmed(buffer)
+    for segment in ("row", "    ", "\n", "next", "   "):
+        stream.write(segment)
+        stream.flush()
+    assert buffer.getvalue() == "row\nnext"
+
+
+def test_a_value_wider_than_the_console_is_cut_rather_than_elided() -> None:
+    """Past :data:`~meshterm.ui.script.WIDTH` cells something gives; it must not be a "…".
+
+    An elision is indistinguishable from a value that really ends there, so a key read out
+    of a listing would go back into ``--to`` subtly wrong. A 64-hex key never reaches the
+    overflow path at all, so only an over-width value tests the guard that stands there.
+    """
+    table = script.columns("KEY")
+    table.add_row("d" * (script.WIDTH + 500))
+    assert "…" not in _rendered(table)
 
 
 # -- framing --------------------------------------------------------------------------
@@ -337,24 +384,19 @@ def test_a_pairs_value_is_unquoted_because_it_is_the_rest_of_the_line() -> None:
 # -- exit statuses --------------------------------------------------------------------
 
 
-def test_every_exit_code_is_documented() -> None:
-    """A documented return value is half of what makes the CLI scriptable."""
-    codes = {
-        exitcodes.OK,
-        exitcodes.FAILURE,
-        exitcodes.USAGE,
-        exitcodes.NO_DEVICE,
-        exitcodes.DEVICE,
-        exitcodes.NO_RESULT,
-    }
-    assert set(exitcodes.MEANINGS) == codes
+def test_the_exit_statuses_are_the_numbers_a_caller_hard_codes() -> None:
+    """``case $? in 3)`` is written against the digits, so the digits are the contract.
+
+    Stated as literals on purpose. Asserting ``set(MEANINGS) == {OK, FAILURE, …}``, or
+    ``len(set(d)) == len(d)``, cannot fail however the constants are renumbered: a dict
+    has no duplicate keys, so two statuses colliding *removes* a row and both sides of
+    the comparison lose the same one together. Renumbering ``NO_DEVICE`` to ``4`` left
+    that whole family of assertions green while status 3 vanished from ``--help``.
+    """
+    assert (exitcodes.OK, exitcodes.FAILURE, exitcodes.USAGE) == (0, 1, 2)
+    assert (exitcodes.NO_DEVICE, exitcodes.DEVICE, exitcodes.NO_RESULT) == (3, 4, 5)
+    assert sorted(exitcodes.MEANINGS) == [0, 1, 2, 3, 4, 5]
     assert all(meaning for meaning in exitcodes.MEANINGS.values())
-
-
-def test_the_codes_are_distinct_and_ok_is_zero() -> None:
-    """The shell's own convention, and no two outcomes share a status."""
-    assert exitcodes.OK == 0
-    assert len(set(exitcodes.MEANINGS)) == len(exitcodes.MEANINGS)
 
 
 def test_the_help_epilog_names_every_status() -> None:

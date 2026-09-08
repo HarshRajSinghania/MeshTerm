@@ -328,8 +328,26 @@ class PlainUi(Ui):
                 self.console.print(item)
 
     def note(self, markup: str) -> None:
-        """Print a markup line to the console immediately."""
-        self.console.print(markup)
+        """Print a markup line to the console immediately, as plain text.
+
+        The parameter is markup — that is the shared surface's contract, and forty-odd
+        callers write it — but the scripted console does not interpret markup: a node
+        broadcasts its own name, and Rich would read ``[...]`` in one as a style tag. So
+        the tags are resolved *here* rather than by the console, and what reaches stdout
+        is the text they were wrapping. Printing them raw put ``[muted]`` and ``[/muted]``
+        around the private key that ``config export-key > key.hex`` is supposed to be the
+        whole content of.
+
+        Malformed markup — which is what a *name* holding a bracket looks like — is not an
+        error to report but a string to print, so it falls through verbatim.
+        """
+        from rich.errors import MarkupError
+        from rich.markup import render
+
+        try:
+            self.console.print(render(markup).plain)
+        except MarkupError:
+            self.console.print(markup)
 
     def ack(self, markup: str) -> None:
         """Drop it: on the command line the exit status is the acknowledgement."""

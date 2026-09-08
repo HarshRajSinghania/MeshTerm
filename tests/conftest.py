@@ -18,6 +18,7 @@ always see the colours the app really emits.
 
 from __future__ import annotations
 
+import os
 import re
 from collections.abc import Callable, Iterable, Iterator
 
@@ -85,6 +86,33 @@ def _reset_transmit_gate() -> Iterator[None]:
     transmit_clock().reset()
     yield
     transmit_clock().reset()
+
+
+@pytest.fixture(autouse=True)
+def _isolate_config_dir(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
+    """No test may reach the developer's own ``~/.meshterm``.
+
+    ``$MESHTERM_HOME`` moves the whole directory — the history, the contact and channel
+    caches, the outbox, the stored admin passwords, the device profiles, the preferences
+    and the log. ``--db`` moves only the first of those, which is why isolating a CLI test
+    with ``--db`` alone was not isolation at all: a synthetic contact written by a probe
+    sat in the real cache and made ``test_cli_contract`` fail on one machine and pass on
+    every other, and every run appended to the developer's real ``meshterm.log`` and read
+    their real ``log_level``.
+
+    Autouse and unconditional, because the exposure is not the CLI's: anything that
+    touches ``Settings.load()``, a preference, a store or the logger has it. A test that
+    wants a *populated* directory sets the variable itself; ``monkeypatch.setenv`` inside
+    a test still wins over this.
+    """
+    home = tmp_path_factory.mktemp("meshterm-home")
+    previous = os.environ.get("MESHTERM_HOME")
+    os.environ["MESHTERM_HOME"] = str(home)
+    yield
+    if previous is None:
+        os.environ.pop("MESHTERM_HOME", None)
+    else:
+        os.environ["MESHTERM_HOME"] = previous
 
 
 @pytest.fixture(autouse=True)

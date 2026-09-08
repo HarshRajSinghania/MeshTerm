@@ -488,7 +488,9 @@ async def _export_key(
         # `meshterm config export-key > key.hex` should hold the key and nothing else. The
         # warning that comes with it belongs beside it on screen, not in the file.
         ctx.ui.ack("[warn]private key (keep secret):[/warn]")
-        ctx.ui.note(f"[muted]{key_hex}[/muted]")
+        # Bare, on both faces: this line *is* the export, and `config export-key` with no
+        # `--out` is expected to be redirected into a file.
+        ctx.ui.note(key_hex)
 
 
 async def _read_channels(device: Device) -> list[dict]:

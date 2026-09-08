@@ -21,6 +21,11 @@ from meshterm.core import exitcodes
 #: Any ANSI escape sequence. Nothing on the CLI's stdout may match this.
 _ANSI = re.compile(r"\x1b\[")
 
+#: A Rich console-markup tag. The scripted console no longer *interprets* markup — a node
+#: name is remote data and `[bold]` in one is a name, not a style — which means a tag
+#: MeshTerm writes itself is no longer consumed either, and lands in the caller's pipe.
+_MARKUP = re.compile(r"\[/?(?:ok|err|warn|muted|accent|brand|bold|dim|reverse)\b[^\]]*\]")
+
 #: The shape of a scripted path line: one or more quoted node names, each optionally
 #: followed by its hash in parentheses *outside* the quotes, joined by a bare comma. This
 #: is the whole grammar — a line matching it splits, whatever the names hold.
@@ -38,6 +43,35 @@ _LISTINGS: list[tuple[str, list[str], list[str]]] = [
     ("chat", ["list"], ["CONVERSATION", "KIND", "UNREAD", "LAST_TIME", "LAST_TEXT"]),
     ("platform", [], ["platform", "icons"]),
 ]
+
+
+def _leaf_commands() -> list[tuple[str, ...]]:
+    """Every registered subcommand path, walked out of the real Typer app.
+
+    Derived rather than listed: a hand-kept roster covers whatever was reworked the day it
+    was written, and a command added afterwards inherits none of it. Two rule violations
+    shipped inside commands the roster did not name — a 16384-cell rule in ``about`` and
+    markup tags in ``config export-key``.
+    """
+    from typer.main import get_command
+
+    from meshterm.cli import app
+
+    def walk(command, prefix: tuple[str, ...] = ()) -> list[tuple[str, ...]]:  # noqa: ANN001
+        found: list[tuple[str, ...]] = []
+        for name, sub in sorted(getattr(command, "commands", {}).items()):
+            here = (*prefix, name)
+            found.extend(walk(sub, here) if getattr(sub, "commands", None) else [here])
+        return found
+
+    return walk(get_command(app))
+
+
+#: Commands that own the terminal or run until interrupted: they have no one-shot output.
+_NOT_ONE_SHOT = {("monitor",), ("chat", "listen"), ("tx-optimize",)}
+
+#: The one command whose output *is* its colour, and says so (:mod:`meshterm.ui.specimen`).
+_KEEPS_ITS_COLOUR = {("specimen",)}
 
 
 @pytest.fixture()
@@ -71,7 +105,7 @@ def test_a_command_prints_no_escape_sequence(run, command, args, fields) -> None
     """Nothing is coloured: stdout is a pipe more often than a terminal."""
     result = run(command, *args)
     assert result.exit_code == exitcodes.OK, result.output
-    assert not _ANSI.search(result.output)
+    assert not _ANSI.search(result.stdout)
 
 
 @pytest.mark.parametrize("command,args,fields", _LISTINGS, ids=[c for c, _, _ in _LISTINGS])
@@ -79,14 +113,14 @@ def test_a_command_carries_the_fields_a_caller_looks_for(run, command, args, fie
     """The headings and keys are the contract; renaming one silently breaks a script."""
     result = run(command, *args)
     for field in fields:
-        assert field in result.output, f"{command} lost {field}"
+        assert field in result.stdout, f"{command} lost {field}"
 
 
 @pytest.mark.parametrize("command,args,fields", _LISTINGS, ids=[c for c, _, _ in _LISTINGS])
 def test_a_command_draws_no_frame_and_no_rule(run, command, args, fields) -> None:  # noqa: ANN001
     """No borders, no boxes, no header rules — the command typed is the title."""
     result = run(command, *args)
-    assert not set(result.output) & set("─│┌┐└┘├┤━┃")
+    assert not set(result.stdout) & set("─│┌┐└┘├┤━┃")
 
 
 @pytest.mark.parametrize("command,args,fields", _LISTINGS, ids=[c for c, _, _ in _LISTINGS])
@@ -97,8 +131,47 @@ def test_a_command_leaves_no_trailing_whitespace(run, command, args, fields) -> 
 
 
 def result_lines(result) -> list[str]:  # noqa: ANN001
-    """The command's stdout as lines, with the trailing blank dropped."""
-    return result.output.splitlines()
+    """The command's stdout as lines, with the trailing blank dropped.
+
+    ``result.output`` is a third buffer that *both* streams copy into, so a rule about
+    stdout asserted against it passes when the field it wants only ever appeared on
+    stderr — and fails for the wrong reason the moment anything logs.
+    """
+    return result.stdout.splitlines()
+
+
+@pytest.mark.parametrize(
+    "leaf",
+    [c for c in _leaf_commands() if c not in _NOT_ONE_SHOT | _KEEPS_ITS_COLOUR],
+    ids=lambda leaf: "-".join(leaf),
+)
+def test_every_registered_command_obeys_the_rules(run, leaf) -> None:  # noqa: ANN001
+    """The rules belong to the CLI, not to the six commands somebody listed by hand.
+
+    Run bare, a command that needs arguments fails harmlessly as a usage error and still
+    proves it wrote nothing awkward on the way out; a command that can answer without
+    arguments is exercised for real. That is where both shipped violations were — the
+    ``---`` in ``about`` drawn as a rule the width of a 16384-cell console, and the
+    ``[muted]`` tags around what ``config export-key`` exists to emit.
+    """
+    out = run(*leaf).stdout
+    assert not _ANSI.search(out), f"{' '.join(leaf)} put an escape sequence on stdout"
+    assert not set(out) & set("─│┌┐└┘├┤━┃╭╮╰╯"), f"{' '.join(leaf)} drew a frame or a rule"
+    assert not _MARKUP.search(out), f"{' '.join(leaf)} printed a console markup tag"
+    for line in out.splitlines():
+        assert line == line.rstrip(), f"{' '.join(leaf)} padded a line: {line!r}"
+
+
+def test_the_sweep_actually_covers_the_whole_command_surface() -> None:
+    """A derived list is only a guarantee while it is still finding the commands.
+
+    If the walk breaks — a Typer upgrade moving ``commands``, say — every parametrised
+    case silently becomes zero cases and the sweep passes by covering nothing.
+    """
+    leaves = _leaf_commands()
+    assert len(leaves) > 40, f"only found {len(leaves)} commands: {leaves}"
+    for expected in [("about",), ("config", "export-key"), ("contacts",), ("trace",)]:
+        assert expected in leaves, expected
 
 
 # -- listings -------------------------------------------------------------------------
