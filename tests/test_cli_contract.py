@@ -556,6 +556,38 @@ def test_a_port_that_will_not_open_is_no_device_not_a_device_failure(run) -> Non
     assert "lost" not in result.stderr
 
 
+@pytest.mark.parametrize(
+    "args",
+    [
+        ("repeater-admin", "Nobody", "get", "name"),
+        ("courier", "queue", "Nobody", "hi"),
+        ("courier", "queue", "Alice", "hi", "--at", "25:99"),
+    ],
+    ids=["unknown-admin-node", "unknown-courier-contact", "bad-at-time"],
+)
+def test_a_bad_argument_is_never_reported_as_a_device_failure(run, args) -> None:  # noqa: ANN001
+    """``4`` promises a caller that the radio answered and a retry is worth trying.
+
+    Each of these is the *argument* being wrong, decided before a word goes over the air —
+    so a caller that retried on ``4`` would retransmit nothing, forever. ``tx-optimize``
+    already answered the identical question the identical way for a missing password;
+    these three were the ones that had not caught up.
+    """
+    result = run(*args)
+    assert result.exit_code == exitcodes.USAGE, result.output
+    assert result.stdout == ""
+
+
+def test_a_node_that_answers_no_is_still_a_device_failure(run) -> None:  # noqa: ANN001
+    """The other side of the line: the radio was reached, so a retry is a real option.
+
+    A refused admin login is not a bad argument — the password may simply have changed —
+    and reclassifying the arguments above must not drag this one along with them.
+    """
+    result = run("repeater-admin", "Yagi-Repeater", "get", "name", "--password", "wrongpw")
+    assert result.exit_code == exitcodes.DEVICE, result.output
+
+
 def test_an_empty_result_writes_nothing_to_stdout_at_all(run) -> None:  # noqa: ANN001
     """Not a "no channels configured" line: the status carries it, so the pipe stays clean."""
     result = run("channels", "list")

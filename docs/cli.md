@@ -1186,8 +1186,9 @@ of `delivered`, `no ack`, `gave up`, `unknown contact`, `busy`, `gone` — kept 
 spaces and all, so the two faces say the same word.
 
 `list` returns `5` on an empty outbox; `cancel` and `clear` return `5` when there was
-nothing to act on. A contact the device does not know is a **device error** (`4`), not a
-usage one.
+nothing to act on. A contact the device does not know, a contact with no key to address,
+and an `--at` that is not a clock time are all **usage errors** (`2`): the argument is
+wrong, nothing was queued, and nothing went out over the air.
 
 ---
 
@@ -1365,8 +1366,9 @@ landed), but there is nothing to report, so it returns `5`.
 
 Logging in happens automatically from the remembered password; run the interactive flow
 once to store one, or pass `--password`. A refused login clears the saved password and
-fails with `4`. **An absent password also fails with `4` here**, where `tx-optimize` calls
-the same condition a usage error — worth knowing if you branch on the status.
+fails with `4` — the node answered, and answered no. An **absent** password, and a node
+name no contact matches, are usage errors (`2`): nothing was transmitted in either case,
+which is the line `3` and `4` are drawn on.
 
 **`--json`:**
 

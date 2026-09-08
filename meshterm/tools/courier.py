@@ -23,7 +23,6 @@ import typer
 
 from ..context import AppContext
 from ..core import exitcodes
-from ..core.connection import DeviceCommandError
 from .base import Tool, ToolResult, register
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -102,17 +101,19 @@ class CourierTool(Tool):
         name = str(params["contact"])
         needle = name.casefold()
         contact = next((c for c in contacts if c.name.casefold() == needle), None)
+        # The named contact, not the radio: nothing is queued and nothing is sent, so
+        # these are bad arguments (2) rather than device failures (4).
         if contact is None:
-            raise DeviceCommandError(f"unknown contact: {name!r}")
+            raise typer.BadParameter(f"unknown contact: {name!r}")
         key = contact_watch_key(contact)
         if key is None:
-            raise DeviceCommandError(f"{name!r} has no usable key to address")
+            raise typer.BadParameter(f"{name!r} has no usable key to address")
 
         not_before = None
         if params.get("at"):
             not_before = parse_clock(str(params["at"]))
             if not_before is None:
-                raise DeviceCommandError(
+                raise typer.BadParameter(
                     f"--at wants a clock time like 07:00, not {params['at']!r}"
                 )
         message = ctx.courier_store.queue(

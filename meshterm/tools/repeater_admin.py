@@ -71,12 +71,16 @@ class RepeaterAdminTool(Tool):
         contacts = await device.get_contacts()
         name = str(params["node"])
         node = next((c for c in contacts if c.name == name), None)
+        # Both of these are the *argument* being wrong, and nothing has gone out over
+        # the air when either fires — so they are usage errors (2), not device failures
+        # (4), whose promise to a caller is that a retry is worth trying. `tx-optimize`
+        # already answered the identical question this way for the identical condition.
         if node is None:
-            raise DeviceCommandError(f"unknown contact: {name!r}")
+            raise typer.BadParameter(f"unknown contact: {name!r}")
 
         password = params.get("password") or ctx.admin_store.get(node)
         if not password:
-            raise DeviceCommandError(
+            raise typer.BadParameter(
                 f"no admin password for {name!r}; pass --password or run the "
                 "interactive flow once to store it."
             )
