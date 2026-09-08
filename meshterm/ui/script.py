@@ -571,6 +571,12 @@ def stderr_console() -> Console:
 
     from .theme import active_theme
 
+    reconfigure = getattr(sys.stderr, "reconfigure", None)
+    if reconfigure is not None:
+        try:  # the ✓ on an acknowledgement must not depend on the machine's code page
+            reconfigure(encoding="utf-8")
+        except (ValueError, OSError):  # pragma: no cover - stream not reconfigurable
+            pass
     try:
         wraps = bool(sys.stderr.isatty())
     except (AttributeError, ValueError):  # pragma: no cover - a closed or exotic stream

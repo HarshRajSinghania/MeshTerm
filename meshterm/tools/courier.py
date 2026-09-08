@@ -153,7 +153,10 @@ class CourierTool(Tool):
         """
         ident = int(params["id"])
         if ctx.courier_store.get(ident) is None:
-            raise DeviceCommandError(f"no outbox entry #{ident}")
+            # A bad argument, not a device failure: the outbox is a local file, nothing was
+            # transmitted, and no retry will make an id exist. Exit 4 told a caller to try
+            # again; exit 2 tells it to fix the command, which is the truth.
+            raise typer.BadParameter(f"no outbox entry #{ident} (see `courier list`)")
         outcome = await ctx.courier.attempt_now(ident)
         notes = {
             "delivered": "[ok]✓ delivered[/ok] — acknowledged by the contact",

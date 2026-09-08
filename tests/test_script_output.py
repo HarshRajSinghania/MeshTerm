@@ -469,6 +469,27 @@ def test_a_value_wider_than_the_console_is_cut_rather_than_elided() -> None:
     assert "…" not in _rendered(table)
 
 
+def test_an_error_stays_greppable_when_stderr_is_not_a_terminal() -> None:
+    """A sentence broken across three lines is a sentence nothing can find.
+
+    Rich falls back to 80 cells when it cannot measure the destination, so
+    ``2> errors.log`` hard-wrapped every message — and ``grep 'not already connected'``
+    then found nothing, because the words it was looking for had a newline in the middle
+    of them. In a real terminal the width is left alone: a progress bar sized to 16384
+    cells is not a progress bar.
+    """
+    import sys
+
+    buffer = io.StringIO()
+    stderr, sys.stderr = sys.stderr, buffer
+    try:
+        console = script.stderr_console()
+        console.print("meshterm: " + "the connection was not already connected " * 6)
+    finally:
+        sys.stderr = stderr
+    assert len(buffer.getvalue().splitlines()) == 1
+
+
 # -- framing --------------------------------------------------------------------------
 
 

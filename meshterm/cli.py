@@ -130,6 +130,14 @@ def main_callback(
         active = without_emoji(active)
     set_platform(active)
 
+    if mock and (port or ble or tcp):
+        # One flag says "pretend", the other names one exact radio, and `--mock` used to
+        # win silently — so a scheduled `--port COM7 --mock info` reported on a simulator
+        # while reading as though it had reached the radio. Two contradictory claims about
+        # which device to talk to is a bad command line, not a precedence question.
+        named = "--port" if port else ("--ble" if ble else "--tcp")
+        raise typer.BadParameter(f"--mock and {named} name different devices; pass one")
+
     settings = Settings.load()
     if db_path is not None:
         settings.db_path = db_path
@@ -587,19 +595,38 @@ def run_tool_command(tool: Tool, params: dict) -> None:
 
 
 def _stdin_is_a_person() -> bool:
-    """Whether something is there to answer a prompt.
+    """Whether somebody is there to answer a prompt.
 
     The test a tool actually wants before it stops and asks: a redirected or piped stdin
     means nobody is watching, and a command that blocks there has hung rather than failed.
     ``tx-optimize`` used to ask ``--json`` instead — a flag about output format, which
     answers a different question and answered this one wrong in both directions.
 
+    ``isatty`` alone is not enough on Windows, and the gap is exactly the case this exists
+    for. ``NUL`` is a *character device*, so a scheduled task's empty stdin answers yes —
+    and :func:`getpass.getpass` on Windows then reads the console directly through
+    ``msvcrt`` rather than through stdin, and waits forever for a keypress nobody is there
+    to make. ``GetConsoleMode`` succeeds only on a real console handle, which is the
+    question being asked.
+
     Returns:
-        ``True`` only where stdin is a terminal.
+        ``True`` only where stdin is a terminal somebody could type into.
     """
     try:
-        return bool(sys.stdin.isatty())
+        if not sys.stdin.isatty():
+            return False
     except (AttributeError, ValueError):  # pragma: no cover - stdin closed or replaced
+        return False
+    if sys.platform != "win32":
+        return True
+    try:  # pragma: no cover - the branch is Windows-only and needs a real handle
+        import ctypes
+        import msvcrt
+
+        mode = ctypes.c_uint()
+        handle = msvcrt.get_osfhandle(sys.stdin.fileno())
+        return bool(win32dll.kernel32().GetConsoleMode(handle, ctypes.byref(mode)))
+    except Exception:  # pragma: no cover - no console, or a stubbed kernel32
         return False
 
 
@@ -651,12 +678,18 @@ async def _drive(coro, ctx: AppContext):  # noqa: ANN201 - passes the awaited va
 
 
 async def _execute_and_render(tool: Tool, params: dict, ctx: AppContext) -> ToolResult:
-    """Run a tool and render the answer it stated.
+    """Run a tool, render the answer it stated, and close with what it has to say.
 
     The one place a report becomes output. The tool says what happened as data and this
     hands it to whichever renderer ``--json`` selected, exactly as ``exit_code`` is stated
     here and turned into a process status by the caller — which is what lets a third format
     be a new renderer rather than an edit to twenty tools.
+
+    A tool's ``message`` — "✓ applied 3 changes", "✓ traced Alice" — goes to **stderr**,
+    like every other acknowledgement (see :meth:`~meshterm.ui.surface.PlainUi.ack`). It is
+    the closing line rather than the answer, so it must stay out of a redirect; it is also
+    the count a person at a prompt actually wanted after a command that scrolled, so
+    dropping it was throwing it away to protect a stream it was never going to reach.
 
     Args:
         tool: The tool to execute.
@@ -668,6 +701,8 @@ async def _execute_and_render(tool: Tool, params: dict, ctx: AppContext) -> Tool
     """
     result = await tool.execute(ctx, params)
     renderers.for_format(ctx.output, ctx.console).render(result.report)
+    if result.message:
+        ctx.ui.ack(result.message)
     return result
 
 

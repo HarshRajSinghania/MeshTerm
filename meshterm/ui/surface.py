@@ -100,7 +100,11 @@ class Ui:
         a screen needs and a script does not, because the exit status already said it and
         the line would only be something to filter out of the real output.
 
-        So the menu prints these and the CLI drops them (see :meth:`PlainUi.ack`).
+        Both surfaces show them; what differs is *where*. The menu prints them in its
+        result window. The CLI prints them on **stderr** (see :meth:`PlainUi.ack`), which
+        keeps the promise the dropping was made to keep — ``meshterm contacts > f`` still
+        catches only the answer — while giving the person at the prompt back the ✓ and the
+        count they were losing to a rule written for a redirect they were not doing.
         """
         raise NotImplementedError
 
@@ -350,7 +354,28 @@ class PlainUi(Ui):
             self.console.print(markup)
 
     def ack(self, markup: str) -> None:
-        """Drop it: on the command line the exit status is the acknowledgement."""
+        """Print it on stderr, where everything *about* the run goes.
+
+        These used to be dropped, and the reason was sound as far as it went: an
+        acknowledgement is not the answer, and a caller redirecting stdout must catch only
+        the answer. But stdout is not the only stream — putting them on stderr honours that
+        rule exactly, and a person watching a five-minute ``config restore`` gets the
+        setting-by-setting ✓ they had no way to see.
+
+        The markup is resolved here rather than by the console, as :meth:`note` explains,
+        and a *name* holding a square bracket is not an error to report but a string to
+        print — so malformed markup falls through verbatim.
+        """
+        from rich.errors import MarkupError
+        from rich.markup import render
+
+        from . import script
+
+        try:
+            line: Text | str = render(markup)
+        except MarkupError:
+            line = markup
+        script.stderr_console().print(line, highlight=False)
 
     async def view(
         self, renderable: RenderableType, *, title: str = "", footer_hint: str = ""

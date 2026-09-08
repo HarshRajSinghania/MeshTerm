@@ -514,6 +514,51 @@ def test_an_empty_result_writes_nothing_to_stdout_at_all(run) -> None:  # noqa: 
     assert result.stdout == ""
 
 
+def test_mock_and_an_explicit_radio_are_a_bad_command_line(run) -> None:  # noqa: ANN001
+    """One flag says "pretend", the other names one exact radio, and both cannot be true.
+
+    ``--mock`` used to win silently, so a scheduled ``--port COM7 --mock info`` reported on
+    a simulator while reading as though it had reached the radio. Two contradictory claims
+    about which device to talk to is a bad command line, not a precedence question.
+    """
+    from typer.testing import CliRunner
+
+    from meshterm.cli import app
+
+    for flag, value in (("--port", "COM7"), ("--ble", "AA:BB"), ("--tcp", "host:1")):
+        result = CliRunner().invoke(app, ["--mock", flag, value, "info"])
+        assert result.exit_code == exitcodes.USAGE, flag
+        assert result.stdout == ""
+        assert flag in result.stderr
+
+
+def test_an_acknowledgement_reaches_the_person_without_reaching_the_pipe(run) -> None:  # noqa: ANN001
+    """``ack`` used to be dropped on the CLI, and the reason only covered half the case.
+
+    An acknowledgement is not the answer, and a caller redirecting stdout must catch only
+    the answer — but stdout is not the only stream. stderr honours that rule exactly while
+    giving a person watching a five-minute ``config restore`` the setting-by-setting ✓ they
+    had no way to see.
+    """
+    result = run("config", "set", "tx_power", "20")
+    assert result.exit_code == exitcodes.OK
+    assert result.stdout == ""
+    assert "tx_power" in result.stderr
+
+
+def test_a_closing_message_goes_to_stderr_too(run) -> None:  # noqa: ANN001
+    """A closing count is for a person, not a record for a parser.
+
+    It restates what the listing above already showed and what ``$?`` already says, so it
+    has no business in a redirect — and it is exactly what someone wants after a command
+    that scrolled past them.
+    """
+    result = run("records")
+    assert result.exit_code == exitcodes.NO_RESULT
+    assert result.stdout == ""
+    assert "records stored" in result.stderr
+
+
 # -- the map --------------------------------------------------------------------------
 
 

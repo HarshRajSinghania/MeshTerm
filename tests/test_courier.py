@@ -320,13 +320,20 @@ async def test_cli_send_forces_one_attempt(tmp_path: Path) -> None:
     assert result.summary == {"id": entry.ident, "outcome": "delivered"}
 
 
-async def test_cli_send_unknown_entry_errors(tmp_path: Path) -> None:
-    """Sending a non-existent entry is a clean device-command error, not a crash."""
-    from meshterm.core.connection import DeviceCommandError
+async def test_cli_send_unknown_entry_is_a_bad_argument(tmp_path: Path) -> None:
+    """An id nobody has is a *usage* error, and it used to claim the device had failed.
+
+    The outbox is a local file: nothing was transmitted, and no retry will make an id
+    exist. Exit 4 tells a caller "the radio was reached and the operation failed, try
+    again" — which sent a scheduled sender into a retry loop over a typo. Exit 2 says fix
+    the command, which is the truth.
+    """
+    import typer
+
     from meshterm.tools.courier import CourierTool
 
     ctx = _ToolCtx(tmp_path)
-    with pytest.raises(DeviceCommandError):
+    with pytest.raises(typer.BadParameter):
         await CourierTool().run(ctx, {"cli_action": "send", "id": 999})
 
 

@@ -365,6 +365,13 @@ class TxOptimizeTool(Tool):
     ) -> str:
         """Find the admin password: explicit flag, remembered, or an interactive prompt.
 
+        The question this asks is **"is anyone there to answer?"**, and it used to ask
+        ``--json`` instead — a flag about what the output looks like, which cannot answer
+        it and answered it wrong in both directions: with the flag a piped run failed
+        cleanly, and without it a scheduled run on a terminal sat waiting for a password
+        nobody was going to type. ``ctx.interactive`` reads stdin, which is where the
+        answer actually is.
+
         Args:
             ctx: Shared application context.
             admin_node: The node we're about to log in to.
@@ -374,13 +381,15 @@ class TxOptimizeTool(Tool):
             The password to log in with.
 
         Raises:
-            DeviceCommandError: If no password is available and we can't prompt (JSON mode).
+            typer.BadParameter: If no password is available and nobody can be asked for
+                one. A usage error rather than a device failure: nothing was transmitted,
+                and no retry helps until the command line carries the password.
         """
         password = params.get("password") or ctx.admin_store.get(admin_node)
         if password:
             return str(password)
-        if ctx.json_output:
-            raise DeviceCommandError(
+        if not ctx.interactive:
+            raise typer.BadParameter(
                 f"no admin password for {admin_node.name!r}; pass --password or run once "
                 "interactively to store it."
             )
@@ -388,7 +397,7 @@ class TxOptimizeTool(Tool):
         # sweep screen), so the surface here is PlainUi — no screen stack, no floating.
         entered = await ctx.ui.text(f"Admin password for {admin_node.name}:", password=True)
         if not entered:
-            raise DeviceCommandError("an admin password is required to tune a remote node.")
+            raise typer.BadParameter("an admin password is required to tune a remote node.")
         return entered
 
     def register_cli(self, app: typer.Typer) -> None:
