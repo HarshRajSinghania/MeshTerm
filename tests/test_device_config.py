@@ -1327,8 +1327,13 @@ def test_uptime_renders_compact_units() -> None:
 
 
 def test_require_yes_blocks_without_confirmation() -> None:
-    """Destructive CLI commands abort unless --yes is passed."""
-    with pytest.raises(typer.Exit):
+    """Destructive CLI commands abort unless --yes is passed.
+
+    As a *usage* error: a missing confirmation is a bad invocation, so it exits under the
+    parser's own status and prints in the parser's own words on stderr, rather than a red
+    line of its own on stdout (see :mod:`meshterm.core.exitcodes`).
+    """
+    with pytest.raises(typer.BadParameter, match="--yes"):
         _require_yes(False, "factory reset erases all data")
     _require_yes(True, "factory reset erases all data")  # does not raise
 

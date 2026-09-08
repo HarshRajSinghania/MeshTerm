@@ -250,12 +250,12 @@ class ChannelsTool(Tool):
             ),
         ) -> None:
             if not yes:
-                typer.secho(
-                    "Refusing: clearing a slot removes the channel (a private channel's "
-                    "key is lost unless you have it saved). Re-run with --yes to confirm.",
-                    fg="red",
+                # A usage error, in the parser's own words and under its own status — not a
+                # red line printed onto whatever is reading this command's output.
+                raise typer.BadParameter(
+                    "clearing a slot removes the channel (a private channel's key is lost "
+                    "unless you have it saved). Re-run with --yes to confirm."
                 )
-                raise typer.Exit(1)
             run_tool_command(self, {"cli_action": "clear", "index": index})
 
         app.add_typer(channels_app, name=self.name)

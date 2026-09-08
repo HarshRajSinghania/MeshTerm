@@ -176,13 +176,41 @@ def test_a_bad_setting_key_is_a_plain_failure(run) -> None:  # noqa: ANN001
     assert result.exit_code == exitcodes.FAILURE
 
 
-def test_a_failure_says_so_on_stderr_in_the_utility_shape(run) -> None:  # noqa: ANN001
-    """``program: what went wrong`` — so a caller redirecting stdout still sees it."""
-    runner = CliRunner()
-    from meshterm.cli import app
+def test_a_failure_says_so_on_stderr_and_never_on_stdout(run) -> None:  # noqa: ANN001
+    """``program: what went wrong`` — so a caller parsing stdout never has to filter it."""
+    result = run("config", "get", "nosuchkey")
+    assert result.stdout == ""
+    assert "meshterm: unknown setting" in result.stderr
 
-    result = runner.invoke(app, ["--mock", "config", "get", "nosuchkey"])
-    assert "meshterm: unknown setting" in result.output
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ("config", "reboot"),
+        ("config", "factory-reset"),
+        ("config", "import-key", "00" * 32),
+        ("channels", "clear", "1"),
+        ("preferences", "reset"),
+    ],
+    ids=["reboot", "factory-reset", "import-key", "channels-clear", "preferences-reset"],
+)
+def test_a_destructive_command_without_yes_is_a_silent_usage_error(run, args) -> None:  # noqa: ANN001
+    """A missing confirmation *is* a bad argument, and it says so where errors go.
+
+    These used to print a red refusal on stdout and exit 1 — a colour and a sentence that
+    is not the command's answer, in whatever was reading the command's answer.
+    """
+    result = run(*args)
+    assert result.exit_code == exitcodes.USAGE
+    assert result.stdout == ""
+    assert "--yes" in result.stderr
+
+
+def test_an_empty_result_writes_nothing_to_stdout_at_all(run) -> None:  # noqa: ANN001
+    """Not a "no channels configured" line: the status carries it, so the pipe stays clean."""
+    result = run("channels", "list")
+    assert result.exit_code == exitcodes.NO_RESULT
+    assert result.stdout == ""
 
 
 # -- the map --------------------------------------------------------------------------

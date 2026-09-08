@@ -506,13 +506,18 @@ async def _read_channels(device: Device) -> list[dict]:
 def _require_yes(yes: bool, what: str) -> None:
     """Abort a destructive CLI command unless ``--yes`` was passed.
 
+    Raised as a :class:`typer.BadParameter` rather than printed and exited: a missing
+    confirmation *is* a usage error, so it belongs on stderr in the parser's own words and
+    under the parser's own status (see :mod:`meshterm.core.exitcodes`). Printing it in red
+    on stdout put a colour, and a sentence that is not the command's answer, into whatever
+    was reading the command's answer.
+
     Args:
         yes: Whether the user passed ``--yes``.
         what: Human-readable description of the consequence.
 
     Raises:
-        typer.Exit: With code 1 if confirmation was not given.
+        typer.BadParameter: If confirmation was not given.
     """
     if not yes:
-        typer.secho(f"Refusing: {what}. Re-run with --yes to confirm.", fg="red")
-        raise typer.Exit(1)
+        raise typer.BadParameter(f"{what}. Re-run with --yes to confirm.")

@@ -68,6 +68,10 @@ allowed to change behaviour, not just add to it.
   filter them out. Progress bars moved there too, and draw nothing at all when stderr is
   not a terminal.
 
+- **A destructive command refused for want of `--yes`** printed its refusal in red on
+  *stdout* and exited `1`. A missing confirmation is a bad invocation, so it is now a usage
+  error like any other: nothing on stdout, the reason on stderr, exit `2`.
+
 - **An expected failure no longer dumps a traceback.** A lost serial link, or an argument a
   command rejected on its own (an unresolvable `--to`), read as one line and the right exit
   status; the log keeps the detail, and a genuine fault still gets its full traceback.

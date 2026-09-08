@@ -240,6 +240,8 @@ here with its scripted equivalent, where one exists.
 ## CLI cookbook
 
 Every menu option is also a Typer subcommand — ideal for scripting, cron, and bots.
+**[`docs/cli.md`](docs/cli.md) is the full manual**: every command and option, what each
+one prints, and the exit statuses. A taste:
 
 ```bash
 # Trace — a trace transmits exactly once; run it again to sample more.
@@ -285,6 +287,8 @@ Global options (before the subcommand): `--profile/-p`, `--port`, `--ble`, `--bl
 `--tcp`, `--mock`, `--db`, `--json`, `--quiet/-q`.
 
 ### What the output looks like
+
+*(The short version — [`docs/cli.md`](docs/cli.md) has the whole of it.)*
 
 The CLI is meant to be piped, so it prints like a standard Unix utility and nothing else:
 plain text, no colour, no borders, and one record per line — nothing is ever wrapped, so a
