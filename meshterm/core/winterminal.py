@@ -119,10 +119,48 @@ def reopen() -> bool:
         # arrive intact). `-d` keeps the working directory, which relative paths given
         # on the command line depend on.
         subprocess.Popen(  # noqa: S603 - the argv is ours, not the reader's
-            [terminal, "-d", os.getcwd(), "--", *own_command()],
+            [
+                terminal,
+                "-w",
+                "new",
+                "--size",
+                _wanted_size(),
+                # Otherwise the tab is titled with the executable's full path, which on a
+                # downloaded build is a line of Downloads folder. The icon is not ours to
+                # set: Windows Terminal takes that from a profile, and a bare command line
+                # is not one, so it gets the generic console glyph.
+                "--title",
+                "MeshTerm",
+                "-d",
+                os.getcwd(),
+                "--",
+                *own_command(),
+            ],
             env=child_environment(),
             close_fds=True,
         )
         return True
     except OSError:
         return False
+
+
+def _wanted_size() -> str:
+    """The window to ask Windows Terminal for, as ``cols,rows``.
+
+    Asked for, because a window MeshTerm opens should be one MeshTerm fits in. Without
+    ``-w new`` the session lands as a *tab* in whatever window happens to be open and
+    inherits its size; without ``--size`` a new window takes the reader's global launch
+    size, which is a setting about their shell and not about this app. Either way the app
+    can arrive in a window too small for it, and the failure is quiet and cosmetic: the
+    startup wordmark is 71 columns, so at 70 it silently swaps to the narrow one drawn for
+    the PicoCalc, and a short window truncates every description onto the pager.
+
+    The numbers come from the platform's own stated minimum plus a margin, so they follow
+    it rather than repeating it. Windows Terminal clamps to what the display can show, so
+    this is a request and not a demand — on a small screen the app degrades exactly as it
+    would have anyway.
+    """
+    from ..platforms import get_platform
+
+    platform = get_platform()
+    return f"{platform.readable_cols + 8},{platform.readable_rows + 6}"

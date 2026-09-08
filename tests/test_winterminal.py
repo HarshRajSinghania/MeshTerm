@@ -131,3 +131,46 @@ def test_the_loader_path_the_bootloader_replaced_is_put_back(
     assert environment["LD_LIBRARY_PATH"] == "/opt/mine/lib"
     assert "LD_LIBRARY_PATH_ORIG" not in environment
     assert "DYLD_LIBRARY_PATH" not in environment
+
+
+def test_the_window_asked_for_fits_the_startup_wordmark() -> None:
+    """The size request exists because a too-small window fails quietly, not loudly.
+
+    The startup wordmark is 71 columns; below that the splash silently swaps to the narrow
+    one drawn for the PicoCalc, which is how this was found — a desktop session showing the
+    handheld's mark. The request has to clear that, not merely the platform's minimum.
+    """
+    from meshterm.platforms import REGULAR, set_platform
+    from meshterm.ui.logo import load_logo, logo_width
+
+    set_platform(REGULAR)
+    cols, rows = (int(part) for part in winterminal._wanted_size().split(","))
+
+    assert logo_width(load_logo(cols)) == 71, "the window asked for would get the narrow mark"
+    assert cols >= REGULAR.readable_cols
+    assert rows >= REGULAR.readable_rows
+
+
+def test_the_session_gets_its_own_window_at_that_size(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Both halves matter, and each was a separate way to arrive somewhere too small.
+
+    Without ``-w new`` the session lands as a tab in whatever window is already open and
+    inherits its size — measured at 64 columns on a real machine, which is why the wrong
+    mark appeared. Without ``--size`` a new window takes the reader's global launch size,
+    a setting about their shell rather than about this app.
+    """
+    started: list[list[str]] = []
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.delenv(winterminal.REOPENED_ENV, raising=False)
+    monkeypatch.setattr(winterminal.shutil, "which", lambda _: r"C:\wt.exe")
+    monkeypatch.setattr(
+        winterminal.subprocess, "Popen", lambda argv, **_: started.append(argv) or None
+    )
+
+    assert winterminal.reopen() is True
+    argv = started[0]
+    assert argv[:3] == [r"C:\wt.exe", "-w", "new"]
+    assert "--size" in argv
+    assert argv[argv.index("--size") + 1] == winterminal._wanted_size()
+    # `--` must still separate wt's options from MeshTerm's, or `--mock` becomes wt's.
+    assert "--" in argv and argv.index("--") > argv.index("--size")

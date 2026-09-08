@@ -17,6 +17,23 @@ allowed to change behaviour, not just add to it.
 
 ## [Unreleased]
 
+## [0.2.8] — 2026-09-07
+
+### Fixed
+
+- **The window MeshTerm opened for itself was too small, and it showed.** The startup
+  wordmark is 71 columns wide; below that the splash quietly swaps to the narrow one drawn
+  for the PicoCalc — so a desktop session came up wearing the handheld's mark, with every
+  menu description truncated onto the pager underneath it.
+
+  MeshTerm was opening a *tab* in whatever Windows Terminal window happened to be around,
+  inheriting its size (64 columns on the machine this was found on). It now asks for a
+  window of its own, sized from the platform's own minimum plus a margin. Windows Terminal
+  clamps that to what the display can show, so a small screen degrades exactly as before.
+
+- The tab it opens is titled **MeshTerm**, not the executable's full path — which on a
+  downloaded build was a line of Downloads folder.
+
 ## [0.2.7] — 2026-09-07
 
 ### Changed
