@@ -217,7 +217,7 @@ here with its scripted equivalent, where one exists.
 | **🌍 Map** | Located nodes plotted over a real OpenStreetMap street basemap rendered as Unicode braille (streets, rivers, place names). Pannable and zoomable; repeaters highlighted and drawn on top. Falls back to a blank grid offline. | — (a map is a picture; `meshterm contacts` lists the same nodes) |
 | **🌐 Mesh walk** | The mesh's *observed shape*, walked one node at a time: an evidence graph built from trace walks, firmware routes, overheard relay chains, and repeater neighbour tables. SNR-coloured braille edges, quality bars, Enter to walk, ⌫ to backtrack, type to find any node. The map answers *where*; the walk answers *how it hangs together*. | — |
 | **🎯 Trace target** | A live trace screen: pick a target and watch each trace stream in hop by hop, with running per-hop medians and reliability. Compose or force a route through specific repeaters. A trace transmits **exactly once** (repeaters can blacklist nodes that burst) — sample more by running it again. | `meshterm trace --target …` |
-| **👣 Trace path** | The other half of tracing: compose the whole circuit by hand — out and back whichever way you choose — and walk it. The path composer suggests each next hop from the links actually observed, strongest first, and can fetch a repeater's neighbour table over the mesh when you hold its admin password. | `meshterm trace --path …` |
+| **👣 Trace path** | The other half of tracing: compose the whole circuit by hand — out and back whichever way you choose — and walk it. The path composer suggests each next hop from the links actually observed, strongest first, and can fetch a repeater's neighbour table over the mesh when you hold its admin password. | `meshterm trace-path --path …` |
 | **🏆 Trophy case** | Every trace that comes home is scored, on seven boards: longest distance, farthest node, longest single leg, most nodes (with and without revisits), weakest surviving link, and biggest enclosed loop. Records are kept per hash width, and a record walk must be a *trail* — no link crossed twice the same way. | `meshterm records` |
 
 ### 🔧 This node — the radio in your hand
@@ -239,9 +239,11 @@ here with its scripted equivalent, where one exists.
 
 ## CLI cookbook
 
-Every menu option is also a Typer subcommand — ideal for scripting, cron, and bots.
-**[`docs/cli.md`](docs/cli.md) is the full manual**: every command and option, what each
-one prints, and the exit statuses. A taste:
+Nearly every menu option is also a subcommand — ideal for scripting, cron, and bots. The
+live pictures stay in the menu, where their meaning is (the map, dashboard, live feed,
+watchtower and mesh walk); everything else has a command, and every command speaks
+`--json`. **[`docs/cli.md`](docs/cli.md) is the full manual**: every command and option,
+what each one prints on both faces, and the exit statuses. A taste:
 
 ```bash
 # Trace — a trace transmits exactly once; run it again to sample more.
@@ -252,11 +254,13 @@ meshterm trace --target Alice --profile yagi
 meshterm trace --target Alice --path "3d,f2,3d"
 meshterm trace --target Alice --path "3d,Bravo-Repeater,f2"
 
+# Walk a composed circuit with no target at all — out and back your own way
+meshterm trace-path --path "3d,f2,3d"
+
 # Sweep and apply a remote node's TX power
 meshterm tx-optimize --path "Bravo-Repeater,Alice" --samples 6 --step 3 --apply
 
-# Messaging: live chat in the menu, or scripted from the CLI
-meshterm chat                                  # interactive: pick a conversation, chat live
+# Messaging: the live transcript is a menu screen; the CLI takes a subcommand
 meshterm chat send --to Alice "on my way"      # direct message
 meshterm chat send --channel 0 "net in 5"      # channel broadcast
 meshterm chat history --to Alice
@@ -283,40 +287,45 @@ meshterm config advert-cadence 24 --flood   # flood the wider mesh daily
 meshterm monitor --seconds 60
 ```
 
-Global options (before the subcommand): `--profile/-p`, `--port`, `--ble`, `--ble-pin`,
-`--tcp`, `--mock`, `--db`, `--json`, `--quiet/-q`.
+Global options — `--profile/-p`, `--port`, `--ble`, `--ble-pin`, `--tcp`, `--mock`,
+`--db`, `--json`, `--absolute`, `--quiet/-q` — may be typed **before or after** the
+subcommand: `meshterm contacts --json` and `meshterm --json contacts` are the same run.
 
-### What the output looks like
+### Two output faces
 
 *(The short version — [`docs/cli.md`](docs/cli.md) has the whole of it.)*
 
-The CLI is meant to be piped, so it prints like a standard Unix utility and nothing else:
-plain text, no colour, no borders, and one record per line — nothing is ever wrapped, so a
-long line runs off the right rather than folding its fields onto a second one.
+The **plain face** is for a person at a prompt. It prints like a standard Unix utility —
+no colour, no borders, one record per line, nothing wrapped — and it is allowed to be
+comfortable about it: listings are `ps`-style aligned records with **bare names**
+(alignment is the delimiter), times are **relative ages** (`now`, `5m`, `never`), and a
+route is drawn with arrows — `MockCompanion (00) → Yagi-Repeater (a1) → Alice (d4)`.
+`--absolute` swaps every age back for an ISO-8601 instant. A *path*, the spec `--path`
+takes back, stays comma-separated hex. `-` is the one token for absent. Errors,
+acknowledgements and progress all go to stderr, so a redirect catches only the answer.
 
-- **Listings** are an uppercase header line and space-aligned records, `ps`-style.
-- **Node names are quoted** — `"YUL Cartierville"` — so a name holding a space or a comma
-  is still exactly one field.
-- **Paths** are quoted names with their hash in parentheses outside the quotes, joined by
-  a bare comma: `"Origin" (3d),"Relay" (f2),"Us" (a1)`. Our own node is a hop like any
-  other. The hash is what identifies a node where a screen would use colour.
-- **Key/value output** (`info`, `config show`) is a key and the rest of the line as its
-  value; `config get` and `preferences get` print the bare value alone.
-- **Times** are absolute local ISO-8601 (`2026-09-07T18:22:41-04:00`), never `3h ago`.
-- **`-`** is the one token for a value that is absent, unknown, or does not apply.
-- **Errors** go to stderr as `meshterm: what went wrong`; stdout carries only the answer.
-  Progress bars go to stderr too, and are silent when it is not a terminal.
+The **JSON face** is the machine contract, and `--json` works on **every** command:
+
+```console
+$ meshterm contacts --json | jq -r '.[] | select(.node.type == "repeater") | .node.key'
+b2c3d4e500000000000000000000000000000000000000000000000000000000
+a1b2c3d400000000000000000000000000000000000000000000000000000000
+```
+
+No envelope — an array for a listing, an object for a set of facts. One compact line;
+`monitor` and `chat listen` stream one document per record. Values are typed, absent is
+`null` and never an omitted key, and timestamps are always UTC to the second regardless of
+`--absolute`. `--json` changes the rendering, never the report: same records, same exit
+status.
+
+Anything structural should go through `--json` and `jq`. The plain face is for looking at.
 
 ### Exit status
 
-| Code | Meaning |
-| --- | --- |
-| `0` | Success. |
-| `1` | Failure with no more specific code — a bad value, an unreadable file, a fault. |
-| `2` | Usage error: an unknown flag, a missing argument, a value the parser rejected. |
-| `3` | No companion device could be selected. Nothing was transmitted. |
-| `4` | A device was reached but the operation failed — a command error, a timeout, a lost link. Retrying is reasonable. |
-| `5` | The command completed with **nothing to report**: an empty list, a target that never answered, a conversation with no messages. stdout is empty; this is not an error. |
+`0` success · `1` failure · `2` usage error · `3` no device found (nothing was
+transmitted) · `4` the device was reached but the operation failed · `5` nothing to
+report. The table with its full wording is printed under `meshterm --help` and explained
+in [`docs/cli.md`](docs/cli.md#exit-status).
 
 `5` is the one worth knowing about: it lets a script tell "found nothing" from "worked"
 without counting output lines.
@@ -376,6 +385,13 @@ description = "Pocket handheld over Bluetooth"
 host = "192.168.1.50"
 description = "Basestation over WiFi"
 ```
+
+Both live in `~/.meshterm`, along with everything else MeshTerm remembers: the SQLite
+history, the outbox, the contact and channel caches, stored admin passwords, and the log.
+**`$MESHTERM_HOME` moves the whole directory**, which is the way to run a second radio —
+or a `--mock` session — without touching the one you use every day. `--db` moves the
+database alone; the rest stays where it was. [`docs/cli.md`](docs/cli.md#where-meshterm-keeps-its-state)
+lists every file.
 
 Timestamps are stored as UTC and rendered in your local time. History older than the
 `history_days` preference is pruned once at session start.

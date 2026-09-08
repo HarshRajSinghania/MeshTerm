@@ -6,7 +6,7 @@
 
 **MeshTerm** is a full-featured **MeshCore** client for the terminal. It talks to companion devices running the stock firmware over serial, Bluetooth, or TCP.
 
-Everything MeshTerm can do thru its interactive Text-based User Interface *(TUI)*, it can also do from the Command-Line Interface *(CLI)*. The TUI runs the same code as the CLI, so you get the best of both worlds: a great user experience, and the ability to script or schedule tasks!
+Nearly everything MeshTerm can do thru its interactive Text-based User Interface *(TUI)*, it can also do from the Command-Line Interface *(CLI)*. The live pictures stay in the TUI, where they belong — the map, the dashboard, the live feed, the watchtower, the mesh walk — and everything else has a command. The TUI runs the same code as the CLI, so you get the best of both worlds: a great user experience, and the ability to script or schedule tasks! Every command prints for a person by default, and speaks JSON with `--json` when a program is reading!
 
 Everything the radio overhears is recorded to a local database from the moment it's turned on — adverts, telemetry, signal quality, positions, etc. Features like maps, dashboard, and route graphs read back from it, so the longer it runs, the more it know about the mesh!
 
