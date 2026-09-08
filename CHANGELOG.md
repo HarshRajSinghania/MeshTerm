@@ -15,79 +15,137 @@ allowed to change behaviour, not just add to it.
   getting ready. Keep the dates and the tags; replace the prose.
 -->
 
-## [Unreleased]
+## [0.3.0] — 2026-09-08
 
-### Changed
-
-- **The CLI now prints like a standard Unix utility.** It had grown the menu's manners —
-  colour, boxes, section headings, glyph columns, a closing ✓ — and all of that is in the
-  way of the thing the CLI is actually for, which is being piped into something else.
-
-  Output is now plain text and nothing else: no escape sequences at all (not a colour, not
-  a bold), no borders or boxes or rules, no titles, no legends. Listings are an uppercase
-  header line and space-aligned records the way `ps` prints them; `info` and `config show`
-  are `key value` lines the way `sysctl -a` prints them; `config get` and `preferences get`
-  print the bare value alone, ready for `$(...)`. **Nothing wraps** — a record is a line,
-  and a long one runs off the right rather than folding its fields onto a second one.
-
-- **Node names are quoted, and paths are made of them.** A name can hold a space or a
-  comma, so a bare one is not a field. Every name in a listing is `"quoted"`, and a route
-  now reads `"Origin" (3d),"Relay" (f2),"Us" (a1)` — each node's hash in parentheses
-  outside the quotes, hops joined by a bare comma, our own node a hop like any other rather
-  than a `★`. The hash is there because the CLI has no colour: on a screen a route's hops
-  are told apart by their hues, and the hash is what carries that identity in plain text.
-
-- **Times are absolute.** `2026-09-07T18:22:41-04:00`, not `3h`. A relative age is for a
-  person watching a screen; a script wants something it can sort and subtract. `-` is now
-  the one token for a value that is absent, unknown, or does not apply.
-
-- **A value read out of `show` can be typed back into `set`.** The settings dump printed an
-  enum as `0 (off)` and an unset string as `(not set)`, neither of which `config set` would
-  take back. It prints the number and `""` now, and names every setting by the key
-  `get`/`set` use rather than by its screen label.
-
-- **`--help` is Click's own plain help** — no boxed Options/Commands panels, no colour, no
-  markup to strip out of a piped `--help`.
+The command line was rebuilt around the fact that it has **two readers**, and that trying
+to serve both with one stream had been making it worse at each.
 
 ### Added
 
-- **Documented exit statuses**, listed under every `--help`: `0` success, `1` failure, `2`
-  usage error, `3` no device found, `4` the device was reached but the operation failed,
-  `5` nothing to report.
+- **`--json`, on every command.** It used to be honoured by two of twenty and silently
+  ignored by the rest, so `meshterm --json contacts | jq` failed while MeshTerm reported
+  success. It now covers all 49 subcommands: an array for a listing, an object for a set of
+  facts, one compact line per document, and no envelope — `contacts --json | jq '.[].node.name'`
+  reads the way it looks.
+
+  Values are typed (`20`, not `"20"`), absent is `null` and never an omitted key,
+  timestamps are UTC RFC 3339 to the second so string comparison is time comparison, and a
+  numeric field carries its unit in its key (`snr_db`, `uptime_s`, `rtt_ms`). A key is never
+  truncated — a short id is a `hash`, because a truncated key cannot go back into `--to`.
+  `monitor` and `chat listen` emit one document per record as they arrive, all the same
+  shape.
+
+  `--json` changes the rendering and never the report: the same exit status, the same
+  records. An empty result prints its empty document **and still exits `5`**.
+
+- **A documented exit status per outcome**, listed under every `--help`: `0` success, `1`
+  failure, `2` usage error, `3` no device, `4` the device was reached but the operation
+  failed, `5` nothing to report.
 
   `5` is the one worth knowing about. A command that ran fine and found nothing — an empty
-  contact list, a trace that never came home, a conversation with no messages — prints
-  nothing and returns `5`, so a script can tell "found nothing" from "worked" without
-  counting output lines. `3` and `4` split the failures a retry might fix from the ones it
-  won't.
+  contact list, a trace that never came home — returns it, so a script can tell "found
+  nothing" from "worked" without counting lines.
+
+- **`--absolute`**, restoring ISO-8601 timestamps for a run, over a new `cli_time_format`
+  preference. JSON is always absolute UTC regardless: a local offset is a fact about the
+  machine that ran the command, not about the event.
+
+- **A global option may be typed anywhere.** `meshterm contacts --json` and
+  `meshterm --json contacts` are the same run. The first is what everyone types and it used
+  to fail with a bare usage error.
+
+- **`contacts` gains `HASH` and `LOCATION`.** The hash is the token `--path` takes; you used
+  to slice it out of `KEY` by hand. `preferences show` gains `DESCRIPTION` back, and `info`
+  glosses its second-valued readings (`uptime_s  93784  (1d 2h)`).
+
+- **[`docs/cli.md`](docs/cli.md)**, a manual for the whole thing: both faces of every
+  command, where MeshTerm keeps its state, what each failure looks like, and recipes. Every
+  sample in it is captured from a real run rather than written.
+
+### Changed
+
+- **The plain face is for a person now, and says so.** It had grown the menu's manners —
+  colour, boxes, section headings, glyph columns, a closing ✓ — and then briefly overcorrected
+  into something only `awk` could love. Machine-readability is `--json`'s job, so the plain
+  face is free to be read: no colour and no frames, still, but **alignment is the delimiter**
+  and names are bare rather than `"quoted"`.
+
+- **A time is an age** — `now`, `5m`, `3h`, `never` — because "recently?" is the question you
+  typed the command to ask. An absolute instant survives where the instant *is* the fact: the
+  device clock, an appointment, a live capture's own `TIME`.
+
+- **A route is drawn and a path is typed.** A route reads
+  `Yagi-Repeater (a1) → Alice (d4) → MockCompanion (00)`; a `--path` spec stays the
+  comma-joined hex it has to be, because it is the one line that round-trips. Our own node is
+  a hop like any other — the menu's `★` says "you already know who this is", which is true of
+  the reader and false of whoever opens the file later.
+
+- **A value read out of `show` can be typed back into `set`.** The settings dump printed an
+  enum as `0 (off)` and an unset string as `(not set)`, neither of which `config set` would
+  take back.
+
+- **`ui.ack` and a tool's closing message go to stderr** rather than being dropped. stderr
+  keeps the promise the dropping was made to keep — a redirect catches only the answer —
+  while giving the person at the prompt back their ✓ and their count.
+
+- **`--help` is Click's own plain help**, with no boxed panels and no markup to strip out of
+  a pipe.
 
 ### Fixed
 
-- **Errors go to stderr**, in the `meshterm: what went wrong` shape every utility uses, so
-  a caller redirecting stdout still sees them and a caller parsing stdout never has to
-  filter them out. Progress bars moved there too, and draw nothing at all when stderr is
-  not a terminal.
+- **A node name could not be printed safely.** A node broadcasts its own name, and Rich read
+  `[...]` in one as console markup: a node called `[bold]Loud` printed as `Loud` — silently
+  no longer the string that identifies it — and one called `[/]Bob` raised `MarkupError` and
+  took the command down, then took the error handler down with it while reporting the crash.
 
-- **A destructive command refused for want of `--yes`** printed its refusal in red on
-  *stdout* and exited `1`. A missing confirmation is a bad invocation, so it is now a usage
-  error like any other: nothing on stdout, the reason on stderr, exit `2`.
+- **A control character in a name reached stdout.** Escaping covered the newline, the tab and
+  the return and let **ESC** through, which put a live colour run into the caller's file — the
+  one thing "no escape sequences" exists to prevent. BEL was dropped in silence, so the
+  printed name was not the advertised one, and U+2028 ended the record like a newline. It is
+  now every C0 and C1 control plus the Unicode separators.
+
+- **Numeric columns never right-aligned.** Rich's `Text.wrap` returns early on
+  `overflow="ignore"`, above the justify step, so asking for one threw the other away — while
+  the standard, the code's own docstring and the manual all promised alignment.
+
+- **`config show` printed an empty string as `""`**, which `config set` read as those two
+  characters. Feeding a dump back replaced every empty setting with a pair of quote marks, and
+  the next dump looked identical, so nothing ever said so. It also masked an **unreported**
+  PIN behind bullets, telling the reader the radio was PIN-locked when it was not.
+
+- **`meshterm about` drew the rule above its colophon at console width** — one 48KB line in a
+  4KB page.
+
+- **`config export-key > key.hex`** wrote a file with `[muted]` tags around the key that was
+  supposed to be its whole content.
+
+- **Failures were classified wrong in six places.** Nothing transmitted is not a device
+  failure: an unopenable `--port` is `3` rather than `4` with a message about a connection
+  there had never been, and a missing `--yes`, an unknown `--sort`/`--category`/`--profile`,
+  a missing admin password, an unknown contact and a bad `--at` are all usage errors. A
+  `--category` typo used to come back as `5` — indistinguishable from a real empty result —
+  and an unknown `--profile` fell through to whichever radio was attached, which is the one
+  wrong answer that puts a packet on the air.
+
+- **Errors go to stderr**, in the `meshterm: what went wrong` shape, and stop folding at 80
+  columns — a sentence broken across three lines is a sentence `grep` cannot find. Progress
+  bars moved there too and draw nothing off a terminal.
 
 - **An expected failure no longer dumps a traceback.** A lost serial link, or an argument a
-  command rejected on its own (an unresolvable `--to`), read as one line and the right exit
-  status; the log keeps the detail, and a genuine fault still gets its full traceback.
+  command rejected on its own, reads as one line and the right exit status.
 
 ### Removed
 
-- **`meshterm map`.** A map is a picture — braille cells whose meaning is their position on
-  a grid, and whose nodes are told apart by colour. Stripped of colour to match the rest of
-  the CLI it would be unreadable, and left coloured it was the one command whose output
-  could not be piped anywhere useful. The map stays in the menu, where it works; the located
-  nodes stay scriptable through `meshterm contacts`, coordinates and all.
+- **`meshterm map`.** A map is a picture — braille cells whose meaning is their position, and
+  whose nodes are told apart by colour. Stripped of colour it would be unreadable; left
+  coloured it was the one command whose output could not be piped anywhere useful. The map
+  stays in the menu, and the located nodes are scriptable through `contacts`, which now
+  carries their coordinates.
 
 - **The QR codes** from `channels share`, `config share` and the About pages' scripted face.
-  A QR is a second rendering of a link the output already prints, drawn for a phone pointed
-  at a screen; redirected into a file it was a block of block characters wrapped around the
-  one thing that was actually the answer. The menu still draws them.
+  A QR is a second rendering of a link the output already prints, drawn for a phone pointed at
+  a screen; redirected into a file it was a block of block characters wrapped around the one
+  thing that was actually the answer. The menu still draws them.
 
 ## [0.2.8] — 2026-09-07
 
@@ -337,7 +395,8 @@ deliberately not reconstructed here.
 - Two `TYPE_CHECKING` imports the test suite referenced but never imported, on paths that
   happened never to run.
 
-[Unreleased]: https://github.com/jpmartineau/MeshTerm/compare/v0.2.4...HEAD
+[Unreleased]: https://github.com/jpmartineau/MeshTerm/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/jpmartineau/MeshTerm/releases/tag/v0.3.0
 [0.2.4]: https://github.com/jpmartineau/MeshTerm/releases/tag/v0.2.4
 [0.2.3]: https://github.com/jpmartineau/MeshTerm/releases/tag/v0.2.3
 [0.2.2]: https://github.com/jpmartineau/MeshTerm/releases/tag/v0.2.2
