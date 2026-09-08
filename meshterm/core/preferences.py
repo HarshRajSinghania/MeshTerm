@@ -126,6 +126,20 @@ _SILENCE_CHOICES: dict[int, str] = {
 #: need to disagree with its platform.
 _WIDTH_CHOICES: dict[str, str] = {"auto": "auto", "yes": "yes", "no": "no"}
 
+#: How many colours to send the terminal. ``auto`` is the honest default and the only
+#: value that is not itself a depth: it means "take prompt_toolkit's verdict unless we can
+#: positively establish better", which is the difference between fixing a host and breaking
+#: one. The rest are named for the count a reader can see rather than for the bit depth,
+#: because "24-bit" is a fact about the wire and "16 million" is a fact about the screen.
+#: See :func:`meshterm.ui.tui.session._color_depth` for why auto is not simply "the most
+#: this terminal can do".
+_COLOR_DEPTH_CHOICES: dict[str, str] = {
+    "auto": "auto",
+    "truecolor": "16 million",
+    "256": "256",
+    "16": "16",
+}
+
 #: Every preference MeshTerm has, in page order. Adding one here gives it a row on the
 #: Preferences page, a key in the YAML file, a ``preferences get``/``set`` CLI face, and a
 #: default — nothing else has to follow.
@@ -318,6 +332,20 @@ PREFERENCES: tuple[PrefSpec, ...] = (
         value_type="enum",
         default="auto",
         choices=_WIDTH_CHOICES,
+    ),
+    PrefSpec(
+        key="color_depth",
+        label="Colours",
+        help="How many colours to send this terminal",
+        group="Display",
+        value_type="enum",
+        # Auto, because the count a terminal accepts is a fact about the terminal and the
+        # reader should not have to know it. It is only ever consulted to *raise* the
+        # verdict prompt_toolkit already reached, never to lower it — a terminal that
+        # cannot be shown to do better keeps exactly what it had.
+        default="auto",
+        choices=_COLOR_DEPTH_CHOICES,
+        relaunch=True,
     ),
     PrefSpec(
         key="console_setup",

@@ -25,6 +25,7 @@ from prompt_toolkit.formatted_text import ANSI
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.keys import Keys
 from prompt_toolkit.layout import ConditionalContainer, Float, FloatContainer, Layout, Window
+from prompt_toolkit.output.color_depth import ColorDepth
 from prompt_toolkit.utils import get_cwidth
 from rich.console import RenderableType
 from rich.text import Text
@@ -250,6 +251,70 @@ def _reclaim_last_column() -> bool:
     if preferred != "auto":
         return preferred == "yes"
     return get_platform().width_reclaim
+
+
+#: What each ``color_depth`` preference value asks for. ``auto`` is deliberately absent: it
+#: is the one answer that is not a depth, and :func:`_color_depth` resolves it separately.
+_DEPTH_BY_NAME = {
+    "truecolor": ColorDepth.DEPTH_24_BIT,
+    "256": ColorDepth.DEPTH_8_BIT,
+    "16": ColorDepth.DEPTH_4_BIT,
+}
+
+#: What ``COLORTERM`` says on a terminal that means it about 24-bit colour. There is no
+#: in-band way to ask — a terminal that cannot do truecolor answers a truecolor SGR by
+#: quietly approximating it, which looks from here exactly like one that can — so this
+#: convention, which every truecolor terminal follows, is the whole of the evidence.
+_TRUECOLOR_COLORTERM = frozenset({"truecolor", "24bit"})
+
+
+def _color_depth() -> ColorDepth | None:
+    """How many colours to send this terminal, or ``None`` to keep prompt_toolkit's verdict.
+
+    prompt_toolkit picks a depth per *output class*, and its two classes disagree:
+    ``Windows10_Output`` returns ``TRUE_COLOR`` outright, while ``Vt100_Output`` returns
+    ``DEPTH_8_BIT`` for every ``TERM`` but ``linux`` and a dumb terminal. So the same build
+    of MeshTerm, drawing the same theme, is 24-bit on Windows and 256 colours on macOS and
+    Linux — and it is quantized *silently*, which is why this went unnoticed: the app looks
+    fine, just flatter. It costs exactly what this palette is made of. The seven ``heat.*``
+    steps and the per-node hue wheel (:func:`~meshterm.ui.theme.node_style`) are close
+    pastels chosen to be told apart; snapped to the 216-colour cube, neighbours collide and
+    identities stop being distinguishable by hue. ``COLORTERM`` is not consulted by
+    prompt_toolkit at all — only ``PROMPT_TOOLKIT_COLOR_DEPTH`` is — so a terminal
+    announcing truecolor in the conventional way is still handed 256.
+
+    Three sources, in confidence order, the same shape as :func:`_reclaim_last_column`:
+    ``MESHTERM_COLOR_DEPTH`` for a one-off, then the ``color_depth`` preference, then a
+    reading of the environment.
+
+    The reading only ever *raises* the verdict, never lowers it. A terminal we cannot get a
+    positive claim from returns ``None`` and keeps precisely the depth it had, so a host
+    this function has never heard of cannot be made worse by it — which matters more than
+    being right everywhere, because the failure mode of guessing 24-bit at a terminal
+    without it is not a duller palette but no colour at all.
+
+    Returns:
+        The depth to force, or ``None`` to leave prompt_toolkit's own default in place.
+    """
+    from ...core.preferences import current as current_preferences
+
+    override = os.environ.get("MESHTERM_COLOR_DEPTH")
+    preferred = override if override is not None else current_preferences().color_depth
+    if preferred in _DEPTH_BY_NAME:
+        return _DEPTH_BY_NAME[preferred]
+    if preferred != "auto":
+        return None
+    # A 16-slot console is already right and has no truecolor to claim: the theme addresses
+    # its palette by index (see theme._VT_SLOTS), and promoting the depth would send RGB to
+    # a screen with sixteen colours to put it in.
+    if not get_platform().truecolor:
+        return None
+    if os.environ.get("COLORTERM", "").strip().lower() in _TRUECOLOR_COLORTERM:
+        return ColorDepth.DEPTH_24_BIT
+    # terminfo's own spelling for a direct-colour entry (``xterm-direct``, ``*-direct16m``).
+    if os.environ.get("TERM", "").endswith(("-direct", "-direct16m")):
+        return ColorDepth.DEPTH_24_BIT
+    return None
 
 
 #: How many stacked dialog layers the layout can float over the background at once. A fixed
@@ -1445,6 +1510,9 @@ class TuiSession:
             max_render_postpone_time=None,
             input=self._input,
             output=self._resolve_output(),
+            # None leaves the output's own default alone; see _color_depth for why the
+            # two prompt_toolkit outputs disagree and why only a raise is ever applied.
+            color_depth=_color_depth(),
         )
         if fastrender.enabled():
             # Swap in the row-diff renderer for plain full-screen frames. Built with the
