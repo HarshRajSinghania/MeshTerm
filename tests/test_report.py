@@ -206,6 +206,24 @@ def test_a_get_prints_its_value_alone_and_still_documents_the_key() -> None:
     assert _json(block) == {"key": "tx_power", "value": "20", "type": "int"}
 
 
+def test_a_bare_answer_with_nothing_in_it_prints_nothing_at_all() -> None:
+    """A node that never answered, a slot with nothing in it — and no lone dash.
+
+    The bare form prints *the value*, so where there is none the exit status is the whole
+    report and stdout stays empty. The document still carries the shape, with ``null``
+    where the answer would have been, because a consumer branching on it needs the key.
+    """
+    block = Facts(
+        key="remote",
+        fields=(fields.word("command", "command"), fields.word("reply", "reply")),
+        values={"command": "get name", "reply": None},
+        shape=BARE,
+        bare="reply",
+    )
+    assert _plain(block) == ""
+    assert _json(block) == {"command": "get name", "reply": None}
+
+
 def test_an_acknowledgement_prints_nothing_and_is_still_a_document() -> None:
     """Printing nothing is an answer a person can act on and a program cannot.
 

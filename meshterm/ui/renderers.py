@@ -147,9 +147,15 @@ class PlainRenderer(Renderer):
             return None
         if block.shape == BARE:
             column = next(c for c in block.fields if c.key == block.bare)
+            value = block.values.get(column.key)
+            if value is None:
+                # The bare form prints the value, and there is no value: a node that never
+                # answered, a slot with nothing in it. A lone `-` there would be a line of
+                # output where the exit status is the whole report.
+                return None
             # As a Text, not a markup string: this is a private key, a share URL or a
             # remote node's own reply, and Rich would read a bracket in one as a style tag.
-            return Text(column.lanes[0].render(block.values.get(column.key)))
+            return Text(column.lanes[0].render(value))
         rows: list[tuple[str, str]] = []
         for column in block.fields:
             value = block.values.get(column.key)
