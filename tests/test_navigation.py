@@ -181,8 +181,14 @@ async def test_the_trace_target_picker_stays_pushed_under_the_live_screen(monkey
         monkeypatch.setattr("meshterm.ui.trace_screen.open_trace", fake_open_trace)
 
         async def main() -> None:
+            # The picker is pushed by `_run_live` itself, so the keystroke cannot be
+            # queued before the call: sending it blind raced the screen that reads it,
+            # and lost about one full-suite run in six. `_screen_at` exists for exactly
+            # this — wait until the picker is on the stack, *then* press Enter on it.
+            running = asyncio.create_task(TraceTool()._run_live(ctx))
+            await _screen_at(session, 1)
             inp.send_text(ENTER)  # Enter on the leading row commits it as the target
-            result = await TraceTool()._run_live(ctx)
+            result = await running
             assert result.summary == {"sessions": 1, "traces": 2}
 
         await asyncio.wait_for(session.run(main()), timeout=5)
