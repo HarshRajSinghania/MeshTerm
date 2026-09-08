@@ -15,6 +15,7 @@ from pathlib import Path
 
 import typer
 from rich.console import Console
+from typer.core import TyperGroup
 
 from .context import AppContext
 from .core import exitcodes, win32dll
@@ -43,7 +44,72 @@ EXIT_STATUS_EPILOG = "Exit status: " + " · ".join(
     f"{code} {meaning}" for code, meaning in exitcodes.MEANINGS.items()
 )
 
+
+class _GlobalOptionsAnywhere(TyperGroup):
+    """A group whose own options may be typed after the subcommand as well as before.
+
+    Click binds an option to whatever command declares it, so a global declared on the
+    callback is a parse error one word later: ``meshterm contacts --json`` failed with a
+    bare usage error while ``meshterm --json contacts`` worked. That is the wrong way
+    round for an output-format flag — ``-o json`` goes *after* the verb in every tool that
+    has one, and ``--json`` is the first thing anyone will reach for here.
+
+    So the group's own options are lifted to the front before Click sees them, and both
+    orders mean the same run. ``--`` stops the lifting, which is the standard way to say
+    the rest is data; ``--help`` is deliberately never lifted, since ``contacts --help``
+    must stay the *contacts* help rather than silently becoming the program's.
+    """
+
+    def parse_args(self, ctx: typer.Context, args: list[str]) -> list[str]:
+        """Lift this group's options out of ``args``, then parse as Click normally would."""
+        return super().parse_args(ctx, _globals_first(self, args))
+
+
+def _globals_first(group: TyperGroup, args: list[str]) -> list[str]:
+    """``args`` with ``group``'s own options moved ahead of the subcommand.
+
+    An option is told from an argument by carrying ``is_flag`` — Typer vendors Click, so
+    there is no importable ``click.Option`` to test against, and the attribute is the same
+    question asked without reaching into a private package.
+
+    Args:
+        group: The command whose options count as global.
+        args: The argument list as typed.
+
+    Returns:
+        A reordered list. The relative order of the options, and of everything else, is
+        preserved, so a repeated flag resolves exactly as Click would resolve it.
+    """
+    takes_value: dict[str, bool] = {}
+    for param in group.params:
+        if getattr(param, "is_flag", None) is None or param.name == "help":
+            continue
+        for opt in (*param.opts, *param.secondary_opts):
+            takes_value[opt] = not param.is_flag
+
+    lifted: list[str] = []
+    kept: list[str] = []
+    index = 0
+    while index < len(args):
+        token = args[index]
+        if token == "--":
+            kept.extend(args[index:])
+            break
+        name = token.split("=", 1)[0]
+        if name not in takes_value:
+            kept.append(token)
+            index += 1
+        elif "=" in token or not takes_value[name] or index + 1 >= len(args):
+            lifted.append(token)
+            index += 1
+        else:
+            lifted.extend(args[index : index + 2])
+            index += 2
+    return lifted + kept
+
+
 app = typer.Typer(
+    cls=_GlobalOptionsAnywhere,
     add_completion=False,
     no_args_is_help=False,
     # Click's own plain help, not Typer's rich one: no boxed Options/Commands panels, no

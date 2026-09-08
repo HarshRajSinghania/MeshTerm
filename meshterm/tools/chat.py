@@ -659,7 +659,7 @@ def _picker_header(width: int) -> str:
         [
             Lane("CONVERSATION", _LABEL_WIDTH + 2),
             Lane("UNREAD", _BADGE_WIDTH + 2),
-            Lane("AGE", _AGE_WIDTH + 2),
+            Lane("TIME", _AGE_WIDTH + 2),
             Lane(("LAST MESSAGE", "LAST MSG", "LAST")),
         ],
         width,
@@ -856,7 +856,7 @@ def _message_columns() -> tuple:
     from ..ui import fields
 
     return (
-        fields.when("created_at", "AGE"),
+        fields.when("created_at", "TIME"),
         fields.word("direction", "DIR"),
         # One column for whichever end the conversation had; the document keeps the two
         # apart, because a parser cannot tell a channel from a contact by its label.
@@ -898,7 +898,7 @@ def _transcript(messages: list[ChatMessage]) -> Listing:
         key="messages",
         columns=_message_columns(),
         rows=rows,
-        order=("AGE", "DIR", "PEER", "SNR_DB", "TEXT"),
+        order=("TIME", "DIR", "PEER", "SNR_DB", "TEXT"),
     )
 
 

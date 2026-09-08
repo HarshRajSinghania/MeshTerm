@@ -250,6 +250,53 @@ def test_the_sweep_actually_covers_the_whole_command_surface() -> None:
         assert expected in leaves, expected
 
 
+def test_a_global_option_may_be_typed_after_the_subcommand(run) -> None:  # noqa: ANN001
+    """``meshterm contacts --json`` is what a person types, so it has to be what works.
+
+    Click binds an option to whatever command declares it, so a global declared on the
+    callback is a parse error one word later. For an output format that is the wrong way
+    round — ``-o json`` goes after the verb in every tool that has one — and the failure
+    was a bare usage error with no hint that the flag simply needed moving.
+    """
+    after = run("contacts", "--json")
+    before = run("--json", "contacts")
+    assert after.exit_code == exitcodes.OK, after.output
+    assert after.stdout == before.stdout
+
+
+def test_a_global_option_taking_a_value_moves_with_its_value(run) -> None:  # noqa: ANN001
+    """Lifting ``--db`` to the front must take the path with it, not orphan it."""
+    assert run("contacts", "--sort", "name", "--json").exit_code == exitcodes.OK
+
+
+def test_lifting_a_global_never_steals_a_subcommands_own_help(run) -> None:  # noqa: ANN001
+    """``contacts --help`` must stay the *contacts* help, not silently become the app's.
+
+    ``--help`` is on every command, so a rule that lifts "the group's options" would take
+    it too and answer a different question than the one asked.
+    """
+    contacts_help = run("contacts", "--help").stdout
+    assert "contacts [OPTIONS]" in contacts_help
+    assert "--sort" in contacts_help  # a contacts option, absent from the app's own help
+    app_help = run("--help").stdout
+    assert "COMMAND [ARGS]" in app_help
+    assert "--sort" not in app_help
+
+
+def test_a_time_column_is_headed_by_its_fact_not_by_its_format(run) -> None:  # noqa: ANN001
+    """``--absolute`` changes what is under the heading, so the heading must survive it.
+
+    A column headed ``AGE`` holding ``2026-09-08T04:18:25-04:00`` is a heading that lies —
+    and every other time column already names the fact (``HEARD``, ``RECORDED``), which
+    reads correctly whichever form the run asked for.
+    """
+    run("chat", "send", "--to", "Alice", "hello")
+    relative = result_lines(run("chat", "history", "--to", "Alice"))[0].split()
+    absolute = result_lines(run("chat", "history", "--to", "Alice", "--absolute"))[0].split()
+    assert relative == absolute
+    assert "AGE" not in relative
+
+
 # -- listings -------------------------------------------------------------------------
 
 

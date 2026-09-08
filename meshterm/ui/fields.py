@@ -250,7 +250,9 @@ def when(key: str, header: str, *, absent: str = script.NONE) -> Column:
     Args:
         key: The machine key. It ends in ``_at`` by convention — a JSON key is a type hint
             for a parser, and the suffix is the hint.
-        header: The plain heading.
+        header: The plain heading. It must name the *fact* — ``HEARD``, ``RECORDED`` —
+            rather than the form, because ``--absolute`` changes the form underneath it
+            and a column headed ``AGE`` holding an ISO instant is a heading that lies.
         absent: What an unknown time reads as plain. ``never`` where the row exists and
             the event has not happened (a node not yet heard, a conversation with nothing
             said in it); the default token where the row has no such time at all.
