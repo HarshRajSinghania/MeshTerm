@@ -99,6 +99,7 @@ class ContactsTool(Tool):
             app: The Typer application.
         """
         from ..cli import run_tool_command
+        from ..ui.widgets import ContactsSort
 
         @app.command(name=self.name, help=self.help)
         def _contacts(
@@ -106,6 +107,13 @@ class ContactsTool(Tool):
                 "heard", "--sort", "-s", help="Order contacts by: heard, name, packets"
             ),
         ) -> None:
+            # `ContactsSort.from_name` falls back to the first column for an unknown name,
+            # deliberately, so a saved preference written by an older build cannot wedge
+            # the menu's list. On the command line the same silence hides a typo: the
+            # caller asked for one order and got another, with nothing said.
+            if sort not in ContactsSort.names():
+                choices = ", ".join(ContactsSort.names())
+                raise typer.BadParameter(f"--sort must be one of: {choices} (got {sort!r})")
             run_tool_command(self, {"sort": sort})
 
 
@@ -131,7 +139,7 @@ def _listing(contacts: list[Contact], counts: dict[str, int]) -> Table:
     table = script.columns("NAME", "TYPE", "HEARD", "PKTS", "KEY", right=("PKTS",))
     for contact in contacts:
         table.add_row(
-            script.quote(contact.name),
+            script.name(contact.name),
             NODE_TYPE_LABELS.get(contact.node_type, "unknown"),
             script.stamp(contact.last_seen),
             script.number(_contact_pkts(contact, counts)),

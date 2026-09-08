@@ -152,6 +152,14 @@ def main_callback(
         quiet=quiet or json_output,
     )
 
+    if profile is not None and settings.resolve_profile(profile) is None:
+        # Falling through to ordinary discovery would pick whichever radio is attached, so
+        # a typo in a scheduled `--profile yagi config advert` transmits from the wrong
+        # node rather than failing. Naming a profile is a claim about *which* device, and
+        # an unkeepable claim is a bad argument.
+        known = ", ".join(sorted(settings.profiles)) or "none are defined"
+        raise typer.BadParameter(f"no device profile named {profile!r} (known: {known})")
+
     app_ctx = AppContext(
         preferences=prefs,
         console=console,

@@ -280,6 +280,61 @@ def test_a_destructive_command_without_yes_is_a_silent_usage_error(run, args) ->
     assert "--yes" in result.stderr
 
 
+@pytest.mark.parametrize(
+    "args,flag",
+    [
+        (("contacts", "--sort", "bogus"), "--sort"),
+        (("records", "--category", "long_hual"), "--category"),
+    ],
+    ids=["contacts-sort", "records-category"],
+)
+def test_a_value_outside_a_closed_set_is_refused_rather_than_ignored(run, args, flag) -> None:  # noqa: ANN001
+    """A typo in a closed-set option used to be answered with a different question.
+
+    ``--sort bogus`` quietly sorted by the default, and ``--category long_hual`` quietly
+    selected *every* discipline — which then came back as exit ``5``, the code that means
+    a real empty result. A caller branching on ``5`` could not tell "there are no records"
+    from "you misspelled the discipline", which is the worst answer a closed set can give.
+    """
+    result = run(*args)
+    assert result.exit_code == exitcodes.USAGE
+    assert result.stdout == ""
+    assert flag in result.stderr
+
+
+def test_a_profile_that_names_nothing_is_refused_before_anything_transmits(run) -> None:  # noqa: ANN001
+    """``--profile`` is a claim about *which* radio, and an unkeepable one is not a default.
+
+    An unknown name used to fall through to ordinary discovery, so a scheduled
+    ``--profile yagi config advert`` with a typo transmitted from whichever companion
+    happened to be attached — the one failure mode where being quietly wrong puts a packet
+    on the air.
+    """
+    result = run("--profile", "nosuchprofile", "info")
+    assert result.exit_code == exitcodes.USAGE
+    assert result.stdout == ""
+    assert "nosuchprofile" in result.stderr
+
+
+def test_a_port_that_will_not_open_is_no_device_not_a_device_failure(run) -> None:  # noqa: ANN001
+    """The two device statuses answer different questions, and this one answered wrong.
+
+    ``3`` says nothing was transmitted — look at what is plugged in. ``4`` says the radio
+    was reached and the operation failed, so a retry is reasonable. An unopenable
+    ``--port`` reported ``4``, with the message "the connection to the device was lost"
+    describing a connection there had never been. The manual's own ``case $?`` recipe
+    branches on exactly this split.
+    """
+    from typer.testing import CliRunner
+
+    from meshterm.cli import app
+
+    result = CliRunner().invoke(app, ["--port", "NOSUCHPORT99", "info"])
+    assert result.exit_code == exitcodes.NO_DEVICE
+    assert "could not open" in result.stderr
+    assert "lost" not in result.stderr
+
+
 def test_an_empty_result_writes_nothing_to_stdout_at_all(run) -> None:  # noqa: ANN001
     """Not a "no channels configured" line: the status carries it, so the pipe stays clean."""
     result = run("channels", "list")

@@ -72,13 +72,25 @@ GUTTER = 2
 NONE = "-"
 
 
+#: The characters that would end a record early, and the escape each one takes. A record
+#: is a line, so a value carrying a newline is not a value this format can hold — and the
+#: fields most likely to carry one (a node name, a message body) are exactly the fields a
+#: stranger fills in. The convention is the ordinary backslash one, so it reads back.
+_BREAKS = {"\\": "\\\\", "\n": "\\n", "\r": "\\r", "\t": "\\t"}
+
+
+def _escaped(text: str) -> str:
+    """``text`` with its backslashes doubled and its line breaks folded into escapes."""
+    return "".join(_BREAKS.get(ch, ch) for ch in text)
+
+
 def quote(value: str | None) -> str:
     r"""Wrap a name in doublequotes, escaping the ones inside it.
 
     A node name is user-supplied text that can hold a space, a comma, or a quote, so it
     is never a field on its own — quoting is what makes it one. The escaping is the
-    ordinary backslash convention and covers the backslash too, so the value reads back
-    unambiguously.
+    ordinary backslash convention and covers the backslash and the line breaks too, so the
+    value reads back unambiguously and cannot end the record it sits in.
 
     Args:
         value: The name to quote. ``None`` and the empty string both give ``""``.
@@ -86,8 +98,46 @@ def quote(value: str | None) -> str:
     Returns:
         The quoted name, e.g. ``"Yagi-Repeater"`` or ``"He said \"hi\""``.
     """
-    text = value or ""
-    return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    return '"' + _escaped(value or "").replace('"', '\\"') + '"'
+
+
+def name(value: str | None) -> str:
+    r"""A node's name as a field: quoted when there is one, :data:`NONE` when there isn't.
+
+    :func:`quote` renders a missing name as ``""``, which is a different claim — *this node
+    is called nothing* rather than *this node never told us what it is called*. The CLI has
+    one token for the second, and seven of the ten places that printed a name were making
+    the first claim by accident, so the same unnamed node read as ``""`` in one listing and
+    ``-`` in the next.
+
+    It is also the distinction the JSON rendering needs: an absent name is ``null`` and an
+    empty one is ``""``, and it cannot be recovered later from a field that flattened both.
+
+    Args:
+        value: The name, or ``None``/empty where the node never supplied one.
+
+    Returns:
+        The quoted name, or :data:`NONE`.
+    """
+    return quote(value) if value else NONE
+
+
+def oneline(value: str | None) -> str:
+    r"""``value`` as a field that can end a record without breaking it.
+
+    For the one field a listing leaves unquoted because it *is* the rest of the line — a
+    message body. "The rest of the line" and "anything at all" are not compatible: a body
+    holding a newline ended its record early and left the remainder indented under the
+    other columns, reading as a second record with an empty ``TIME``. A body is also the
+    field a stranger fills in, so that is not a hypothetical shape of message.
+
+    Args:
+        value: The free text. ``None`` gives :data:`NONE`.
+
+    Returns:
+        The text with its line breaks and tabs escaped, and no quotes around it.
+    """
+    return NONE if value is None else _escaped(value)
 
 
 def stamp(when: datetime | None) -> str:

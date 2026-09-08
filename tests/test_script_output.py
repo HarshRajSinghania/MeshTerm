@@ -66,6 +66,48 @@ def test_a_quoted_name_survives_a_round_trip_through_the_escaping() -> None:
         assert body.replace('\\"', '"').replace("\\\\", "\\") == name
 
 
+@pytest.mark.parametrize(
+    "body,expected",
+    [
+        ("line one\nline two", "line one\\nline two"),
+        ("tabbed\there", "tabbed\\there"),
+        ("carriage\rreturn", "carriage\\rreturn"),
+        ("back\\slash", "back\\\\slash"),
+        ('a "quoted" body', 'a "quoted" body'),
+        ("plain", "plain"),
+    ],
+)
+def test_a_message_body_can_never_end_its_own_record(body: str, expected: str) -> None:
+    """``TEXT`` is the rest of the line, and "the rest of the line" has to stay one line.
+
+    A body holding a newline used to end its record early and leave the remainder indented
+    under the other columns, reading as a second record with an empty ``TIME``. The body is
+    also the one field a stranger fills in, so this is not a hypothetical message. Quotes
+    inside it are left alone: nothing wraps it, so nothing needs escaping from.
+    """
+    assert script.oneline(body) == expected
+    assert "\n" not in script.oneline(body)
+
+
+def test_a_name_holding_a_newline_cannot_end_its_record_either() -> None:
+    """The same hazard one field over — and a name is broadcast by its own node."""
+    assert script.quote("two\nlines") == '"two\\nlines"'
+
+
+@pytest.mark.parametrize("absent", [None, ""])
+def test_a_node_that_never_gave_a_name_reads_as_absent_not_as_empty(absent: str | None) -> None:
+    """``""`` says "called nothing"; ``-`` says "never said". They are different facts.
+
+    Seven of the ten places that printed a name made the first claim by accident, so the
+    same unnamed node read as ``""`` in one listing and ``-`` in the next. One helper now
+    answers it, and the distinction is the one the JSON rendering needs too — an absent
+    name is ``null``, an empty one is ``""``, and a field that flattened both cannot say
+    which it meant.
+    """
+    assert script.name(absent) == script.NONE
+    assert script.name("Alice") == '"Alice"'
+
+
 # -- timestamps ----------------------------------------------------------------------
 
 

@@ -156,7 +156,7 @@ class CourierTool(Tool):
             table.add_row(
                 str(m.ident),
                 state,
-                script.quote(m.node_name),
+                script.name(m.node_name),
                 # An entry with no scheduled time goes as soon as the contact is heard,
                 # which is not a time and so is not one here either.
                 script.stamp(m.not_before),

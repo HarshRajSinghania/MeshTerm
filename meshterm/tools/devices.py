@@ -152,7 +152,7 @@ def _listing(devices: list, known: dict, active_target: str | None) -> Table:
         table.add_row(
             device.target,
             device.transport,
-            script.quote(name),
+            script.name(name),
             script.quote(hardware) if hardware else script.NONE,
             "yes" if confirmed else _MAYBE.get(device.confidence, "no"),
             device.serial_number or script.NONE,

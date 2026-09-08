@@ -153,6 +153,14 @@ class TrophyCaseTool(Tool):
         ) -> None:
             tool_params: dict[str, Any] = {}
             if category:
+                # An unknown id used to select *every* discipline, so a misspelled
+                # `--category long_hual` came back as "no records" — exit 5, which is
+                # exactly what a real empty result looks like. A closed set refuses.
+                if category not in CATEGORY_BY_ID:
+                    choices = ", ".join(CATEGORY_BY_ID)
+                    raise typer.BadParameter(
+                        f"--category must be one of: {choices} (got {category!r})"
+                    )
                 tool_params["category"] = category
             if width:
                 tool_params["width"] = width

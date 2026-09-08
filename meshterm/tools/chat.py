@@ -347,9 +347,9 @@ class ChatTool(Tool):
             where = f"#{message.channel}" if message.is_channel else (message.sender or "")
             fields = [
                 script.stamp(message.received_at),
-                script.quote(where) if where else script.NONE,
+                script.name(where),
                 script.number(message.snr, "+.1f"),
-                message.text,
+                script.oneline(message.text),
             ]
             ctx.console.print((" " * script.GUTTER).join(fields), highlight=False)
 
@@ -387,13 +387,14 @@ class ChatTool(Tool):
         for conversation in rows:
             last = lasts.get(conversation.key)
             table.add_row(
-                script.quote(conversation.label),
+                script.name(conversation.label),
                 "channel" if conversation.is_channel else "direct",
                 str(ctx.chat.unread(conversation.key)),
                 script.stamp(last.created_at) if last is not None else script.NONE,
                 # Not truncated to 40 cells the way the picker's preview is: nothing here
-                # wraps, so there is no reason to cut a message short.
-                last.text if last is not None else script.NONE,
+                # wraps, so there is no reason to cut a message short — but a body that
+                # holds a newline would still end the record, so it is folded flat.
+                script.oneline(last.text) if last is not None else script.NONE,
             )
         if rows:
             ctx.ui.show(table)
@@ -839,8 +840,10 @@ def _history_table(label: str, messages: list[ChatMessage]) -> Table:
     always the *other* party — the sender of an inbound message, and empty on a channel
     broadcast, which has no one party it went to.
 
-    ``TEXT`` is last and unquoted: it is the rest of the line, and a message body is the
-    one field that can hold absolutely anything.
+    ``TEXT`` is last and unquoted: it is the rest of the line. A message body can hold
+    absolutely anything, which is why it goes through :func:`~meshterm.ui.script.oneline`
+    — "the rest of the line" stops being true the moment the body holds a newline, and
+    the remainder then reads as a second record with an empty ``TIME``.
 
     Args:
         label: The conversation's display name (the caller named it; the columns don't).
@@ -857,8 +860,8 @@ def _history_table(label: str, messages: list[ChatMessage]) -> Table:
         table.add_row(
             script.stamp(message.created_at),
             "out" if message.outbound else "in",
-            script.quote(peer) if peer else script.NONE,
+            script.name(peer),
             script.number(message.snr, "+.1f"),
-            message.text,
+            script.oneline(message.text),
         )
     return table

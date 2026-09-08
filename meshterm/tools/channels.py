@@ -95,7 +95,7 @@ class ChannelsTool(Tool):
         for slot in slots:
             table.add_row(
                 str(slot.idx),
-                script.quote(slot.name),
+                script.name(slot.name),
                 "public" if slot.is_public else "private",
                 slot.hash,
             )

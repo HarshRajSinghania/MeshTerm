@@ -439,6 +439,31 @@ class AppContext:
             getattr(device, "endpoint", None) if (self._active_transport == "tcp") else None
         )
 
+    async def _open(self, what: str) -> None:
+        """Open :attr:`_device`, reporting a failure to open as a *selection* failure.
+
+        The two device exit statuses answer different questions — ``NO_DEVICE`` says
+        nothing was transmitted and the caller should look at what is plugged in;
+        ``DEVICE`` says the radio was reached and the operation failed, so retrying is
+        reasonable. Every failure on this path is the first kind: the connection does not
+        exist yet, so nothing has been sent over it. It used to come back as ``DEVICE``
+        with the message "the connection to the device was lost", which describes a
+        connection there had never been — and ``--port NOSUCHPORT`` is the most common way
+        to reach this line.
+
+        Args:
+            what: The thing being opened, for the message (a port, an address, a host).
+
+        Raises:
+            DeviceSelectionError: If the connection cannot be established.
+        """
+        from .core.selection import DeviceSelectionError
+
+        try:
+            await self._device.connect()
+        except Exception as exc:  # noqa: BLE001 - reclassified, then re-raised
+            raise DeviceSelectionError(f"could not open {what}: {exc}") from exc
+
     async def device(self) -> Device:
         """Return a connected :class:`Device`, opening the connection on first use.
 
@@ -462,7 +487,7 @@ class AppContext:
             self._active_port = None
             self._active_address = None
             self._active_endpoint = None
-            await self._device.connect()
+            await self._open("the simulator")
             return self._device
 
         # A network endpoint (an explicit ``--tcp``, a TCP profile, a device picked at startup,
@@ -477,7 +502,7 @@ class AppContext:
             self._active_endpoint = f"{tcp_host}:{tcp_port}"
             self._active_port = None
             self._active_address = None
-            await self._device.connect()
+            await self._open(f"TCP companion {tcp_host}:{tcp_port}")
             await self._remember_connected()
             await self._reconcile_channels()
             return self._device
@@ -511,7 +536,7 @@ class AppContext:
             self._active_address = ble_address
             self._active_port = None
             self._active_endpoint = None
-            await self._device.connect()
+            await self._open(f"BLE companion {ble_address}")
             await self._remember_connected()
             await self._reconcile_channels()
             return self._device
@@ -530,7 +555,7 @@ class AppContext:
         self._active_port = resolution.port
         self._active_address = None
         self._active_endpoint = None
-        await self._device.connect()
+        await self._open(f"serial port {resolution.port}")
         await self._remember_connected()
         await self._reconcile_channels()
         return self._device

@@ -1038,6 +1038,16 @@ class ContactsSort:
     opens_ascending: dict[str, bool] = field(default_factory=lambda: _SORT_OPENS_ASCENDING)
 
     @classmethod
+    def names(cls, columns: tuple[str, ...] = _SORT_COLUMNS) -> tuple[str, ...]:
+        """The orders :meth:`from_name` accepts — what a caller may legitimately ask for.
+
+        :meth:`from_name` answers "which sort is this?" and forgives anything it does not
+        recognise. A surface that wants to *refuse* an unknown order needs the set itself,
+        which is this.
+        """
+        return columns
+
+    @classmethod
     def from_name(
         cls,
         name: str,

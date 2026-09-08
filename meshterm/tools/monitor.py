@@ -102,7 +102,7 @@ class MonitorTool(Tool):
             fields = [
                 script.stamp(obs.observed_at),
                 obs.node or script.NONE,
-                script.quote(obs.name),
+                script.name(obs.name),
                 script.number(obs.snr, "+.1f"),
                 script.number(obs.rssi, ".0f"),
                 script.number(obs.lat, ".5f"),
@@ -179,7 +179,7 @@ def _heard_table(heard: list[HeardNode]) -> Table:
     for node in heard:
         table.add_row(
             node.node or script.NONE,
-            script.quote(node.name),
+            script.name(node.name),
             str(node.count),
             script.number(node.median_snr, "+.1f"),
             script.number(node.best_snr, "+.1f"),
