@@ -30,6 +30,7 @@ from .core.settings_store import SettingsStore
 from .core.watch_store import WatchStore
 from .persistence.logging import get_logger
 from .persistence.repository import Repository
+from .ui.renderers import OutputFormat
 
 if TYPE_CHECKING:
     from .services.advert_scheduler import AdvertScheduler
@@ -91,7 +92,16 @@ class AppContext:
             interactive picker), selecting the TCP transport. Takes precedence over
             ``ble_override`` and ``port_override``.
         ble_pin: Optional BLE pairing PIN for the chosen Bluetooth device.
-        json_output: Whether tools should emit machine-readable output.
+        output: Which format a scripted run prints its answer in (see
+            :class:`~meshterm.ui.renderers.OutputFormat`). A tool never reads this to
+            decide *what* to say — it states its answer as a
+            :class:`~meshterm.ui.report.Report` and the CLI boundary picks the renderer —
+            and the two streaming commands read it only to open the right kind of stream.
+        interactive: Whether this run may stop and ask a person something. False for every
+            scripted run whose stdin is not a terminal, which is the question a tool
+            actually wants answered before it prompts. ``tx-optimize`` used to ask
+            ``--json`` instead, and a flag about *output format* cannot answer it: without
+            the flag, a scheduled run on a terminal would sit waiting for a password.
         selected_device: The discovered device chosen for this session, when known, so it
             can be remembered after a successful connection.
         explicit_selection: Whether ``--port``/``--ble``/``--profile`` was passed explicitly
@@ -118,7 +128,8 @@ class AppContext:
     ble_override: str | None = None
     tcp_override: str | None = None
     ble_pin: str | None = None
-    json_output: bool = False
+    output: OutputFormat = OutputFormat.PLAIN
+    interactive: bool = True
     selected_device: DiscoveredDevice | None = None
     explicit_selection: bool = False
     _device: Device | None = field(default=None, init=False, repr=False)

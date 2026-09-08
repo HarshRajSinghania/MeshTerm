@@ -109,6 +109,10 @@ class PrefSpec:
         return f"{self.help} (next launch)" if self.relaunch else self.help
 
 
+#: The two languages the plain CLI can print a time in. Named for what the reader sees
+#: rather than for the mechanism: an *age* is how long ago, a *timestamp* is when.
+_CLI_TIME_CHOICES: dict[str, str] = {"relative": "ages", "absolute": "timestamps"}
+
 #: The silence-rule choices, drawn from the Watchtower's own ring so the two never drift.
 _SILENCE_CHOICES: dict[int, str] = {
     **{h: f"{h} h" for h in SILENCE_CHOICES_H},
@@ -284,6 +288,19 @@ PREFERENCES: tuple[PrefSpec, ...] = (
         maximum=5000,
     ),
     # --- Display -----------------------------------------------------------------
+    PrefSpec(
+        key="cli_time_format",
+        label="Command-line times",
+        help="Whether the command line prints ages or timestamps",
+        group="Display",
+        value_type="enum",
+        # Relative, because a person at a prompt asking "heard recently?" should not have
+        # to subtract an ISO instant from `date` to find out. `--absolute` overrides this
+        # for one run, and the JSON face is UTC either way — it is read somewhere else and
+        # often later, where a relative age has nothing to be relative to.
+        default="relative",
+        choices=_CLI_TIME_CHOICES,
+    ),
     PrefSpec(
         key="fast_render",
         label="Fast redraw",

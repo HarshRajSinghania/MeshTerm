@@ -18,6 +18,7 @@ if TYPE_CHECKING:  # avoid importing typer/context at module load for fast start
     import typer
 
     from ..context import AppContext
+    from ..ui.report import Report
 
 
 @dataclass(slots=True)
@@ -36,12 +37,27 @@ class ToolResult:
             set to ``NO_RESULT`` by a tool that ran fine and found nothing to report, so
             a caller can tell an empty mesh from a full one without counting lines. A
             *failure* is raised, not returned, so this never carries one.
+        report: **The answer**, as data (see :mod:`meshterm.ui.report`). A scripted run
+            states it here and the CLI boundary hands it to a renderer, exactly as it
+            already does with ``exit_code`` — the tool says what happened, and something
+            else turns that into bytes or into a process status. It used to be printed
+            instead, which meant the answer was gone by the time anything could ask for it
+            in another format, which is why ``--json`` reached two commands and stopped.
+
+            ``None`` for the menu path and for a feature with no scripted face at all (the
+            map, the dashboard), which keep working unchanged.
+
+            Not folded into ``summary``: that is the *run log's* record of what this
+            invocation did, written to the ``runs`` table on every execution including a
+            menu run. Putting a five-hour ``monitor`` capture in SQLite would be the price
+            of one field fewer.
     """
 
     summary: dict[str, Any] = field(default_factory=dict)
     message: str | None = None
     artifacts: list[str] = field(default_factory=list)
     exit_code: int = exitcodes.OK
+    report: Report | None = None
 
 
 class Tool(ABC):

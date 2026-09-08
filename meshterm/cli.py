@@ -31,7 +31,8 @@ from .persistence.repository import Repository
 from .platforms import Resolution, resolve, set_platform, without_emoji
 from .tools import all_tools
 from .tools.base import Tool, ToolResult
-from .ui import script
+from .ui import renderers, script
+from .ui.renderers import OutputFormat
 from .ui.termfont import emoji_support
 from .ui.theme import make_console
 
@@ -86,6 +87,9 @@ def main_callback(
     mock: bool = typer.Option(False, "--mock", help="Use the built-in simulator"),
     db_path: Path | None = typer.Option(None, "--db", help="SQLite database path"),
     json_output: bool = typer.Option(False, "--json", help="Machine-readable output"),
+    absolute: bool = typer.Option(
+        False, "--absolute", help="Print absolute timestamps instead of relative ages"
+    ),
     quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress console logging"),
     platform: str | None = typer.Option(
         None,
@@ -104,7 +108,8 @@ def main_callback(
         tcp: Explicit network address ``host[:port]``, selecting the TCP transport.
         mock: Whether to use the simulator instead of real hardware.
         db_path: Override the database location.
-        json_output: Request machine-readable output from tools.
+        json_output: Print the answer as JSON instead of aligned text.
+        absolute: Print times as ISO-8601 instants rather than relative ages, for this run.
         quiet: Suppress console logging (file logging continues).
         platform: Explicit ``--platform`` override; see :func:`meshterm.platforms.resolve`.
     """
@@ -138,6 +143,12 @@ def main_callback(
     # Loaded before logging is configured, because how much goes in the file is one of
     # them — and handed to the context afterwards so the file is not read twice.
     prefs = Preferences.load(settings.config_dir / "preferences.yaml")
+    if absolute:
+        # An override of the preference rather than a second switch beside it: *how
+        # MeshTerm behaves* is a preference by this project's own rule, and a flag that
+        # bypassed the registry would be a behaviour a reader could not find. Set, never
+        # saved — it is a claim about this run.
+        prefs.set("cli_time_format", "absolute")
     configure_logging(
         # A scripted run's stdout carries its answer and nothing else, so log records go
         # to stderr instead of interleaving with the data a caller is parsing.
@@ -173,7 +184,10 @@ def main_callback(
         ble_override=ble,
         tcp_override=tcp,
         ble_pin=ble_pin,
-        json_output=json_output,
+        output=OutputFormat.JSON if json_output else OutputFormat.PLAIN,
+        # Whether a tool may stop and ask, which is a different question from what its
+        # output looks like. A pipe on stdin means nobody is there to answer.
+        interactive=_stdin_is_a_person(),
         explicit_selection=(
             profile is not None or port is not None or ble is not None or tcp is not None
         ),
@@ -182,6 +196,12 @@ def main_callback(
     ctx.call_on_close(app_ctx.repo.close)
 
     if ctx.invoked_subcommand is None:
+        if json_output:
+            # There is no document an interactive session can emit, and launching the
+            # full-screen menu for a caller that asked for JSON would hang whatever was
+            # waiting to parse it.
+            raise typer.BadParameter("--json needs a subcommand; the menu has no document")
+
         from .ui.menu import run_menu
 
         # Before prompt_toolkit takes the screen: this can change the console's own font,
@@ -480,8 +500,20 @@ def specimen_command() -> None:
     (rather than the plain one every other subcommand prints on — see
     :mod:`meshterm.ui.script`). This is not scripted output that happens to be pretty: the
     colour *is* the output. A monochrome specimen would test nothing.
+
+    It is also the one command that *refuses* ``--json``, loudly and as a usage error.
+    There is no data behind a colour card, so a document of it would be either a lie or an
+    empty gesture — and a loud refusal is the same answer this project already gives for
+    the map, the dashboard and the live feed, which simply have no subcommand to refuse
+    from.
     """
     from .ui.specimen import specimen_lines
+
+    assert _state is not None  # set by the callback that always runs first
+    if _state.output is not OutputFormat.PLAIN:
+        raise typer.BadParameter(
+            "specimen has no machine-readable output — its output is the colour"
+        )
 
     console = make_console()
     for line in specimen_lines():
@@ -539,6 +571,23 @@ def run_tool_command(tool: Tool, params: dict) -> None:
         raise typer.Exit(result.exit_code)
 
 
+def _stdin_is_a_person() -> bool:
+    """Whether something is there to answer a prompt.
+
+    The test a tool actually wants before it stops and asks: a redirected or piped stdin
+    means nobody is watching, and a command that blocks there has hung rather than failed.
+    ``tx-optimize`` used to ask ``--json`` instead — a flag about output format, which
+    answers a different question and answered this one wrong in both directions.
+
+    Returns:
+        ``True`` only where stdin is a terminal.
+    """
+    try:
+        return bool(sys.stdin.isatty())
+    except (AttributeError, ValueError):  # pragma: no cover - stdin closed or replaced
+        return False
+
+
 def _reported(tool: Tool, problem: object, code: int) -> typer.Exit:
     """Log a failure, say so on stderr, and build the exit it should end on.
 
@@ -587,12 +636,12 @@ async def _drive(coro, ctx: AppContext):  # noqa: ANN201 - passes the awaited va
 
 
 async def _execute_and_render(tool: Tool, params: dict, ctx: AppContext) -> ToolResult:
-    """Run a tool and print any file it produced.
+    """Run a tool and render the answer it stated.
 
-    A tool's ``message`` is not printed here. It is the menu's closing line — "✓ applied
-    3 changes", "✓ traced Alice" — and on the command line it restates what the output
-    above it already showed and what ``$?`` already says. Where a scripted run has a fact
-    to report that the listing does not carry, the tool prints that fact itself.
+    The one place a report becomes output. The tool says what happened as data and this
+    hands it to whichever renderer ``--json`` selected, exactly as ``exit_code`` is stated
+    here and turned into a process status by the caller — which is what lets a third format
+    be a new renderer rather than an edit to twenty tools.
 
     Args:
         tool: The tool to execute.
@@ -603,6 +652,7 @@ async def _execute_and_render(tool: Tool, params: dict, ctx: AppContext) -> Tool
         The tool's :class:`ToolResult`.
     """
     result = await tool.execute(ctx, params)
+    renderers.for_format(ctx.output, ctx.console).render(result.report)
     # A produced file is a fact, and its path is the whole of it: bare, one per line, so
     # `meshterm config backup out.toml` can be read by the thing that runs it.
     for artifact in result.artifacts:

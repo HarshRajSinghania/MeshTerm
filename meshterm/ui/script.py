@@ -48,6 +48,7 @@ Nothing here is reachable from the menu, and nothing in the menu is reachable fr
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
@@ -70,6 +71,18 @@ GUTTER = 2
 #: The one token for a value that is absent, unknown, or does not apply. A reader (and a
 #: parser) learns it once. Never ``—``, ``n/a``, ``never``, or an empty cell.
 NONE = "-"
+
+#: The separator between a route's hops, spaced — the same ``→`` the menu's path lines
+#: draw with (:data:`meshterm.ui.pathline._ARROW`), and device-verified present in the
+#: PicoCalc console font. It carries the direction the packet travelled, and it is what
+#: makes the quoting unnecessary: a comma inside a node's name can no longer be read as a
+#: hop boundary.
+ARROW = " → "
+
+#: How wide a *written page* wraps. Not the terminal's width: the same paragraph must read
+#: the same when it is piped, redirected, or shipped as the machine face's ``text`` field,
+#: and 72 is the width every screen in this app is already held to.
+PAGE_WIDTH = 72
 
 
 #: The characters with a readable escape of their own. Everything else that cannot travel
@@ -160,8 +173,32 @@ def oneline(value: str | None) -> str:
     return NONE if value is None else _escaped(value)
 
 
+def text(value: str | None) -> str:
+    r"""Free text as a field that can end a record without breaking it.
+
+    For the field a listing puts last because it *is* the rest of the line — a message
+    body, a preference's description. "The rest of the line" and "anything at all" are not
+    compatible: a body holding a newline ended its record early and left the remainder
+    indented under the other columns, reading as a second record with an empty ``TIME``.
+    A body is also the field a stranger fills in, so that is not a hypothetical shape of
+    message.
+
+    Args:
+        value: The free text. ``None`` gives :data:`NONE`.
+
+    Returns:
+        The text with its line breaks and tabs escaped.
+    """
+    return NONE if value is None else _escaped(value)
+
+
 def stamp(when: datetime | None) -> str:
     """Format a timestamp as local ISO-8601 to the second, or :data:`NONE`.
+
+    Kept for the times where the instant *is* the fact rather than a way of saying how
+    long ago something was: the device's own clock, an appointment set with ``--at``, a
+    live capture's per-row time (every row of which would otherwise read ``now``), and
+    every column under ``--absolute``.
 
     Stored times are timezone-aware UTC; a naive one is a time whose offset we do not
     actually know, which is not a fact and so reads as absent — the same rule
@@ -176,6 +213,31 @@ def stamp(when: datetime | None) -> str:
     if when is None or when.tzinfo is None:
         return NONE
     return when.astimezone().isoformat(timespec="seconds")
+
+
+def age(when: datetime | None, *, absent: str = NONE) -> str:
+    """How long ago ``when`` was: ``now``, ``5m``, ``3h``, ``2d``, ``4w``.
+
+    The default time form, and the reason is the premise change: a person at a prompt
+    reading ``2026-09-07T19:58:53-04:00`` is doing arithmetic to answer "recently?", which
+    is the question they typed the command to ask. Delegates to
+    :func:`~meshterm.ui.widgets._format_age` so the two faces cannot drift apart.
+
+    Args:
+        when: The instant to age. A naive datetime has no offset we know, so it reads as
+            absent, exactly as :func:`stamp` treats it.
+        absent: What an unknown time reads as. A heard-age passes ``"never"`` — a node
+            that has never been heard is a fact, not a missing field — and everything else
+            takes the default token, which says this row has no such time at all. The same
+            distinction :func:`name` draws between ``-`` and an empty name, one axis over.
+
+    Returns:
+        The age, or ``absent``.
+    """
+    from .widgets import _age_seconds, _format_age
+
+    seconds = _age_seconds(when)
+    return absent if seconds is None else _format_age(seconds)
 
 
 def number(value: Any, spec: str = "") -> str:
@@ -193,13 +255,146 @@ def number(value: Any, spec: str = "") -> str:
     return format(value, spec) if spec else str(value)
 
 
+#: The units :func:`duration` counts in, largest first.
+_UNITS: tuple[tuple[int, str], ...] = ((86400, "d"), (3600, "h"), (60, "m"), (1, "s"))
+
+
+def duration(seconds: float | None) -> str:
+    """A span of seconds as something readable: ``93784`` → ``1d 2h``, ``360`` → ``6m``.
+
+    Two units at most and always adjacent, so the magnitude arrives at a glance and the
+    precision never outruns what anyone would act on. Used only as a *gloss* beside the
+    raw figure (``uptime_s  93784  (1d 2h)``), never in place of it — the key says what
+    the number counts, and a caller reading the key must still find a number under it.
+
+    Args:
+        seconds: The span. ``None`` reads as absent; the sign is dropped, since a caller
+            glossing a signed reading says which way in its own words.
+
+    Returns:
+        The span in one or two units, or :data:`NONE`.
+    """
+    if seconds is None:
+        return NONE
+    whole = int(abs(seconds))
+    amounts: list[tuple[int, str]] = []
+    for size, unit in _UNITS:
+        amounts.append((whole // size, unit))
+        whole %= size
+    lead = next((i for i, (amount, _) in enumerate(amounts) if amount), len(amounts) - 1)
+    parts = [f"{amounts[lead][0]}{amounts[lead][1]}"]
+    if lead + 1 < len(amounts) and amounts[lead + 1][0]:
+        parts.append(f"{amounts[lead + 1][0]}{amounts[lead + 1][1]}")
+    return " ".join(parts)
+
+
+def location(lat: float | None, lon: float | None) -> str:
+    """A shared position as one field: ``45.50190,-73.56740``, or :data:`NONE`.
+
+    One column rather than two. A coordinate pair is one fact to a reader, it is what goes
+    into a map's search box verbatim, and two columns of ``-`` for every contact that has
+    never shared a position is worse than one.
+
+    Args:
+        lat: Latitude in decimal degrees.
+        lon: Longitude in decimal degrees.
+
+    Returns:
+        The pair to five decimals, or :data:`NONE` when either half is missing.
+    """
+    if lat is None or lon is None:
+        return NONE
+    return f"{lat:.5f},{lon:.5f}"
+
+
+def route(hops: Iterable[tuple[str | None, str | None]]) -> str:
+    """A walked hop sequence, drawn: ``Yagi-Repeater (a1) → Alice (d4) → Yagi (a1)``.
+
+    A *route* is what a walk actually did, so it is a picture and not a spec — which is
+    why it takes :data:`ARROW` and not the comma ``--path`` accepts. Rendering it with
+    commas made it look pasteable, which it is not: the names are in it, and it is a
+    round trip nothing has.
+
+    The hash rides on every hop and always. It is the join key to the per-hop table below
+    a trace, the token ``--path`` takes, and the disambiguator for two contacts sharing a
+    name. Dropping it "where the name is unique" would make one line's grammar depend on
+    another line's content.
+
+    Our own node is a hop like any other — named and hashed. The menu draws it as ``★``
+    because a reader never has to be told which node is theirs; here the line is as often
+    read out of a file by someone who was not at the prompt when it ran.
+
+    Args:
+        hops: ``(label, hash)`` pairs in propagation order. A hop with both halves reads
+            ``Name (hash)``; a hop with one half is that half alone, never an empty
+            ``()`` — which is how the menu's :class:`~meshterm.ui.pathline.PathLine`
+            labels an unresolved hop too.
+
+    Returns:
+        The joined route, or :data:`NONE` when there are no hops.
+    """
+    parts: list[str] = []
+    for label, value in hops:
+        if label and value:
+            parts.append(f"{_escaped(label)} ({value})")
+        else:
+            parts.append(_escaped(label) if label else (value or NONE))
+    return ARROW.join(parts) if parts else NONE
+
+
+def spec(hops: Iterable[str]) -> str:
+    """A forced path as the radio was given it: ``a1,d4,a1``.
+
+    The other half of the split :func:`route` names. This is the *spec* — comma-separated
+    hashes, exactly what ``--path`` takes back — so it is the one line on either face that
+    round-trips, and it must never grow a name, an arrow or a space.
+
+    Args:
+        hops: The hop hashes in propagation order.
+
+    Returns:
+        The comma-joined spec, or :data:`NONE` when there are no hops.
+    """
+    parts = [hop for hop in hops if hop]
+    return ",".join(parts) if parts else NONE
+
+
+def path(hops: Iterable[tuple[str, str | None]]) -> str:
+    """Render a hop sequence as the CLI's path line.
+
+    ``"Origin" (3d),"Relay" (f2),"Us" (a1)`` — each node's name quoted (:func:`quote`),
+    its hash in parentheses *outside* the quotes, hops separated by a bare comma.
+
+    The hash is there because the CLI has no colour. On a screen a route's hops are told
+    apart by their key-derived hues, and matched to a route graph's one-byte labels the
+    same way; with the colour gone, the hash is what carries that identity.
+
+    Our own node is a hop like any other — named and hashed, never the menu's ``★``. The
+    star says "you already know who this is", which is true of a reader and false of a
+    parser.
+
+    The comma is the separator ``--path`` already takes, and the quoting is what keeps the
+    line splittable when a name contains one.
+
+    Args:
+        hops: ``(label, hash)`` pairs in propagation order; a ``None`` hash prints the
+            name alone, for a node whose identity is genuinely unknown.
+
+    Returns:
+        The joined path line, or :data:`NONE` when there are no hops.
+    """
+    parts = [f"{quote(label)} ({value})" if value else quote(label) for label, value in hops]
+    return ",".join(parts) if parts else NONE
+
+
 def columns(*headers: str, right: Sequence[str] = ()) -> Table:
     """Build the scripted table: an uppercase header line, then padded records.
 
     The shape ``ps`` and ``df`` print — no box, no title, no edge padding, every column
     sized to its widest value and separated by :data:`GUTTER` spaces, nothing wrapped and
     nothing elided. Numeric lanes right-align, which is what makes a column of magnitudes
-    comparable by eye without changing what splitting it yields.
+    comparable by eye without changing what splitting it yields; an *age* lane aligns the
+    same way, so the ladder from ``now`` to ``4w`` reads down the column.
 
     Args:
         *headers: The column headings, already uppercase.
@@ -240,8 +435,8 @@ def pairs(rows: Iterable[tuple[str, str]]) -> Table:
     """Build the scripted key/value listing: key then value, aligned, no header line.
 
     What a set of facts about one thing prints as (``meshterm info``, ``config show``,
-    ``preferences show``) — the ``sysctl -a`` shape. Keys are the ones the matching
-    ``get``/``set`` subcommand takes, so a line read out of ``show`` can be typed back in.
+    ``trace``) — the ``sysctl -a`` shape. Keys are the ones the matching ``get``/``set``
+    subcommand takes, so a line read out of ``show`` can be typed back in.
 
     Args:
         rows: ``(key, value)`` pairs in display order.
@@ -264,32 +459,97 @@ def pairs(rows: Iterable[tuple[str, str]]) -> Table:
     return table
 
 
-def path(hops: Iterable[tuple[str, str | None]]) -> str:
-    """Render a hop sequence as the CLI's path line.
+@dataclass(frozen=True, slots=True)
+class Lanes:
+    """A fixed-width column layout for output whose widths arrive with the data.
 
-    ``"Origin" (3d),"Relay" (f2),"Us" (a1)`` — each node's name quoted (:func:`quote`),
-    its hash in parentheses *outside* the quotes, hops separated by a bare comma.
+    :func:`columns` sizes each lane to its widest value, which it can only do once it has
+    seen every record. A live capture has no "once": ``monitor`` prints a row the instant
+    a packet lands, and the row after it may be twice as wide. Those two streams used to
+    be gutter-joined with no alignment at all, which is why a name in one still carried
+    its quotes — nothing else said where the field ended.
 
-    The hash is there because the CLI has no colour. On a screen a route's hops are told
-    apart by their key-derived hues, and matched to a route graph's one-byte labels the
-    same way; with the colour gone, the hash is what carries that identity.
+    Pinning the lanes up front fixes it properly. A value wider than its lane **overruns
+    and pushes the rest of that row right** rather than being elided: one row out of many
+    is simply wider, and nothing lies about what it holds. Put the one unbounded field
+    (a node's name, a message body) last and it cannot push anything at all.
 
-    Our own node is a hop like any other — named and hashed, never the menu's ``★``. The
-    star says "you already know who this is", which is true of a reader and false of a
-    parser.
+    Attributes:
+        widths: ``(header, width)`` per lane, in order.
+        right: The headers whose cells right-align.
+    """
 
-    The comma is the separator ``--path`` already takes, and the quoting is what keeps the
-    line splittable when a name contains one.
+    widths: tuple[tuple[str, int], ...]
+    right: frozenset[str] = frozenset()
+
+    @property
+    def header(self) -> str:
+        """The one header line, printed before the first record."""
+        return self.record(*(header for header, _ in self.widths))
+
+    def record(self, *cells: str) -> str:
+        """One record, padded into the lanes and joined by the gutter."""
+        out: list[str] = []
+        for (header, width), cell in zip(self.widths, cells, strict=True):
+            out.append(cell.rjust(width) if header in self.right else cell.ljust(width))
+        return (" " * GUTTER).join(out).rstrip()
+
+
+def stream(*widths: tuple[str, int], right: Sequence[str] = ()) -> Lanes:
+    """Build a fixed-lane layout for a live stream (see :class:`Lanes`).
 
     Args:
-        hops: ``(label, hash)`` pairs in propagation order; a ``None`` hash prints the
-            name alone, for a node whose identity is genuinely unknown.
+        *widths: ``(header, width)`` per lane, in order.
+        right: The headings whose values right-align.
 
     Returns:
-        The joined path line, or :data:`NONE` when there are no hops.
+        The layout, which prints its own header and formats each record.
     """
-    parts = [f"{quote(label)} ({value})" if value else quote(label) for label, value in hops]
-    return ",".join(parts) if parts else NONE
+    return Lanes(widths=widths, right=frozenset(right))
+
+
+def wrap(body: str, width: int = PAGE_WIDTH) -> str:
+    """Fold a written page's paragraphs to ``width``, leaving its structure alone.
+
+    The deliberate exception to "no wrapping", and the reason the rule exists says why:
+    wrapping splits a *record* and lands half its fields under the wrong headings. A
+    written page has no records and no headings — and left unwrapped, ``meshterm about``
+    prints paragraphs six hundred cells long that no terminal can read.
+
+    A line's own indent is kept and carried onto its continuations, so a bullet stays a
+    bullet and an indented block stays indented; a blank line stays blank; a line that is
+    already short is untouched.
+
+    Args:
+        body: The page, as its plain renderer laid it out.
+        width: The cell width to fold to.
+
+    Returns:
+        The page with every over-long line folded under its own indent.
+    """
+    import textwrap
+
+    out: list[str] = []
+    for line in body.splitlines():
+        stripped = line.lstrip()
+        if not stripped:
+            out.append("")
+            continue
+        indent = line[: len(line) - len(stripped)]
+        # A bullet's continuations hang under its text, not under its marker.
+        hanging = indent + ("  " if stripped[:1] in "-*•" else "")
+        out.extend(
+            textwrap.wrap(
+                stripped,
+                width=max(width - len(indent), 20),
+                initial_indent=indent,
+                subsequent_indent=hanging,
+                break_long_words=False,
+                break_on_hyphens=False,
+            )
+            or [indent + stripped]
+        )
+    return "\n".join(out)
 
 
 # -- the console ---------------------------------------------------------------------
@@ -385,9 +645,16 @@ def stderr_console() -> Console:
     """The console for everything that is *about* the run rather than part of its answer.
 
     stdout carries what the command was asked for and nothing else, so a progress bar, a
-    log line and an error message all go here instead — visible in a terminal, absent from
-    ``meshterm contacts > contacts.txt``. This one keeps its colour and its wrapping: a
-    terminal is the only thing that ever reads it.
+    log line, an acknowledgement and an error message all go here instead — visible in a
+    terminal, absent from ``meshterm contacts > contacts.txt``. This one keeps its colour,
+    because a terminal is usually the only thing that reads it.
+
+    **Off a terminal it stops wrapping**, and that is the point of the width below. Rich
+    falls back to 80 cells when it cannot measure the destination, so ``2> errors.log``
+    used to hard-wrap every message at 80 — and ``grep 'not already connected'`` then
+    found nothing, because the sentence it was looking for had been broken across three
+    lines by the logger. In a real terminal the width is left alone: a progress bar sized
+    to 16384 cells is not a progress bar.
 
     Returns:
         A themed :class:`~rich.console.Console` writing to ``sys.stderr``.
@@ -396,7 +663,17 @@ def stderr_console() -> Console:
 
     from .theme import active_theme
 
-    return Console(file=sys.stderr, theme=active_theme(), markup=False, emoji=False)
+    try:
+        wraps = bool(sys.stderr.isatty())
+    except (AttributeError, ValueError):  # pragma: no cover - a closed or exotic stream
+        wraps = False
+    return Console(
+        file=sys.stderr,
+        theme=active_theme(),
+        markup=False,
+        emoji=False,
+        width=None if wraps else WIDTH,
+    )
 
 
 # -- the safety net ------------------------------------------------------------------
@@ -405,15 +682,15 @@ def stderr_console() -> Console:
 def flatten(renderable: RenderableType) -> list[RenderableType]:
     """Strip framing from anything reaching the scripted console still wearing it.
 
-    Every CLI surface is *written* plain — the tools build their output through
-    :func:`columns`, :func:`pairs` and :func:`path`. This is the net under that, for a
-    renderable shared with the menu that still arrives boxed: a :class:`Panel` gives up
-    its border and title and yields its body, a :class:`Table` gives up its box, title and
-    expansion, and a :class:`Group` is flattened member by member.
+    Every CLI surface is *written* plain — a tool states its answer as a
+    :mod:`~meshterm.ui.report` and the plain renderer builds it through :func:`columns`
+    and :func:`pairs`. This is the net under that, for a renderable shared with the menu
+    that still arrives boxed: a :class:`Panel` gives up its border and title and yields
+    its body, a :class:`Table` gives up its box, title and expansion, and a :class:`Group`
+    is flattened member by member.
 
     It is deliberately not a *design*: a screen's table has the menu's columns, not the
-    CLI's, so passing it through here makes it printable, not right. Anything a script is
-    meant to read gets a plain renderer of its own.
+    CLI's, so passing it through here makes it printable, not right.
 
     Args:
         renderable: What a tool handed to :meth:`~meshterm.ui.surface.PlainUi.show`.
