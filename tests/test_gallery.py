@@ -22,6 +22,7 @@ starts reporting XPASS.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import tempfile
 from collections.abc import Callable
@@ -337,6 +338,92 @@ def _chat(cols: int, rows: int) -> Screen:
         names={"d4e5f6a7": "Alice"},
         session=_GallerySession(cols, rows),
     )
+
+
+class _PickerChat:
+    """The unread counter the picker rows read live."""
+
+    def __init__(self, unread: dict[str, int]) -> None:
+        self._unread = unread
+
+    def unread(self, key: str) -> int:
+        return self._unread.get(key, 0)
+
+
+class _PickerDevstate:
+    """The session-cached device reads the picker builds itself from."""
+
+    def __init__(self, contacts: list[Contact], slots: list) -> None:
+        self._contacts = contacts
+        self._slots = slots
+
+    async def channel_slots(self) -> list:
+        return list(self._slots)
+
+    async def contacts(self) -> list[Contact]:
+        return list(self._contacts)
+
+
+class _PickerRepo:
+    """The stored history behind each row's age, badge and last-message preview."""
+
+    def __init__(self, lasts: dict) -> None:
+        self._lasts = lasts
+
+    def last_chat_messages(self) -> dict:
+        return dict(self._lasts)
+
+    def node_names(self) -> dict:
+        return {}
+
+
+def _chat_picker(cols: int, rows: int) -> Screen:
+    """The conversation picker, built through the tool's own row funnel.
+
+    Its widest case: a name at the lane's ceiling, a three-digit-capable unread badge, and
+    a last message far longer than any terminal — which is the row ←→ scroll, so it has to
+    be cut rather than fitted (see :meth:`meshterm.tools.chat.ChatTool._picker_items`).
+    """
+    from meshterm.tools.chat import ChatTool
+
+    contacts = [
+        Contact(name="Alice", public_key="aa" * 32, key_prefix="aa" * 6, node_type=1),
+        Contact(name="A Rather Long Contact Name", public_key="d4" * 32, key_prefix="d4" * 6),
+        Contact(name="Homestead", public_key="60" * 32, key_prefix="60" * 6, node_type=1),
+    ]
+    now = datetime(2026, 7, 12, 14, 30, tzinfo=timezone.utc)
+    lasts = {
+        # The default public channel, as _channels_from_slots names it with no slots read.
+        "chan:slot:0": ChatMessage(
+            text="Alice: anyone up around the Plateau tonight? testing a new antenna",
+            is_channel=True,
+            channel_idx=0,
+            channel_id="slot:0",
+            created_at=now,
+        ),
+        f"dm:{'aa' * 6}": ChatMessage(
+            text="on my way, should be there soon - the bridge is backed up again",
+            peer="aa" * 6,
+            created_at=now,
+        ),
+    }
+    ctx = _PickerCtx(contacts, lasts)
+    items = asyncio.run(ChatTool()._picker_items(ctx))
+    return SelectScreen(
+        "Chat - pick a conversation",
+        items,
+        footer_hint="↑↓ move · type to filter · Enter open · Esc back",
+        delete_hint="Del erase",
+    )
+
+
+class _PickerCtx:
+    """The minimal AppContext surface :meth:`ChatTool._picker_items` reads."""
+
+    def __init__(self, contacts: list[Contact], lasts: dict) -> None:
+        self.devstate = _PickerDevstate(contacts, [])
+        self.repo = _PickerRepo(lasts)
+        self.chat = _PickerChat({"chan:slot:0": 3, f"dm:{'aa' * 6}": 12})
 
 
 def _livefeed(cols: int, rows: int) -> Screen:
@@ -701,6 +788,7 @@ _ENTRIES: list[_Entry] = [
     _Entry("node_detail", _node_detail),
     _Entry("map", _map),
     _Entry("chat", _chat),
+    _Entry("chat_picker", _chat_picker),
     _Entry("livefeed", _livefeed),
     _Entry("walk", _walk),
     _Entry("timemachine", _timemachine),

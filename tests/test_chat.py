@@ -11,6 +11,7 @@ import re
 from pathlib import Path
 
 import pytest
+from rich.cells import cell_len
 
 from meshterm.core.channels import DEFAULT_PUBLIC_SECRET, derive_secret
 from meshterm.core.config import Settings
@@ -27,7 +28,7 @@ from meshterm.core.preferences import Preferences
 from meshterm.persistence.repository import Repository
 from meshterm.services.chat_service import ChatService
 from meshterm.services.event_hub import EventHub
-from meshterm.tools.chat import _PREVIEW_WIDTH, _LiveLasts, _preview_text, _title
+from meshterm.tools.chat import _lanes, _LiveLasts, _preview_text, _title
 from meshterm.ui.chat import ChatScreen
 from meshterm.ui.tui import fkeys
 from meshterm.ui.tui.screen import CANCEL
@@ -441,11 +442,10 @@ def test_preview_colours_channel_sender_and_mentions() -> None:
     assert any(s.style == "node.unknown" and s.start <= zed < s.end for s in preview.spans)
 
 
-def test_preview_ellipsizes_long_text() -> None:
-    """An over-long preview is clipped to the width budget with a trailing ellipsis."""
-    long = ChatMessage(text="x" * 100, is_channel=True, channel_idx=0)
-    out = _preview_text(long, _NO_KEYS).plain
-    assert len(out) == _PREVIEW_WIDTH and out.endswith("…")
+def test_preview_keeps_the_whole_message() -> None:
+    """The preview is built whole — the row's own cut is what the ←→ scroll walks past."""
+    long = ChatMessage(text="x" * 300, is_channel=True, channel_idx=0)
+    assert _preview_text(long, _NO_KEYS).plain == "x" * 300
 
 
 def test_title_shows_badge_and_author_preview(repo: Repository) -> None:
@@ -453,7 +453,7 @@ def test_title_shows_badge_and_author_preview(repo: Repository) -> None:
     conv = Conversation(label="General", is_channel=True, channel_idx=0, channel_id="c0")
     ctx = _RowCtx(repo, unread={"chan:c0": 3})
     last = ChatMessage(text="Bob: hi there", is_channel=True, channel_id="c0")  # sender inline
-    title = _title(ctx, conv, {"chan:c0": last}, _NO_KEYS)
+    title = _title(ctx, conv, {"chan:c0": last}, _NO_KEYS, _lanes([conv]))
     line = title.plain  # a Text, since there is unread
     assert line.startswith("🔒 General")  # a private channel leads with its openness glyph
     assert "● 3" in line
@@ -465,7 +465,7 @@ def test_title_reddens_only_the_unread_dot(repo: Repository) -> None:
     from rich.text import Text
 
     conv = Conversation(label="General", is_channel=True, channel_idx=0, channel_id="c0")
-    unread = _title(_RowCtx(repo, unread={"chan:c0": 2}), conv, {}, _NO_KEYS)
+    unread = _title(_RowCtx(repo, unread={"chan:c0": 2}), conv, {}, _NO_KEYS, _lanes([conv]))
     assert isinstance(unread, Text)
     dot = unread.plain.index("●")
     reddened = [
@@ -473,7 +473,7 @@ def test_title_reddens_only_the_unread_dot(repo: Repository) -> None:
     ]
     assert reddened and all(span.end - span.start == 1 for span in reddened)  # just the glyph
 
-    read = _title(_RowCtx(repo, unread={}), conv, {}, _NO_KEYS)
+    read = _title(_RowCtx(repo, unread={}), conv, {}, _NO_KEYS, _lanes([conv]))
     assert isinstance(read, Text)  # always a Text now, so its spans can carry the row's colour
     assert "●" not in read.plain  # nothing unread -> no badge dot
     assert not any(span.style == "err" for span in read.spans)
@@ -488,8 +488,9 @@ def test_title_preview_column_aligns_regardless_of_label_length(repo: Repository
     )
     m0 = ChatMessage(text="X: hello", is_channel=True, channel_id="c0")
     m1 = ChatMessage(text="Y: hello", is_channel=True, channel_id="c1")
-    l0 = _title(ctx, short, {"chan:c0": m0}, _NO_KEYS).plain
-    l1 = _title(ctx, long, {"chan:c1": m1}, _NO_KEYS).plain
+    lanes = _lanes([short, long])  # one measurement for the list, as the picker does
+    l0 = _title(ctx, short, {"chan:c0": m0}, _NO_KEYS, lanes).plain
+    l1 = _title(ctx, long, {"chan:c1": m1}, _NO_KEYS, lanes).plain
     assert l0.index("X: hello") == l1.index("Y: hello")
 
 
@@ -498,7 +499,7 @@ def test_title_leads_with_openness_glyph(repo: Repository) -> None:
     ctx = _RowCtx(repo)
 
     def head(conv):
-        return _title(ctx, conv, {}, _NO_KEYS).plain.split(" ", 1)[0]
+        return _title(ctx, conv, {}, _NO_KEYS, _lanes([conv])).plain.split(" ", 1)[0]
 
     named = Conversation(
         label="#general", is_channel=True, channel_id="c0", secret=derive_secret("#general")
@@ -533,7 +534,7 @@ def test_title_contact_dot_reflects_conversation_history(repo: Repository) -> No
         )
 
     # No history yet — a hollow ring in the standard companion pink.
-    fresh = _title(ctx, contact, {}, _NO_KEYS)
+    fresh = _title(ctx, contact, {}, _NO_KEYS, _lanes([contact]))
     assert fresh.plain.startswith("○") and dot_is_pink(fresh)
     # The name lane carries Alice's key-derived hue.
     name_at = fresh.plain.index("Alice")
@@ -541,7 +542,7 @@ def test_title_contact_dot_reflects_conversation_history(repo: Repository) -> No
 
     # Once we've exchanged messages the same pink dot fills in.
     last = ChatMessage(text="hi", peer=contact.peer)
-    talked = _title(ctx, contact, {contact.key: last}, _NO_KEYS)
+    talked = _title(ctx, contact, {contact.key: last}, _NO_KEYS, _lanes([contact]))
     assert talked.plain.startswith("●") and dot_is_pink(talked)
 
 
@@ -1791,9 +1792,135 @@ async def test_picker_pins_its_column_header_over_the_group_heading(
     assert top[0].startswith("CONVERSATION") and top[0].endswith("LAST MESSAGE")
     assert top[1] == "── 👤 Direct ──"
     assert above is True
-    # Too narrow for the whole line, the trailing label shortens — never wraps.
-    assert header.text(50).endswith("LAST MSG")
-    assert "\n" not in header.text(40)
+    # Too narrow for the whole line, the trailing label shortens — never wraps. The
+    # lane is sized to these six-cell names now, so the squeeze starts well below any
+    # real terminal: the fallback is what is under test, not the width it happens at.
+    assert header.text(40).endswith("LAST MSG")
+    assert "\n" not in header.text(30)
+
+
+async def test_picker_lane_is_sized_to_the_names_it_holds(repo: Repository) -> None:
+    """The conversation lane fits the longest name, between its floor and its ceiling.
+
+    Every cell the lane holds past that longest name is padding taken out of the message
+    preview, which is the row's only unbounded content — so it is measured, not written down.
+    """
+    from meshterm.tools.chat import _LABEL_MAX, _LABEL_MIN, _lanes
+
+    def lane(*names: str) -> int:
+        return _lanes([Conversation(label=n, is_channel=True, channel_id=n) for n in names]).label
+
+    assert lane("Bob", "Ann") == _LABEL_MIN  # short names can't shrink it under the header word
+    assert lane("Bob", "YUL-Cartierville") == len("YUL-Cartierville")
+    assert lane("A Rather Long Contact Name Indeed") == _LABEL_MAX  # nor grow it without end
+
+
+async def test_picker_rows_scroll_the_message_under_pinned_lanes(repo: Repository) -> None:
+    """A row hands ←→ the preview alone: the lanes in front of it are where it starts to slide.
+
+    Those lanes are the reader's place in the list, so the scroll begins exactly where the
+    message does — which is one column for every row, long name or short.
+    """
+    from types import SimpleNamespace
+
+    from meshterm.tools.chat import ChatTool
+    from meshterm.ui.tui import Choice
+
+    contacts = [
+        Contact(name="Alice", public_key="d4" + "0" * 62, node_type=1),
+        Contact(name="A Rather Long Contact Name", public_key="60" + "0" * 62, node_type=1),
+    ]
+    alice = Conversation(label="Alice", is_channel=False, contact=contacts[0])
+    repo.record_chat_message(ChatMessage(text="x" * 200, peer=alice.peer))
+    ctx = SimpleNamespace(devstate=_PickerDevstate(contacts), repo=repo, chat=_PickerChat())
+    rows = [it for it in await ChatTool()._picker_items(ctx) if isinstance(it, Choice)]
+
+    heads = {row.hscroll_from for row in rows}
+    assert len(heads) == 1 and heads.pop() > 0  # one head block for the whole list
+    talked = next(row for row in rows if row.value.label == "Alice")
+    line = talked.label.plain
+    # Measured in cells, not characters: a channel glyph is one character and two cells.
+    assert cell_len(line[: line.index("x")]) == talked.hscroll_from
+    # And the preview keeps the whole message: the cut is the row's, and ←→ walk past it.
+    assert talked.label.plain.endswith("x" * 200)
+
+
+def test_picker_marker_lane_lines_the_two_groups_up(repo: Repository) -> None:
+    """A channel glyph and a contact dot claim the same cells — on either platform.
+
+    That glyph is double-cell on regular and single-cell in the console font, so the dot is
+    padded to whatever it actually measures rather than to a written-down width: a
+    hard-coded pad left every channel row a cell adrift of every direct row on the PicoCalc.
+    """
+    from meshterm.platforms import PICOCALC, REGULAR, set_platform
+    from meshterm.tools.chat import _lanes
+
+    channel = Conversation(label="Public", is_channel=True, channel_idx=0, channel_id="c0")
+    contact = Conversation(
+        label="Alice", is_channel=False, contact=Contact(name="Alice", public_key="d4" * 32)
+    )
+    ctx = _RowCtx(repo)
+    try:
+        for platform in (REGULAR, PICOCALC):
+            set_platform(platform)
+            lanes = _lanes([channel, contact])
+            rows = [_title(ctx, c, {}, _NO_KEYS, lanes).plain for c in (channel, contact)]
+            names = ("Public", "Alice")
+            at = [cell_len(r[: r.index(n)]) for r, n in zip(rows, names, strict=True)]
+            assert at[0] == at[1] == lanes.marker
+    finally:
+        set_platform(REGULAR)
+
+
+async def test_picker_footer_fits_with_every_atom_showing(repo: Repository, monkeypatch) -> None:
+    """Scroll, erase and the base atoms together stay inside the 72-cell footer budget.
+
+    The three of them coincide on an ordinary row — a thread with history long enough to
+    scroll — so the budget is the wording's constraint, not a corner case (it is what
+    ``Del erase`` is: the row already names the conversation it would take the history of).
+    """
+    import asyncio
+    from types import SimpleNamespace
+
+    from prompt_toolkit.input.defaults import create_pipe_input
+    from prompt_toolkit.output import DummyOutput
+
+    from meshterm.tools.chat import ChatTool
+    from meshterm.ui.surface import TuiUi
+    from meshterm.ui.tui.screen import CANCEL
+    from meshterm.ui.tui.session import TuiSession
+
+    ally = Contact(name="Ally", public_key="d4" + "0" * 62, node_type=1)
+    conv = Conversation(label="Ally", is_channel=False, contact=ally)
+    repo.record_chat_message(ChatMessage(text="y" * 200, peer=conv.peer))
+    ctx = SimpleNamespace(devstate=_PickerDevstate([ally]), repo=repo, chat=_PickerChat())
+    hints: list[str] = []
+
+    with create_pipe_input() as inp:
+        session = TuiSession(input=inp, output=DummyOutput())
+        ctx.ui = TuiUi(session)
+
+        async def main() -> None:
+            run = asyncio.ensure_future(ChatTool()._run_live(ctx))
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + 2
+            while not session._stack:
+                assert loop.time() < deadline, "the picker never opened"
+                await asyncio.sleep(0)
+            picker = session._stack[-1]
+            picker.render_body(72)  # the overflow probe reads the last render width
+            picker.handle("down")  # onto the one Direct row: deletable, and overflowing
+            picker.render_body(72)
+            hints.append(picker.footer_hint)
+            picker.resolve(CANCEL)
+            await asyncio.wait_for(run, timeout=2)
+
+        await asyncio.wait_for(session.run(main()), timeout=5)
+
+    hint = hints[0]
+    assert cell_len(hint) <= 72, f"{cell_len(hint)} cells: {hint!r}"
+    for atom in ("←→ scroll", "Enter open", "Del erase", "Esc back"):
+        assert atom in hint
 
 
 async def test_picker_del_deletes_history_after_a_red_confirm(repo: Repository) -> None:

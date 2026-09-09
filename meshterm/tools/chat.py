@@ -15,9 +15,11 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import typer
+from rich.cells import cell_len
 from rich.text import Text
 
 from ..context import AppContext
@@ -127,7 +129,16 @@ class ChatTool(Tool):
         picker = SelectScreen(
             "Chat — pick a conversation",
             await self._picker_items(ctx),
-            delete_hint="Del delete history",
+            # Enter pushes the chat screen, so the committing verb is `open`. Neither the
+            # scroll nor the erase atom is written into the base: the select list splices
+            # each in exactly when its key would act — ←→ only while the highlighted row
+            # overflows, Del only on a thread that has history to lose — and the three of
+            # them together are what has to stay inside 72 cells (the purge preview's list
+            # is the same arithmetic). `Del erase` is that budget's doing: the row already
+            # names the conversation, so the atom spends its cells on the verb, and `erase`
+            # is the word the app uses elsewhere for taking data away.
+            footer_hint="↑↓ move · type to filter · Enter open · Esc back",
+            delete_hint="Del erase",
         )
         opened = 0
         shown = 0
@@ -179,35 +190,43 @@ class ChatTool(Tool):
         # colour rule); a name no contact or stored advert carries stays muted.
         key_of = make_name_key_resolver(contacts, ctx.repo.node_names())
 
+        # List contacts by recency — those with messages first, newest exchange at the top —
+        # then the never-contacted ones alphabetically (see _recency_key).
+        direct = [Conversation(label=c.name, is_channel=False, contact=c) for c in companions]
+        direct.sort(key=lambda conv: _recency_key(conv, lasts))
+        # One measurement for the whole list, headings and rows alike, taken before either is
+        # built: the name lane is only as wide as the names actually in it, and every cell it
+        # gives back goes to the message preview (see _lanes).
+        lanes = _lanes(channels + direct)
+
         # The lane names pin for the whole picker (they mean the same in both groups),
         # so scrolling into Direct keeps them overhead with that group's heading under
         # them, instead of the header vanishing one row in — see Screen.sticky_rows.
         items: list = [
-            Separator(_picker_header, pinned=True),
+            Separator(lambda w: _picker_header(lanes, w), pinned=True),
             section_heading("📡 Channels"),
         ]
         for conversation in channels:
             items.append(
                 Choice(
-                    title=_row_title(ctx, conversation, live, key_of),
+                    title=_row_title(ctx, conversation, live, key_of, lanes),
                     value=conversation,
+                    # ←→ slide the message alone; the lanes in front of it hold (_Lanes.head).
+                    hscroll_from=lanes.head,
                 )
             )
 
         items.append(section_heading("👤 Direct"))
         if companions:
-            # List contacts by recency — those with messages first, newest exchange at
-            # the top — then the never-contacted ones alphabetically (see _recency_key).
-            direct = [Conversation(label=c.name, is_channel=False, contact=c) for c in companions]
-            direct.sort(key=lambda conv: _recency_key(conv, lasts))
             for conversation in direct:
                 items.append(
                     Choice(
-                        title=_row_title(ctx, conversation, live, key_of),
+                        title=_row_title(ctx, conversation, live, key_of, lanes),
                         value=conversation,
                         # Del offers to delete this thread's stored history —
                         # only where there is history to delete.
                         deletable=lasts.get(conversation.key) is not None,
+                        hscroll_from=lanes.head,
                     )
                 )
         else:
@@ -630,25 +649,87 @@ class _LiveLasts:
         return self._cache.get(key)
 
 
-#: Column width (display cells) the conversation label is padded/ellipsized to, so the unread
-#: badge and message preview line up in fixed lanes down the picker.
-_LABEL_WIDTH = 22
 #: Width of the unread-badge lane between the label and the age (fits ``● 999``).
 _BADGE_WIDTH = 5
 #: Width of the relative-age lane between the badge and the preview (right-aligned; fits ``now``
 #: and two-digit spans like ``59m`` / ``23h``), so every row's message text starts in one column.
 _AGE_WIDTH = 3
-#: Longest message preview shown before it is ellipsized.
-_PREVIEW_WIDTH = 40
+#: Floor for the conversation lane. The header word is ``CONVERSATION`` (12 cells) and the
+#: lane carries a two-cell gap after it, so anything narrower than this runs the heading
+#: straight into ``UNREAD`` on a mesh whose every name is ``Bob``.
+_LABEL_MIN = 12
+#: Ceiling for it. The lane is sized to the longest name it actually holds (see
+#: :func:`_lanes`), and this is where that stops paying: one very long name would otherwise
+#: buy padding in front of every *short* one. It holds the long-but-ordinary shape of a
+#: repeater-style name (``YUL-Cartierville``), a name past it ellipsizes — the row is a way
+#: in to the conversation, whose own screen is titled with the whole name — and every cell
+#: the ceiling saves goes to the preview.
+_LABEL_MAX = 16
 
 
-def _picker_header(width: int) -> str:
+@dataclass(frozen=True)
+class _Lanes:
+    """The picker's fixed lane widths, measured once per list build.
+
+    Both the column header and every row are laid out from one of these, so the headings
+    cannot drift off the columns they name. Only the first two vary: the marker is the
+    platform's own glyph width (a channel glyph is double-cell on regular and single on the
+    PicoCalc console) and the label lane is sized to the longest name the list actually
+    holds, within :data:`_LABEL_MIN` / :data:`_LABEL_MAX`.
+
+    Attributes:
+        marker: The leading glyph lane — a channel glyph or contact dot plus its space.
+        label: Cells the conversation name is padded/ellipsized to.
+    """
+
+    marker: int
+    label: int
+
+    @property
+    def head(self) -> int:
+        """Cells before the preview: everything ←→ leave pinned (:attr:`Choice.hscroll_from`).
+
+        Marker, name, unread badge and age, with the two-cell gap that follows each — the
+        columns that say *which conversation this row is*. The preview is the only run that
+        slides, which is the point: the lanes are the reader's place in the list and they
+        already fit.
+        """
+        return self.marker + self.label + 2 + _BADGE_WIDTH + 2 + _AGE_WIDTH + 2
+
+
+def _lanes(conversations: list[Conversation]) -> _Lanes:
+    """Measure the picker's lanes against the conversations it is about to draw.
+
+    The name lane used to be a flat 22 cells, which is a wide claim on a 72-column terminal
+    and a very wide one on the PicoCalc's 53: every cell it holds past the longest name in
+    the list is padding taken straight out of the last-message preview. Sized to the content
+    instead, a mesh of ``Alice`` and ``Bob`` keeps its names inside the header word's own
+    lane and gives everything else to the messages.
+
+    Args:
+        conversations: Every row the list will hold, channels and direct alike.
+
+    Returns:
+        The lane widths for both the header and the rows.
+    """
+    longest = max((cell_len(c.label) for c in conversations), default=0)
+    return _Lanes(
+        # The marker is "glyph + space", and the glyph is the platform's: double-cell on
+        # regular, single on the console font. Read from the widget rather than assumed, so
+        # the two groups' lanes line up on both platforms — a contact's dot is padded to
+        # whatever a channel's glyph measures here (see _append_marker).
+        marker=cell_len(channel_glyph("Public", None)) + 1,
+        label=max(_LABEL_MIN, min(_LABEL_MAX, longest)),
+    )
+
+
+def _picker_header(lanes: _Lanes, width: int) -> str:
     """Column headers over the picker's fixed lanes (see :func:`_title` for the layout).
 
-    The five-cell indent covers the select screen's pointer column (2 cells, drawn on choice
-    rows but not separators) plus the marker lane (3 cells), so each header lands exactly
-    over its column. UNREAD borrows its lane's trailing gap — the badge lane itself is one
-    cell too narrow for the word — which still leaves a space before the age column.
+    The indent covers the select screen's pointer column (2 cells, drawn on choice rows but
+    not separators) plus the marker lane, so each header lands exactly over its column.
+    UNREAD borrows its lane's trailing gap — the badge lane itself is one cell too narrow
+    for the word — which still leaves a space before the age column.
 
     Resolved against the render width (the header row is pinned, so it must stay one row):
     on a terminal too narrow for the whole line, ``LAST MESSAGE`` gives its cells back a
@@ -657,13 +738,13 @@ def _picker_header(width: int) -> str:
     """
     return column_header(
         [
-            Lane("CONVERSATION", _LABEL_WIDTH + 2),
+            Lane("CONVERSATION", lanes.label + 2),
             Lane("UNREAD", _BADGE_WIDTH + 2),
             Lane("TIME", _AGE_WIDTH + 2),
             Lane(("LAST MESSAGE", "LAST MSG", "LAST")),
         ],
         width,
-        indent=5,
+        indent=2 + lanes.marker,
     )
 
 
@@ -672,6 +753,7 @@ def _row_title(
     conversation: Conversation,
     lasts: _LiveLasts,
     key_of: NameKeyResolver,
+    lanes: _Lanes,
 ) -> Callable[[], str | Text]:
     """Return a picker-row title *callable* the select screen re-renders on each repaint.
 
@@ -684,11 +766,12 @@ def _row_title(
         conversation: The conversation the row represents.
         lasts: The self-refreshing latest-message view feeding the preview.
         key_of: Maps a sender name back to its node's key, for the preview hues.
+        lanes: The list's measured lane widths.
 
     Returns:
         A zero-argument callable producing the current row title.
     """
-    return lambda: _title(ctx, conversation, lasts, key_of)
+    return lambda: _title(ctx, conversation, lasts, key_of, lanes)
 
 
 def _title(
@@ -696,6 +779,7 @@ def _title(
     conversation: Conversation,
     lasts: _LiveLasts,
     key_of: NameKeyResolver,
+    lanes: _Lanes,
 ) -> str | Text:
     """Build a picker row as fixed-width, colour-coded lanes.
 
@@ -713,6 +797,7 @@ def _title(
         conversation: The conversation the row represents.
         lasts: The self-refreshing latest-message view.
         key_of: Maps a preview sender/mention name back to its node's key.
+        lanes: The list's measured lane widths.
 
     Returns:
         The row title as a styled :class:`~rich.text.Text`.
@@ -720,12 +805,12 @@ def _title(
     unread = ctx.chat.unread(conversation.key)
     last = lasts.get(conversation.key)
     text = Text(no_wrap=True, overflow="ellipsis")
-    _append_marker(text, conversation, last)
+    _append_marker(text, conversation, last, lanes)
     label_style = ""
     if not conversation.is_channel and conversation.contact is not None:
         contact = conversation.contact
         label_style = name_style(conversation.label, contact.public_key or contact.key_prefix)
-    text.append(fit_cells(conversation.label, _LABEL_WIDTH), style=label_style or None)
+    text.append(fit_cells(conversation.label, lanes.label), style=label_style or None)
     text.append("  ")
     # Unread badge lane (_BADGE_WIDTH cells): a red ● with the count in warn, or blank filler so
     # the following lanes still line up on rows with nothing unread.
@@ -751,21 +836,28 @@ def _title(
 _COMPANION_DOT_STYLE = _NODE_GLYPHS[NODE_TYPE_CHAT][1]
 
 
-def _append_marker(text: Text, conversation: Conversation, last: ChatMessage | None) -> None:
-    """Prepend the row's leading marker (3 display cells) — a channel glyph or a contact dot.
+def _append_marker(
+    text: Text, conversation: Conversation, last: ChatMessage | None, lanes: _Lanes
+) -> None:
+    """Prepend the row's leading marker — a channel glyph or a contact dot — in its own lane.
 
     A channel keeps its openness marker (＃ / 🌐 / 🔒). A contact gets a small circle in the
     standard companion pink — filled (``●``) once we've exchanged messages, a hollow ring
     (``○``) before any — so the hollow-vs-filled shape marks whether there's history while the
-    name itself carries the person's key-derived hue. The contact dot is padded to the same
-    width as a channel's double-cell glyph so the labels line up across both sections.
+    name itself carries the person's key-derived hue.
+
+    The dot is padded out to :attr:`_Lanes.marker`, which is measured from the channel glyph
+    itself rather than assumed: that glyph is double-cell on regular and single-cell on the
+    PicoCalc console font, so a hard-coded pad lined the two sections up on one platform and
+    left every channel row a cell to the left of every direct row on the other.
     """
     if conversation.is_channel:
-        text.append(f"{channel_glyph(conversation.label, conversation.secret)} ")
+        glyph = channel_glyph(conversation.label, conversation.secret)
+        text.append(glyph + " " * max(1, lanes.marker - cell_len(glyph)))
     else:
         dot = "●" if last is not None else "○"
         text.append(dot, style=_COMPANION_DOT_STYLE)
-        text.append("  ")
+        text.append(" " * max(1, lanes.marker - cell_len(dot)))
 
 
 def _preview_text(last: ChatMessage, key_of: NameKeyResolver) -> Text:
@@ -774,8 +866,12 @@ def _preview_text(last: ChatMessage, key_of: NameKeyResolver) -> Text:
     Mirrors the live transcript: our own messages get a ``you:`` prefix, an inbound channel
     message's inline ``Name:`` sender is coloured in its key-derived hue (muted when no known
     node carries the name), and every ``@[Name]`` mention reads as a bare ``@Name`` the same
-    way — so the list and the chat speak the same colour language. The result is clipped to
-    :data:`_PREVIEW_WIDTH` cells.
+    way — so the list and the chat speak the same colour language.
+
+    The preview is built *whole*, however long the message ran. It used to be clipped to a
+    fixed 40 cells, which is a cut nothing could undo: the row is what ←→ scroll now, and a
+    preview pre-truncated to roughly the visible lane would have had nothing left to reveal.
+    The list cuts it at the right edge like any other row; the scroll walks past that.
     """
     body_raw = last.text.replace("\n", " ")
     text = Text()
@@ -792,7 +888,6 @@ def _preview_text(last: ChatMessage, key_of: NameKeyResolver) -> Text:
             _append_body(text, body_raw, key_of)
     else:
         _append_body(text, body_raw, key_of)
-    text.truncate(_PREVIEW_WIDTH, overflow="ellipsis")
     return text
 
 
