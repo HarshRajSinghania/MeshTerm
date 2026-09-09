@@ -527,7 +527,7 @@ class PathLine:
         if seam is not None and len(groups) > 1:
             # The outbound leg's own last line still continues into the return, so it
             # holds the cue back where the whole path's final line doesn't.
-            legs = self._flow(self._hops[:seam], budget, plain, len(cue), len(cue))
+            legs = self._flow(self._hops[:seam], budget, plain, len(cue), len(cue), ends=False)
             legs += self._flow(self._hops[seam:], budget, plain, len(cue), 0, carry_in=True)
             if len(legs) <= len(groups):  # the turn folds for free — take it
                 groups = legs
@@ -582,7 +582,7 @@ class PathLine:
         full = self.text().cell_len
         if not self._hops:
             return Measurement(full, full)
-        cells, _join, tail, lead, _head = self._measure(
+        cells, _join, tail, lead, _head, _foot = self._measure(
             self._hops, self._resolved_mode() != "powerline"
         )
         least = max(cells) + tail + lead + WRAP_OFFSET
@@ -590,7 +590,9 @@ class PathLine:
 
     # --- where the breaks fall --------------------------------------------------------
 
-    def _measure(self, hops: list[PathHop], plain: bool) -> tuple[list[int], int, int, int, int]:
+    def _measure(
+        self, hops: list[PathHop], plain: bool
+    ) -> tuple[list[int], int, int, int, int, int]:
         """Each hop's own width, plus what joining, opening and closing a line costs.
 
         Fitting hops to a column is arithmetic once every hop has been measured once —
@@ -602,24 +604,26 @@ class PathLine:
             plain: Measure as arrow text rather than as chips.
 
         Returns:
-            ``(cells, join, tail, lead, head)`` — each hop's cells, the cells one join
-            between two hops costs (chip mode's seam is the single interlocked chevron —
-            and so is either side of an elision gap, so the figure holds there too), the
-            cells a line always closes with (chip mode's edge; nothing in arrow mode), the
-            cells every line *after the first* opens with (chip mode's notch, the seam
-            redrawn), and the cells the *first* line opens with (chip mode's rounded cap,
-            nothing where the font has none).
+            ``(cells, join, tail, lead, head, foot)`` — each hop's cells, the cells one
+            join between two hops costs (chip mode's seam is the single interlocked
+            chevron — and so is either side of an elision gap, so the figure holds there
+            too), the cells a line the path *runs on past* closes with (chip mode's
+            point; nothing in arrow mode), the cells every line *after the first* opens
+            with (chip mode's notch, the seam redrawn), and the two outer caps: what the
+            *first* line opens with and what the line that *ends* the path closes with —
+            one cell each where the font has the rounded caps, nothing where it hasn't,
+            a squared end being drawn by appending nothing at all.
         """
         if plain:
             plain_cells = [self._plain_hop(hop).cell_len for hop in hops]
-            return plain_cells, cell_len(self._separator), 0, 0, 0
+            return plain_cells, cell_len(self._separator), 0, 0, 0, 0
         widths = [
             cell_len(hop.label) if hop.gap else self._chip(hop, self._chip_fill(hop)).cell_len
             for hop in hops
         ]
         sep = cell_len(POWERLINE_SEP)
-        head = cell_len(POWERLINE_ROUND_OPEN) if powerline_full() else 0
-        return widths, sep, sep, sep, head
+        cap = cell_len(POWERLINE_ROUND_OPEN) if powerline_full() else 0
+        return widths, sep, sep, sep, cap, cap
 
     @staticmethod
     def _fill(
@@ -631,13 +635,15 @@ class PathLine:
         last: int,
         lead: int = 0,
         head: int = 0,
+        foot: int = 0,
+        ends: bool = True,
     ) -> list[int]:
         """Pack hop widths into lines of ``budget`` cells, greedily, never splitting one.
 
         Args:
             cells: Each hop's width, in order (see :meth:`_measure`).
             join: Cells one join between two hops costs.
-            tail: Cells every line closes with.
+            tail: Cells a line the path runs on past closes with.
             budget: The content column's width in cells.
             reserve: Cells held back on a line for the continuation cue it will carry.
             last: Cells held back on a line ending at the *final* hop — ``0`` when the
@@ -646,6 +652,12 @@ class PathLine:
             lead: Cells every line but the first opens with — the reopened seam plus
                 the :data:`WRAP_OFFSET` step it hangs past the indent.
             head: Cells the first line opens with (the rounded cap, when drawn).
+            foot: Cells the line that *ends the path* closes with (the rounded cap, when
+                drawn) — charged in place of ``tail``, a finished path closing on a cap
+                or, where the font has none, on nothing at all.
+            ends: These hops finish the path, so their last line pays ``foot``. ``False``
+                where they are one leg of a route that goes on and every line, the last
+                included, still closes on the point.
 
         Returns:
             How many hops each line takes; a hop too wide for ``budget`` gets a line of
@@ -655,9 +667,11 @@ class PathLine:
         count = 0
         width = head
         for i, cell in enumerate(cells):
+            final = i == len(cells) - 1
             grown = width + cell + (join if count else 0)
-            held = last if i == len(cells) - 1 else reserve
-            if count and grown + tail + held > budget:
+            held = last if final else reserve
+            close = foot if final and ends else tail
+            if count and grown + close + held > budget:
                 sizes.append(count)
                 width, count = lead + cell, 1
             else:
@@ -673,6 +687,7 @@ class PathLine:
         reserve: int,
         last: int,
         carry_in: bool = False,
+        ends: bool = True,
     ) -> list[list[PathHop]]:
         """Break ``hops`` into the fewest lines, then even those lines out.
 
@@ -692,25 +707,31 @@ class PathLine:
             last: Cells held back on the line the hops end on (see :meth:`_fill`).
             carry_in: These hops are a *later* leg of a path already under way, so
                 even their first line opens as a continuation, not as a beginning.
+            ends: These hops finish the path, so their last line closes on the outer cap
+                rather than on the continuation point (see :meth:`_fill`).
 
         Returns:
             The hops grouped per line.
         """
-        cells, join, tail, lead, head = self._measure(hops, plain)
+        cells, join, tail, lead, head, foot = self._measure(hops, plain)
         lead += WRAP_OFFSET  # every continuation steps in past the hanging indent
         if carry_in:
             head = lead
-        lines = len(self._fill(cells, join, tail, budget, reserve, last, lead, head))
+
+        def fill(column: int) -> list[int]:
+            return self._fill(cells, join, tail, column, reserve, last, lead, head, foot, ends)
+
+        lines = len(fill(budget))
         low, high = 1, budget
         while low < high:  # the narrowest column still taking `lines` rows
             mid = (low + high) // 2
-            if len(self._fill(cells, join, tail, mid, reserve, last, lead, head)) <= lines:
+            if len(fill(mid)) <= lines:
                 high = mid
             else:
                 low = mid + 1
         groups: list[list[PathHop]] = []
         at = 0
-        for size in self._fill(cells, join, tail, low, reserve, last, lead, head):
+        for size in fill(low):
             groups.append(hops[at : at + size])
             at += size
         return groups
@@ -825,12 +846,18 @@ class PathLine:
         """Powerline chips: each hop filled with its hue, a two-cell gap at every seam.
 
         The two outer ends say whether this line *is* the path or only part of it. A
-        line that opens the path opens rounded (squared off where the font has no
-        rounded caps); one that continues a wrapped path opens on the break's other
-        half — which is exactly the seam's own second cell, so a fold looks like the
-        seam it interrupted. A line that ends the path closes rounded; one the path
-        outruns closes on the point, the same "goes on" cue arrow mode spells with a
-        trailing ``→``.
+        line that opens the path opens rounded; one that continues a wrapped path opens
+        on the break's other half — which is exactly the seam's own second cell, so a
+        fold looks like the seam it interrupted. A line that ends the path closes
+        rounded; one the path outruns closes on the point, the same "goes on" cue arrow
+        mode spells with a trailing ``→``.
+
+        Where the font has no rounded caps both outer ends are drawn **square** — the
+        chip's own pad is the edge, and nothing is appended. Square is not a degraded
+        cap, it is the one shape left that says *stop*: the point is spoken for as the
+        continuation cue, so closing a finished path on one claimed a hop had been cut
+        off (JP, 2026-09-09). Only the *opening* used to square itself off, which left
+        every route on a core-only terminal ending on the mark for "there is more".
 
         An elision (:attr:`PathHop.gap`) interrupts the ribbon rather than joining it: the
         chip before it closes on the page, the mark sits on the page bare, and the chip
@@ -863,8 +890,10 @@ class PathLine:
                 text.append_text(self._chip(hop, fills[i]))
         if hops[-1].gap:
             return text  # the line ended on the page; there is no chip left to close
-        close = POWERLINE_SEP if carry_on or not rounded else POWERLINE_ROUND_CLOSE
-        text.append(close, style=fills[-1])  # the edge into the page: pointed or round
+        if carry_on:
+            text.append(POWERLINE_SEP, style=fills[-1])  # the point: the path goes on
+        elif rounded:
+            text.append(POWERLINE_ROUND_CLOSE, style=fills[-1])  # the lozenge's far end
         return text
 
     @staticmethod

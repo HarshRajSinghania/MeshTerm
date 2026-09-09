@@ -112,18 +112,19 @@ def test_empty_path_reads_as_the_callers_word() -> None:
 
 
 def test_chips_are_joined_by_one_interlocked_chevron() -> None:
-    """A seam is one cell, not two.
+    """A seam is one cell, not two — and the path's own end is not a seam at all.
 
     The previous chip's point is laid *on* the next chip's fill, so the route reads as
-    a ribbon whose segments meet on a chevron. The closing edge keeps its lone taper —
-    nothing follows it to lay the point on.
+    a ribbon whose segments meet on a chevron. The point is spoken for: it is what says
+    the route continues, so a finished path never wears one. It ends square on the last
+    chip's own pad, and the only chevrons in the line are the joins.
     """
     alice_fill = node_style("aa").split()[-1]
     line = PathLine([PathHop("Alice", key="aa"), PathHop("you", you=True)], mode="powerline")
     text = line.text()
-    assert text.plain == f" Alice {POWERLINE_SEP} you {POWERLINE_SEP}"
+    assert text.plain == f" Alice {POWERLINE_SEP} you "
     seam_styles = [str(s.style) for s in text.spans if text.plain[s.start : s.end] == POWERLINE_SEP]
-    assert seam_styles == [f"{alice_fill} on {_YOU_BG}", _YOU_BG]
+    assert seam_styles == [f"{alice_fill} on {_YOU_BG}"]
 
 
 def test_chips_keep_the_same_words_and_honour_style_overrides() -> None:
@@ -136,9 +137,9 @@ def test_chips_keep_the_same_words_and_honour_style_overrides() -> None:
     chips = PathLine(hops, mode="powerline").text().plain
     assert plain.replace(" → ", " ") == chips.replace(POWERLINE_SEP, "").replace("  ", " ").strip()
     themed = PathLine([PathHop("X", style="brand")], mode="powerline").text()
-    assert str(themed.spans[-1].style) == "#5eead4"  # the closing edge, brand-filled
+    assert pathline._fills(themed)[-1] == "#5eead4"  # the chip runs to the very last cell
     hexed = PathLine([PathHop("X", style="bold #123456")], mode="powerline").text()
-    assert str(hexed.spans[-1].style) == "#123456"
+    assert pathline._fills(hexed)[-1] == "#123456"
 
 
 def test_auto_mode_follows_the_terminal_verdict(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -161,7 +162,7 @@ def test_the_cursor_is_a_hop_of_its_own_in_either_mode() -> None:
     assert _styles(plain)[CURSOR_GLYPH] == "selected"  # the reverse-video block
 
     chips = PathLine(hops, mode="powerline").text()
-    assert chips.plain == f" a {POWERLINE_SEP} {CURSOR_GLYPH} {POWERLINE_SEP} b {POWERLINE_SEP}"
+    assert chips.plain == f" a {POWERLINE_SEP} {CURSOR_GLYPH} {POWERLINE_SEP} b "
     slot = next(s for s in chips.spans if chips.plain[s.start : s.end] == CURSOR_GLYPH)
     assert str(slot.style).endswith(f"on {_style_hex('cursor')}")  # the cursor-white fill
 
@@ -500,10 +501,11 @@ def test_wrapped_carries_the_cursor_like_any_other_hop() -> None:
 def test_wrapped_chip_lines_open_on_the_break_they_continue() -> None:
     """Chip wrapping never splits a chip; each line opens on the break it continues.
 
-    Every line ends on the pointed edge, and every line *but the first* opens on the
-    break's other half — the point notched out of its own fill in reverse video, so the
-    page shows through and not a trace of the line above bleeds down. The point always
-    faces the way the path flows.
+    Every line the path *outruns* ends on the pointed edge — the last one ends square,
+    the route having finished — and every line *but the first* opens on the break's
+    other half: the point notched out of its own fill in reverse video, so the page
+    shows through and not a trace of the line above bleeds down. The point always faces
+    the way the path flows.
     """
     hops = [
         PathHop(label, key=key)
@@ -518,7 +520,8 @@ def test_wrapped_chip_lines_open_on_the_break_they_continue() -> None:
     # (it marks the run as a path line for the cursor fold and draws nothing).
     carried = next(s for s in lines[1].spans if s.start == step and str(s.style) != PATH_INK)
     assert str(carried.style) == f"{_style_hex(node_style('3d'))} reverse"
-    assert all(line.plain.endswith(POWERLINE_SEP) for line in lines)
+    assert lines[0].plain.endswith(POWERLINE_SEP)  # …the path runs on past this line
+    assert lines[-1].plain.endswith(" ")  # …and stops square on the last chip's pad
     assert all(line.cell_len <= 20 for line in lines)
 
 
@@ -526,8 +529,10 @@ def test_rounded_caps_finish_a_path_only_where_the_font_has_them(monkeypatch) ->
     """Rounded caps finish a path only where the font actually has them.
 
     A full Nerd Font rounds the path's two *outer* ends into a lozenge; a core-only
-    terminal squares the opening and points the close, never drawing tofu. Interior
-    breaks stay angled either way — a rounded end would read as the path stopping.
+    terminal squares *both* of them off, appending nothing and letting the outer chips'
+    own pads be the edges, never drawing tofu. Interior breaks stay angled either way —
+    a rounded end would read as the path stopping, and a pointed one at the finish would
+    read as the opposite, a route cut off mid-walk.
     """
     hops = [
         PathHop(label, key=key)
@@ -537,7 +542,10 @@ def test_rounded_caps_finish_a_path_only_where_the_font_has_them(monkeypatch) ->
 
     monkeypatch.setattr(pathline, "powerline_full", lambda: False)
     assert line.text().plain.startswith(" AAAA")
-    assert line.text().plain.endswith(POWERLINE_SEP)
+    assert line.text().plain.endswith("DDDD ")
+    # The point is still what a *wrapped* line ends on: there the route really does go on.
+    squared = line.wrapped(20, indent=2)
+    assert squared[0].plain.endswith(POWERLINE_SEP) and squared[-1].plain.endswith("DDDD ")
 
     monkeypatch.setattr(pathline, "powerline_full", lambda: True)
     assert line.text().plain.startswith(POWERLINE_ROUND_OPEN + " AAAA")

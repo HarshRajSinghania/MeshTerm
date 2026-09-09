@@ -257,6 +257,12 @@ as a grouped list does. Filling a page in is editing its `.md`; no Python follow
   same fill are the exception the interlock can't draw: the point drops its background so
   the page cuts the wedge. An elision breaks the ribbon rather than joining it — bare `⋯`
   on the page between a closing point and the next chip's notch, no fill, no padding.
+- The ribbon's **outer ends**: the chevron means *the route continues*, so a path that has
+  finished never wears one. It ends **square** — nothing appended, the last chip's own pad
+  is the edge — and opens square the same way; a full Nerd Font rounds both ends into a
+  lozenge instead (`POWERLINE_ROUND_*`, drawn only where `termfont.powerline_full`). A
+  *wrapped* line the path outruns still closes on the point: there the route really does
+  go on, which is the cue arrow mode spells with a trailing `→`.
 - Concept icons: 📡 advert · 🕒 clock/sync · 🔄 reboot · 💾 backup · 📂 restore ·
   🔑 channel/credential key · 🔐 identity/auth secret · 🗑 clear/delete · ✎ compose/edit ·
   ⚙ parameter · `#` count · ▶ run · ⚡ explore/probe · ★ best/winner · ⭐ watch ·
