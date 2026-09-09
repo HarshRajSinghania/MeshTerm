@@ -11,6 +11,15 @@ The registry also tracks which device was most recently connected (``last``), us
 preselect and star a default on the startup splash. Membership in the registry is what marks
 a device as a confirmed MeshCore companion — the splash reserves its "MeshCore device" tag
 for these, rather than guessing from the USB vendor ID.
+
+Alongside those it keeps ``hidden``: the stable ids the splash has been told to stop
+listing. It lives here rather than in the preferences because it is a fact about *this
+machine's* hardware — the USB adapters and dev boards permanently plugged into it that are
+not companions — and because the ids it holds are the registry's own. Hiding is a **splash**
+concern only: nothing else consults it, so ``--port`` and every scripted path still reach a
+hidden device by name. A hidden id need not be a remembered device (usually it is the
+opposite: a serial adapter nobody wants to see), so the set stands on its own rather than
+being a flag on a record.
 """
 
 from __future__ import annotations
@@ -101,8 +110,8 @@ class DeviceStore:
         """
         self._path = path
 
-    def _read(self) -> tuple[dict[str, RememberedDevice], str | None]:
-        """Return the parsed ``(registry, last_id)``; empty on a missing/corrupt file.
+    def _read(self) -> tuple[dict[str, RememberedDevice], str | None, set[str]]:
+        """Return the parsed ``(registry, last_id, hidden_ids)``; empty on a missing file.
 
         A missing or corrupt file is treated as "nothing remembered" rather than an error,
         so a stray edit never blocks startup. An old flat-format file (a single record at
@@ -112,16 +121,16 @@ class DeviceStore:
         try:
             data = json.loads(self._path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
-            return {}, None
+            return {}, None, set()
         if not isinstance(data, dict):
-            return {}, None
+            return {}, None, set()
 
         # Old flat shape: a single record with ``stable_id`` at the top level.
         if "devices" not in data and "stable_id" in data:
             record = self._record_from(data)
             if record is None:
-                return {}, None
-            return {record.stable_id: record}, record.stable_id
+                return {}, None, set()
+            return {record.stable_id: record}, record.stable_id, set()
 
         registry: dict[str, RememberedDevice] = {}
         for entry in (data.get("devices") or {}).values():
@@ -131,7 +140,9 @@ class DeviceStore:
         last = data.get("last")
         if last not in registry:
             last = None
-        return registry, last
+        raw_hidden = data.get("hidden")
+        hidden = {str(x) for x in raw_hidden} if isinstance(raw_hidden, list) else set()
+        return registry, last, hidden
 
     @staticmethod
     def _record_from(entry: object) -> RememberedDevice | None:
@@ -163,17 +174,17 @@ class DeviceStore:
         Returns:
             The last-connected :class:`RememberedDevice`, or ``None``.
         """
-        registry, last = self._read()
+        registry, last, _hidden = self._read()
         return registry.get(last) if last is not None else None
 
     def load_all(self) -> dict[str, RememberedDevice]:
         """Return the full registry of confirmed devices, keyed by ``stable_id``."""
-        registry, _ = self._read()
+        registry, _last, _hidden = self._read()
         return registry
 
     def is_known(self, device: DiscoveredDevice) -> bool:
         """Return whether ``device`` has ever been confirmed as a MeshCore companion."""
-        registry, _ = self._read()
+        registry, _last, _hidden = self._read()
         return device.stable_id in registry
 
     def remember(
@@ -193,7 +204,7 @@ class DeviceStore:
                 a reconnect on firmware that couldn't answer the query doesn't erase a model
                 learned earlier.
         """
-        registry, _ = self._read()
+        registry, _last, hidden = self._read()
         existing = registry.get(device.stable_id)
         if not node_name and existing is not None:
             node_name = existing.node_name
@@ -211,7 +222,11 @@ class DeviceStore:
             host=device.host or "",
             tcp_port=device.tcp_port or 0,
         )
-        self._write(registry, device.stable_id)
+        # Connecting to a device is the plainest statement that it should be listed, so a
+        # confirmed one stops being hidden — otherwise it would vanish from the splash the
+        # moment it proved itself, which is the opposite of what hiding is for.
+        hidden.discard(device.stable_id)
+        self._write(registry, device.stable_id, hidden)
 
     def forget(self, stable_id: str) -> bool:
         """Drop a remembered device from the registry.
@@ -230,17 +245,58 @@ class DeviceStore:
         Returns:
             ``True`` if a record was removed, ``False`` if none matched.
         """
-        registry, last = self._read()
+        registry, last, hidden = self._read()
         if stable_id not in registry:
             return False
         del registry[stable_id]
         if last == stable_id:
             last = max(registry, key=lambda k: registry[k].last_connected, default=None)
-        self._write(registry, last)
+        hidden.discard(stable_id)  # nothing left to hide it from
+        self._write(registry, last, hidden)
         return True
 
-    def _write(self, registry: dict[str, RememberedDevice], last: str | None) -> None:
-        """Persist the registry, marking ``last`` as the most recently connected device."""
+    def hidden_ids(self) -> set[str]:
+        """Return the stable ids the startup splash has been told not to list."""
+        _registry, _last, hidden = self._read()
+        return hidden
+
+    def hide(self, stable_id: str) -> None:
+        """Stop listing ``stable_id`` on the startup splash, from now until it is shown again.
+
+        Kept forever, like the registry itself — the splash is a list of what is plugged into
+        this machine, and the adapters that are always plugged in and never companions are
+        the same ones every time. Hiding an id that is not remembered is normal and fine:
+        those are exactly the rows worth hiding.
+
+        Args:
+            stable_id: The device's :attr:`DiscoveredDevice.stable_id`.
+        """
+        registry, last, hidden = self._read()
+        if stable_id in hidden:
+            return
+        hidden.add(stable_id)
+        self._write(registry, last, hidden)
+
+    def show_all(self) -> int:
+        """Un-hide every hidden device; return how many were brought back.
+
+        The single way back, deliberately: hiding is per-row and un-hiding is not, because a
+        hidden row is not on screen to press a key on. Returning the count lets the caller
+        say what it just did.
+        """
+        registry, last, hidden = self._read()
+        if not hidden:
+            return 0
+        self._write(registry, last, set())
+        return len(hidden)
+
+    def _write(
+        self,
+        registry: dict[str, RememberedDevice],
+        last: str | None,
+        hidden: set[str],
+    ) -> None:
+        """Persist the registry, its ``last`` pointer, and the splash's hidden ids."""
         self._path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
             "devices": {
@@ -259,5 +315,7 @@ class DeviceStore:
                 for stable_id, record in registry.items()
             },
             "last": last,
+            # Sorted so the file does not churn between writes over set ordering alone.
+            "hidden": sorted(hidden),
         }
         write_atomically(self._path, json.dumps(payload, indent=2))

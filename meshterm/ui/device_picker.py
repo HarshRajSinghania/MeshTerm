@@ -15,6 +15,14 @@ merely detected). Everything else follows in discovery order.
 Selecting a device runs an immediate smoke test (via the ``verify`` callback): a genuine
 MeshCore companion is remembered — forever — as confirmed and becomes the session's active
 device; anything else sends the user back to the list to choose another.
+
+A machine with things permanently plugged into it that are not companions — a debug probe, a
+programmer, a serial adapter — shows them here every single time, in front of the one device
+the user actually wants. So a row can be **hidden**: ``h`` drops the highlighted device from
+this list and remembers that (see :meth:`~meshterm.core.device_store.DeviceStore.hide`), and
+``⇧H`` brings every hidden one back. It is a *listing* choice and nothing more: a hidden
+device is still remembered, still reachable by ``--port``, and un-hides itself the moment it
+is connected to again.
 """
 
 from __future__ import annotations
@@ -35,8 +43,10 @@ from ..core.discovery import (
     serial_device,
     tcp_device,
 )
+from ..platforms import get_platform
 from .logo import load_logo
-from .tui import Choice, DeleteRequest, Separator
+from .menus import Lane, column_header, fit_cells
+from .tui import Choice, DeleteRequest, KeyRequest, Separator
 
 if TYPE_CHECKING:
     from .surface import Ui
@@ -56,6 +66,13 @@ _QUIT = object()
 #: The "add a network device" row's value. Selecting it opens a host:port prompt (TCP
 #: companions aren't discoverable, so they're named by hand) and smoke-tests the result.
 _ADD_TCP = object()
+
+#: The two shortcut tokens the splash declares, and the keys that raise them. ``h`` acts on
+#: the highlighted row; ``⇧H`` is screen-wide, because a hidden row is not there to press a
+#: key on — the way back has to be reachable from anywhere in the list.
+_HIDE = object()
+_SHOW_ALL = object()
+_SHORTCUTS = {"h": _HIDE, "H": _SHOW_ALL}
 
 #: TYPE-column glyphs marking how a device connects. Kept as module constants so the splash's
 #: look can be retuned without touching the row-building logic. ``ᛒ`` is the *Bjarkan* rune the
@@ -297,22 +314,33 @@ async def prompt_device(
         # produced by the scan, so fold those in too — after the scanned set, so a port
         # pyserial *does* enumerate keeps its richer scanned row rather than the bare profile.
         listed += _profile_serial_devices(listed, profiles)
+        # Devices the user has told this splash to stop showing (h). Read each pass, so a
+        # row hidden a moment ago is gone the next time the list is drawn — which is the
+        # only feedback hiding needs.
+        hidden = store.hidden_ids()
+        visible = [d for d in listed if d.stable_id not in hidden]
         # Preselect the remembered "last known good" device when it is currently attached/in range.
-        default = next((d for d in listed if remembered and remembered.matches(d)), None)
+        default = next((d for d in visible if remembered and remembered.matches(d)), None)
 
         # Build the rows once so the same list can be redrawn as the backdrop behind a
         # removal confirm (so it floats over the picker rather than replacing it).
-        items = _build_items(listed, remembered, registry)
+        items = _build_items(visible, remembered, registry, hidden=len(hidden))
         chosen = await ui.select_startup(
             "Select a companion device",
             items,
             default=default,
             banner=load_logo(),
+            keys=_SHORTCUTS,
+            key_hint=_shortcut_hint(len(hidden)),
         )
         # Esc (``None``) and the Quit row both mean "leave the picker" — surface that to the
         # caller as ``None`` so it can exit the program instead of continuing device-less.
         if chosen is None or chosen is _QUIT:
             return None
+
+        if isinstance(chosen, KeyRequest):
+            _run_shortcut(store, chosen)
+            continue
 
         if chosen is _ADD_TCP:
             # Name a network companion by hand and smoke-test it. On success it's returned like
@@ -342,6 +370,63 @@ async def prompt_device(
         # fold it back into the local registry for a re-render.
         store.remember(chosen, node_name=_node_name_from(info), hardware_model=_model_from(info))
         return chosen
+
+
+def _run_shortcut(store: DeviceStore, request: KeyRequest) -> None:
+    """Act on ``h`` / ``⇧H``; the redrawn list is the feedback either way.
+
+    Nothing is said about it, because there is nothing to say that the list does not: after
+    a hide the row is gone, after a show-all the hidden rows are back. A dialog acknowledging
+    a change the reader is looking straight at is the acknowledgement this app has been
+    taking out of screens, not adding to them.
+    """
+    if request.action is _SHOW_ALL:
+        store.show_all()
+    elif request.action is _HIDE and isinstance(request.value, DiscoveredDevice):
+        # Only a device row can be hidden — ``h`` on Add a network device or Quit is inert,
+        # the way Delete is on a row that never opted into removal.
+        store.hide(request.value.stable_id)
+
+
+def _shortcut_hint(hidden: int) -> Callable[[object], str]:
+    """Name the hide shortcuts that would actually do something right here, right now.
+
+    Asked of the highlighted row on every paint (see ``key_hint`` on
+    :class:`~meshterm.ui.tui.select.SelectScreen`), so the footer follows the same rule
+    ``Del remove`` does: a key is named where it acts and nowhere else.
+
+    * ``h hide`` only on a device row — on *Add a network device* or *Quit* there is nothing
+      to hide, and the key is inert there.
+    * ``⇧H show all`` only while something is actually hidden. It is screen-wide rather than
+      per-row (a hidden row is not there to press a key on), so it rides whichever row the
+      reader is standing on — but it stays off the line entirely while it would do nothing,
+      which is also what keeps the splash from ever naming a key nobody could act on.
+    """
+
+    def atoms_for(value: object) -> str:
+        atoms = []
+        if isinstance(value, DiscoveredDevice):
+            atoms.append("h hide")
+        if hidden:
+            atoms.append("⇧H show all")
+        return " · ".join(atoms)
+
+    return atoms_for
+
+
+def _hidden_note(hidden: int) -> Separator:
+    """The muted row stating what the list is *not* showing, and the key that brings it back.
+
+    Hiding is the one action here that leaves no trace: a row that is gone looks exactly like
+    a device that was never plugged in, so without this the list would quietly misrepresent
+    the machine. It also carries ``⇧H`` in the body, which matters on a console whose splash
+    border is 47 cells wide — the footer atom naming that key is among the first to be shed
+    when the sentence outgrows the box (see :func:`~meshterm.ui.tui.frame.fit_hint`), and a
+    way back that can be squeezed off the screen is not a way back.
+    """
+    it = "it" if hidden == 1 else "them"
+    device = "device" if hidden == 1 else "devices"
+    return Separator(f"  {hidden} {device} hidden — press ⇧H to show {it}")
 
 
 def _where_phrase(device: DiscoveredDevice) -> str:
@@ -541,6 +626,40 @@ async def _remove_network_device(
         store.forget(device.stable_id)
 
 
+#: The narrowest the HARDWARE column is worth keeping before the name lane has to give way.
+#: Below this a model string says nothing at all, and the lane is better spent on the name.
+_HARDWARE_MIN = 10
+
+
+def _name_width(
+    devices: list[DiscoveredDevice], registry: dict[str, RememberedDevice], other_lanes: int
+) -> int:
+    """The DEVICE lane's width: the longest name, capped so HARDWARE keeps a readable column.
+
+    A USB adapter's own product string runs to forty-odd characters ("CP2102 USB to UART
+    Bridge Controller"), and the lane used to size itself to whichever of those was longest.
+    On a 53-column console that pushed every other lane off the right-hand edge — the row
+    ended mid-port, and the HARDWARE column that says what the thing *is* was not on screen
+    at all, nor reachable by scrolling, because the pinned head was already wider than the
+    box. So the name is the lane that gives: it ellipsizes, and the columns after it survive.
+
+    Args:
+        devices: The devices being listed.
+        registry: Confirmed companions, for their remembered names.
+        other_lanes: Cells the PORT and TYPE lanes take between them.
+
+    Returns:
+        The name lane's width in cells.
+    """
+    platform = get_platform()
+    # What the splash's box gives a row: the terminal, less the gutter it floats over, less
+    # its own border and padding, less the pointer and star columns the row leads with.
+    content = platform.readable_cols - platform.dialog_margin - 4 - 4
+    fixed = other_lanes + 6  # the three two-cell gaps between the four lanes
+    longest = max(cell_len(_display_name(d, registry)) for d in devices)
+    return max(len("DEVICE"), min(longest, content - fixed - _HARDWARE_MIN))
+
+
 def _order(
     devices: list[DiscoveredDevice], registry: dict[str, RememberedDevice]
 ) -> list[DiscoveredDevice]:
@@ -560,6 +679,8 @@ def _build_items(
     devices: list[DiscoveredDevice],
     remembered: RememberedDevice | None,
     registry: dict[str, RememberedDevice],
+    *,
+    hidden: int = 0,
 ) -> list:
     """Build the aligned splash rows (a muted header + one :class:`Choice` per device).
 
@@ -569,17 +690,33 @@ def _build_items(
     vendor); columns are padded to a shared width so they align. Confirmed companions sort to
     the top (most-recent first), wear their name in white and a bright tag; the remembered
     default is starred. Trailing rows let the user name a network device by hand and quit here.
+
+    A device row's fixed lanes are pinned and its HARDWARE tail scrolls: a firmware model
+    string is as long as its vendor felt like making it, and on a narrow terminal the column
+    that says *what the thing actually is* was the one being cut off. ←→ read it to its end,
+    on the highlighted row alone, and only while that row overflows.
+
+    Args:
+        devices: The devices to list — already less anything hidden.
+        remembered: The last-connected device, starred and preselected when present.
+        registry: Every confirmed companion, keyed by stable id.
+        hidden: How many devices were left out for being hidden. Only the empty state uses
+            it, to tell "nothing is plugged in" apart from "you hid all of it".
     """
     if not devices:
         # Nothing attached or in range — but a TCP companion can still be reached by hand, so
-        # show a muted note over the same action rows rather than a dead-end.
-        note = Separator("    no companion devices detected — add a network device, or quit")
+        # show a muted note over the same action rows rather than a dead-end. When the list is
+        # empty *because everything in it is hidden*, say that instead: "nothing detected"
+        # would be a lie, and the way back is a key the reader has to be told about.
+        note = (
+            _hidden_note(hidden)
+            if hidden
+            else Separator("    no companion devices detected — add a network device, or quit")
+        )
         return [note, *_action_rows()]
     devices = _order(devices, registry)
     known: set[str] = set(registry)
 
-    name_w = max(cell_len(_display_name(d, registry)) for d in devices)
-    name_w = max(name_w, len("DEVICE"))
     # The middle column holds a serial port, a BLE address, or a TCP host:port; label it for
     # whichever kinds are present so a non-serial endpoint never sits under a bare "PORT"
     # heading (a BLE address and a network host:port both read as an "address").
@@ -593,21 +730,26 @@ def _build_items(
     # The TYPE column holds a small transport badge (at most 3 cells); its heading is wider,
     # so the four-cell "TYPE" label sets the column width and every badge pads out to it.
     type_w = len("TYPE")
+    name_w = _name_width(devices, registry, port_w + type_w)
     hardware_w = max(cell_len(_hardware_label(d, registry)) for d in devices)
     hardware_w = max(hardware_w, len("HARDWARE"))
 
-    # A muted, aligned header. The leading spaces mirror the row pointer (2) and the star
-    # column (2) so the labels sit above their columns. It leads the device rows as their
-    # landmark, so a long detection list keeps the lane names overhead as it scrolls.
+    # A muted, aligned header, resolved against the render width because it is *pinned*: it
+    # leads the device rows as their landmark, so a long detection list keeps the lane names
+    # overhead as it scrolls — and a pinned row that wraps is drawn outside the body slice,
+    # where the second line costs the list a device. The indent mirrors the row pointer (2)
+    # and the star column (2) so each label sits over its own lane.
     header = Separator(
-        "    "
-        + _pad("DEVICE", name_w)
-        + "  "
-        + _pad(port_label, port_w)
-        + "  "
-        + _pad("TYPE", type_w)
-        + "  "
-        + "HARDWARE",
+        lambda width: column_header(
+            [
+                Lane("DEVICE", name_w + 2),
+                Lane((port_label, "PORT" if has_serial else "ADDRESS"), port_w + 2),
+                Lane("TYPE", type_w + 2),
+                Lane(("HARDWARE", "HW")),
+            ],
+            width,
+            indent=4,
+        ),
         heading=True,
     )
 
@@ -620,7 +762,8 @@ def _build_items(
         row.append(" ")
         # A confirmed companion wears its name in white so it stands out from mere detections.
         row.append(
-            _pad(_display_name(device, registry), name_w), style="device.known" if is_known else ""
+            _pad(fit_cells(_display_name(device, registry), name_w), name_w),
+            style="device.known" if is_known else "",
         )
         row.append("  ")
         row.append(_pad(_where(device), port_w), style="muted")
@@ -633,6 +776,11 @@ def _build_items(
         row.append_text(cell)
         row.append(" " * max(0, type_w - cell.cell_len))
         row.append("  ")
+        # Everything up to here is the row's fixed lanes — the reader's place in the list —
+        # so it is pinned and only what follows slides under ←→ (see Choice.hscroll_from).
+        # What follows is the hardware model and its tag, which is the part that runs long:
+        # a firmware model string is as long as its vendor felt like making it.
+        head = row.cell_len
         row.append(_pad(_hardware_label(device, registry), hardware_w), style="muted")
         # Only devices we've actually confirmed are billed as MeshCore companions; a USB
         # vendor ID (or a BLE advert) is a sort hint, not a claim. A bare serial bridge earns
@@ -652,7 +800,9 @@ def _build_items(
         # Only a network device opts into Delete-to-remove: it's listed solely from its
         # remembered endpoint, so forgetting it is the only way it leaves the picker. A scanned
         # serial/BLE device would just reappear, so Delete stays inert on those rows.
-        items.append(Choice(title=row, value=device, deletable=device.is_tcp))
+        items.append(Choice(title=row, value=device, deletable=device.is_tcp, hscroll_from=head))
+    if hidden:
+        items.append(_hidden_note(hidden))
     items.extend(_action_rows())
     return items
 

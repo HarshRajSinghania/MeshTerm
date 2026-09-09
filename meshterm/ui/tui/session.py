@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -896,6 +896,8 @@ class TuiSession:
         banner: Any | None = None,
         footnote: str | None = None,
         footer_hint: str = "↑↓ move · Enter select · Esc quit",
+        keys: Mapping[str, Any] | None = None,
+        key_hint: Callable[[Any], str] | None = None,
     ) -> Any:
         """Show a chromeless select splash (banner above a content-sized box).
 
@@ -907,6 +909,11 @@ class TuiSession:
         atom joins the footer — but only while the highlight is actually on such a row, so the
         removal key advertises itself exactly where it acts (see
         :attr:`~meshterm.ui.tui.select.SelectScreen.footer_hint`).
+
+        ``keys`` hands the list bare-key shortcuts — which a splash can afford precisely
+        because it does not filter, so every letter is free (see :class:`SelectScreen`) —
+        and ``key_hint`` says what they are called on the row the highlight is standing on,
+        so they advertise themselves exactly where they act, as ``Del remove`` does.
         """
         delete_hint = (
             "Del remove" if any(isinstance(it, Choice) and it.deletable for it in items) else ""
@@ -918,10 +925,17 @@ class TuiSession:
             footer_hint=footer_hint,
             delete_hint=delete_hint,
             filterable=False,
+            keys=keys,
+            key_hint=key_hint,
         )
         screen.chrome = False
         screen.banner = banner
         screen.footnote = footnote
+        # The splash's border is its only hint line and it is narrow (47 cells on the
+        # PicoCalc), so when the sentence outgrows the box the scroll atom is the one it
+        # can spare: ←→ are already named by the move atom in front of it, while a
+        # bare-letter shortcut is unguessable and has nowhere else to be advertised here.
+        screen.spare_hint_atoms = ("←→ scroll",)
         result = await self.run_screen(screen)
         return None if result is CANCEL else result
 

@@ -33,7 +33,7 @@ from .prompt import (
     byte_counter,
 )
 from .screen import CANCEL, BusyDialog, BusyScreen, PopToMenu, Screen, ScrollScreen
-from .select import Choice, DeleteRequest, SelectScreen, Separator
+from .select import Choice, DeleteRequest, KeyRequest, SelectScreen, Separator
 from .session import TuiSession, Visit
 from .spinner import Spinner
 
@@ -46,6 +46,7 @@ __all__ = [
     "SelectScreen",
     "Choice",
     "DeleteRequest",
+    "KeyRequest",
     "Separator",
     "TextScreen",
     "ConfirmScreen",

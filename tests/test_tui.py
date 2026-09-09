@@ -1226,7 +1226,9 @@ def test_device_picker_builds_aligned_columns(tmp_path) -> None:
     captured: dict = {}
 
     class _Ui:
-        async def select_startup(self, title, items, *, default=None, banner=None, footnote=None):
+        async def select_startup(  # noqa: ANN001, ANN201, ANN003
+            self, title, items, *, default=None, banner=None, footnote=None, **_kw
+        ):
             captured["items"] = items
             captured["banner"] = banner
             captured["footnote"] = footnote
@@ -1278,7 +1280,9 @@ def test_device_picker_names_and_sorts_known_devices(tmp_path) -> None:
     captured: dict = {}
 
     class _Ui:
-        async def select_startup(self, title, items, *, default=None, banner=None, footnote=None):
+        async def select_startup(  # noqa: ANN001, ANN201, ANN003
+            self, title, items, *, default=None, banner=None, footnote=None, **_kw
+        ):
             captured["items"] = items
             return None  # skip past the smoke test
 
@@ -1315,7 +1319,9 @@ def test_device_picker_reinjects_remembered_tcp_device(tmp_path) -> None:
     captured: dict = {}
 
     class _Ui:
-        async def select_startup(self, title, items, *, default=None, banner=None, footnote=None):
+        async def select_startup(  # noqa: ANN001, ANN201, ANN003
+            self, title, items, *, default=None, banner=None, footnote=None, **_kw
+        ):
             captured["items"] = items
             return None  # skip past the smoke test
 
@@ -1346,7 +1352,9 @@ def test_device_picker_lists_configured_tcp_profile(tmp_path) -> None:
     captured: dict = {}
 
     class _Ui:
-        async def select_startup(self, title, items, *, default=None, banner=None, footnote=None):
+        async def select_startup(  # noqa: ANN001, ANN201, ANN003
+            self, title, items, *, default=None, banner=None, footnote=None, **_kw
+        ):
             captured["items"] = items
             return None  # skip past the smoke test
 
@@ -1379,7 +1387,9 @@ def test_device_picker_lists_configured_serial_profile(tmp_path) -> None:
     captured: dict = {}
 
     class _Ui:
-        async def select_startup(self, title, items, *, default=None, banner=None, footnote=None):
+        async def select_startup(  # noqa: ANN001, ANN201, ANN003
+            self, title, items, *, default=None, banner=None, footnote=None, **_kw
+        ):
             captured["items"] = items
             return None  # skip past the smoke test
 
@@ -1412,7 +1422,9 @@ def test_device_picker_serial_profile_yields_to_scanned_port(tmp_path) -> None:
     captured: dict = {}
 
     class _Ui:
-        async def select_startup(self, title, items, *, default=None, banner=None, footnote=None):
+        async def select_startup(  # noqa: ANN001, ANN201, ANN003
+            self, title, items, *, default=None, banner=None, footnote=None, **_kw
+        ):
             captured["items"] = items
             return None
 
@@ -1442,7 +1454,9 @@ def test_device_picker_profile_yields_to_remembered_endpoint(tmp_path) -> None:
     captured: dict = {}
 
     class _Ui:
-        async def select_startup(self, title, items, *, default=None, banner=None, footnote=None):
+        async def select_startup(  # noqa: ANN001, ANN201, ANN003
+            self, title, items, *, default=None, banner=None, footnote=None, **_kw
+        ):
             captured["items"] = items
             return None
 
@@ -1467,7 +1481,9 @@ def test_device_picker_adds_network_device(tmp_path) -> None:
     probed: dict = {}
 
     class _Ui:
-        async def select_startup(self, title, items, *, default=None, banner=None, footnote=None):
+        async def select_startup(  # noqa: ANN001, ANN201, ANN003
+            self, title, items, *, default=None, banner=None, footnote=None, **_kw
+        ):
             # Choose the "add a network device" action row.
             return next(it.value for it in items if isinstance(it, Choice) and it.value is _ADD_TCP)
 
@@ -1517,7 +1533,9 @@ def test_device_picker_removes_network_device_on_delete(tmp_path) -> None:
         def __init__(self) -> None:
             self._passes = 0
 
-        async def select_startup(self, title, items, *, default=None, banner=None, footnote=None):
+        async def select_startup(  # noqa: ANN001, ANN201, ANN003
+            self, title, items, *, default=None, banner=None, footnote=None, **_kw
+        ):
             names = [
                 it.label.plain
                 for it in items
@@ -1583,7 +1601,9 @@ def test_device_picker_keeps_network_device_when_removal_cancelled(tmp_path) -> 
         def __init__(self) -> None:
             self._passes = 0
 
-        async def select_startup(self, title, items, *, default=None, banner=None, footnote=None):
+        async def select_startup(  # noqa: ANN001, ANN201, ANN003
+            self, title, items, *, default=None, banner=None, footnote=None, **_kw
+        ):
             self._passes += 1
             if self._passes == 1:
                 row = next(
@@ -1662,7 +1682,9 @@ class _PickerUi:
     def __init__(self) -> None:
         self.notes: list = []
 
-    async def select_startup(self, title, items, *, default=None, banner=None, footnote=None):
+    async def select_startup(  # noqa: ANN001, ANN201, ANN003
+        self, title, items, *, default=None, banner=None, footnote=None, **_kw
+    ):
         return next(it.value for it in items if isinstance(it, Choice))
 
     async def notify_startup(self, renderable, *, title="", banner=None, footnote=None):
@@ -1707,7 +1729,9 @@ def test_device_picker_leaves_the_copyright_to_the_wordmark(tmp_path) -> None:
     footnotes: list = []
 
     class _Ui:
-        async def select_startup(self, title, items, *, default=None, banner=None, footnote=None):
+        async def select_startup(  # noqa: ANN001, ANN201, ANN003
+            self, title, items, *, default=None, banner=None, footnote=None, **_kw
+        ):
             footnotes.append(("select", footnote))
             return next(it.value for it in items if isinstance(it, Choice))
 
@@ -1748,7 +1772,9 @@ def test_device_picker_prompts_and_retries_ble_pin(tmp_path) -> None:
     errors: list = []
 
     class _Ui:
-        async def select_startup(self, title, items, *, default=None, banner=None, footnote=None):
+        async def select_startup(  # noqa: ANN001, ANN201, ANN003
+            self, title, items, *, default=None, banner=None, footnote=None, **_kw
+        ):
             return next(it.value for it in items if isinstance(it, Choice))
 
         async def notify_startup(self, renderable, *, title="", banner=None, footnote=None):
@@ -1793,7 +1819,9 @@ def test_device_picker_pin_cancel_returns_to_list(tmp_path) -> None:
     picks = iter([0, "quit"])  # pick the device once, then quit the re-opened list
 
     class _Ui:
-        async def select_startup(self, title, items, *, default=None, banner=None, footnote=None):
+        async def select_startup(  # noqa: ANN001, ANN201, ANN003
+            self, title, items, *, default=None, banner=None, footnote=None, **_kw
+        ):
             choices = [it for it in items if isinstance(it, Choice)]
             step = next(picks)
             if step == "quit":
@@ -1825,7 +1853,9 @@ def test_device_picker_quit_row_returns_none(tmp_path) -> None:
     devices = [DiscoveredDevice(port="COM5", product="Wio SX1262")]
 
     class _QuitUi:
-        async def select_startup(self, title, items, *, default=None, banner=None, footnote=None):
+        async def select_startup(  # noqa: ANN001, ANN201, ANN003
+            self, title, items, *, default=None, banner=None, footnote=None, **_kw
+        ):
             # The last choice is the Quit row; picking it signals "exit".
             quit_choice = [it for it in items if isinstance(it, Choice) and it.value is _QUIT]
             assert quit_choice, "the picker offers a Quit row"
@@ -2958,3 +2988,228 @@ def test_a_button_dialogs_hint_never_names_the_verb_of_one_button() -> None:
         assert "←→" in hint, (
             f"{where}:{line} hides ←→, the key that moves the highlight Enter commits"
         )
+
+
+# --- hiding devices on the splash --------------------------------------------
+
+
+def _hide_store(tmp_path):  # noqa: ANN001, ANN202
+    """A device registry on a scratch file."""
+    from meshterm.core.device_store import DeviceStore
+
+    return DeviceStore(tmp_path / "devices.json")
+
+
+def test_hidden_devices_survive_the_session_that_hid_them(tmp_path) -> None:  # noqa: ANN001
+    """Hiding is written to the registry file, so a fresh store still knows about it."""
+    store = _hide_store(tmp_path)
+    assert store.hidden_ids() == set()
+
+    store.hide("usb-0001")
+    store.hide("usb-0002")
+    store.hide("usb-0001")  # idempotent
+    assert _hide_store(tmp_path).hidden_ids() == {"usb-0001", "usb-0002"}
+
+    assert _hide_store(tmp_path).show_all() == 2
+    assert _hide_store(tmp_path).hidden_ids() == set()
+    assert _hide_store(tmp_path).show_all() == 0  # nothing left to bring back
+
+
+def test_hiding_leaves_the_registry_and_its_default_alone(tmp_path) -> None:  # noqa: ANN001
+    """A hidden device is still remembered, still the default, still reachable by name.
+
+    Hiding is a *listing* choice on one screen. Everything that resolves a device without
+    the splash — ``--port``, a profile, the reconnect — must not be able to tell.
+    """
+    from meshterm.core.discovery import serial_device
+
+    store = _hide_store(tmp_path)
+    device = serial_device("COM7", name="A Radio")
+    store.remember(device, node_name="Wardriver")
+    store.hide(device.stable_id)
+
+    fresh = _hide_store(tmp_path)
+    assert fresh.hidden_ids() == {device.stable_id}
+    assert fresh.is_known(device)
+    remembered = fresh.load()
+    assert remembered is not None and remembered.node_name == "Wardriver"
+
+
+def test_connecting_to_a_hidden_device_shows_it_again(tmp_path) -> None:  # noqa: ANN001
+    """Confirming a device is the plainest statement that it belongs on the list."""
+    from meshterm.core.discovery import serial_device
+
+    store = _hide_store(tmp_path)
+    device = serial_device("COM7", name="A Radio")
+    store.hide(device.stable_id)
+    store.remember(device, node_name="Wardriver")
+    assert store.hidden_ids() == set()
+
+
+async def test_the_splash_hides_the_highlighted_device_and_redraws(tmp_path) -> None:  # noqa: ANN001
+    """Pressing h drops the row and remembers it; the redrawn list is the feedback."""
+    from meshterm.core.discovery import serial_device
+    from meshterm.ui.device_picker import prompt_device
+    from meshterm.ui.tui import Choice, KeyRequest
+
+    probe = serial_device("COM3", name="A Debug Probe")
+    radio = serial_device("COM7", name="A Radio")
+    store = _hide_store(tmp_path)
+    drawn: list[list] = []
+
+    class _Ui:
+        """Presses h on the probe, then picks whatever is left."""
+
+        def __init__(self) -> None:
+            self.round = 0
+
+        async def select_startup(self, title, items, **kw):  # noqa: ANN001, ANN003, ANN201
+            drawn.append([it for it in items if isinstance(it, Choice)])
+            self.round += 1
+            if self.round == 1:
+                return KeyRequest(kw["keys"]["h"], probe)
+            return radio
+
+        async def busy_startup(self, message, coro, **kw):  # noqa: ANN001, ANN003, ANN201
+            return await coro
+
+    async def verify(device, pin):  # noqa: ANN001, ANN202
+        return {"name": "Wardriver"}
+
+    chosen = await prompt_device(_Ui(), [probe, radio], store, verify)
+    assert chosen is radio
+    assert store.hidden_ids() == {probe.stable_id}
+    # The first pass offered both devices; the second offered only the one left.
+    assert probe in [row.value for row in drawn[0]]
+    assert probe not in [row.value for row in drawn[1]]
+
+
+def test_the_splash_says_so_when_it_is_empty_only_because_of_hiding() -> None:
+    """ "Nothing detected" would be a lie, and the way back is a key nobody could guess."""
+    from meshterm.ui.device_picker import _build_items
+
+    lines = [str(it.title) for it in _build_items([], None, {}, hidden=2)]
+    assert any("2 devices hidden" in line and "⇧H" in line for line in lines)
+
+    detected = [str(it.title) for it in _build_items([], None, {}, hidden=0)]
+    assert any("no companion devices detected" in line for line in detected)
+
+
+def test_the_splash_names_a_shortcut_only_where_it_would_act() -> None:
+    """Named on a device row only, and ⇧H only while hidden — the Del remove rule."""
+    from meshterm.core.discovery import serial_device
+    from meshterm.ui.device_picker import _ADD_TCP, _QUIT, _shortcut_hint
+
+    radio = serial_device("COM7", name="A Radio")
+
+    nothing_hidden = _shortcut_hint(0)
+    assert nothing_hidden(radio) == "h hide"  # no way back is offered; there is nothing back
+    assert nothing_hidden(_ADD_TCP) == ""  # nothing to hide on the action rows
+    assert nothing_hidden(_QUIT) == ""
+    assert nothing_hidden(None) == ""  # an empty list highlights nothing at all
+
+    with_hidden = _shortcut_hint(2)
+    assert with_hidden(radio) == "h hide · ⇧H show all"
+    # ⇧H is screen-wide, so it rides whatever row the reader happens to be standing on.
+    assert with_hidden(_QUIT) == "⇧H show all"
+
+
+def test_a_hint_too_long_for_its_box_drops_atoms_rather_than_its_tail() -> None:
+    """Cutting the line at the edge would take Esc, which is the one atom that must survive."""
+    from meshterm.ui.tui.frame import fit_hint
+
+    full = "↑↓ move · ←→ scroll · Enter select · h hide · ⇧H show all · Esc quit"
+    assert fit_hint(full, 100) == full  # room for everything: untouched
+
+    # Dropped from the right, in front of Esc — never Esc itself.
+    assert fit_hint(full, 56) == "↑↓ move · ←→ scroll · Enter select · h hide · Esc quit"
+    assert fit_hint(full, 45) == "↑↓ move · ←→ scroll · Enter select · Esc quit"
+    assert fit_hint(full, 20).endswith("Esc quit")
+
+    # ...unless the caller names an atom it can spare first: the scroll keys are already
+    # named by the move atom, while a bare letter is unguessable.
+    spared = fit_hint(full, 56, shed_first=("←→ scroll",))
+    assert spared == "↑↓ move · Enter select · h hide · ⇧H show all · Esc quit"
+
+
+def test_the_splash_scrolls_the_hardware_column_of_the_row_it_is_on() -> None:
+    """←→ read a long firmware model to its end; the lanes in front of it stay put."""
+    from meshterm.core.device_store import RememberedDevice
+    from meshterm.core.discovery import serial_device
+    from meshterm.platforms import PICOCALC, REGULAR, set_platform
+    from meshterm.ui.device_picker import _build_items
+    from meshterm.ui.tui import Choice, SelectScreen
+
+    radio = serial_device("COM7", name="Wardriver")
+    registry = {
+        radio.stable_id: RememberedDevice(
+            stable_id=radio.stable_id,
+            port="COM7",
+            label="COM7",
+            last_connected="2026-09-01T00:00:00+00:00",
+            node_name="Wardriver",
+            hardware_model="Seeed Wio Tracker 1110 Development Kit",
+        )
+    }
+    try:
+        for platform, width in ((REGULAR, 66), (PICOCALC, 47)):
+            set_platform(platform)
+            items = _build_items([radio], registry[radio.stable_id], registry)
+            screen = SelectScreen("Select a companion device", items, filterable=False)
+            row = next(it for it in items if isinstance(it, Choice))
+            assert row.hscroll_from > 0  # the fixed lanes are pinned...
+            assert row.hscroll_from < width  # ...and leave something to scroll into
+
+            before = _plain(screen.render_body(width)[1])
+            for _ in range(3):
+                screen.handle("right")
+            after = _plain(screen.render_body(width)[1])
+            assert before != after, platform.name
+            assert after.startswith(before[: row.hscroll_from - 4]), "the lanes moved"
+    finally:
+        set_platform(REGULAR)
+
+
+def test_the_splash_hint_stays_inside_the_box_it_is_drawn_in() -> None:
+    """The chromeless splash keeps its hint in its own border, on both platforms.
+
+    The border is the terminal less the gutter the box floats over — not the full readable
+    width — and on the PicoCalc that is 47 cells, which is what makes every atom here
+    conditional rather than merely tidy.
+    """
+    from rich.cells import cell_len
+
+    from meshterm.core.discovery import serial_device
+    from meshterm.platforms import PICOCALC, REGULAR
+    from meshterm.ui.device_picker import _shortcut_hint
+    from meshterm.ui.tui.select import _splice_hint
+
+    base = "↑↓ move · Enter select · Esc quit"
+    radio = serial_device("COM7", name="A Radio")
+    common = _splice_hint(base, _shortcut_hint(0)(radio))
+    for platform in (REGULAR, PICOCALC):
+        budget = platform.readable_cols - platform.dialog_margin - 2
+        assert cell_len(common) <= budget, (platform.name, common)
+
+
+def test_a_shortcut_is_only_honoured_where_a_letter_is_free() -> None:
+    """A filtering list spends its letters on the query, so it declares no shortcuts.
+
+    Otherwise a device named "Homestead" could not be typed on a list that had claimed h.
+    """
+    from meshterm.ui.tui import Choice, KeyRequest
+    from meshterm.ui.tui.select import SelectScreen
+
+    token = object()
+    fixed = SelectScreen("fixed", [Choice("a row", 1)], filterable=False, keys={"h": token})
+    fixed.future = None
+    resolved: list = []
+    fixed.resolve = lambda value: resolved.append(value)  # type: ignore[method-assign]
+    fixed.handle("text", "h")
+    assert resolved == [KeyRequest(token, 1)]
+
+    filtering = SelectScreen("filtering", [Choice("Homestead", 1)], keys={"h": token})
+    filtering.resolve = lambda value: resolved.append(value)  # type: ignore[method-assign]
+    filtering.handle("text", "h")
+    assert len(resolved) == 1  # nothing new resolved
+    assert filtering._filter == "h"  # the letter went to the query, where it belongs

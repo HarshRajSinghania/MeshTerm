@@ -17,7 +17,7 @@ only), so :class:`PlainUi` leaves them unsupported.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -181,8 +181,17 @@ class Ui:
         default: Any = None,
         banner: Any = None,
         footnote: str | None = None,
+        footer_hint: str | None = None,
+        keys: Mapping[str, Any] | None = None,
+        key_hint: Callable[[Any], str] | None = None,
     ) -> Any:
-        """Choose one item on a chromeless startup splash; ``None`` if skipped."""
+        """Choose one item on a chromeless startup splash; ``None`` if skipped.
+
+        ``keys`` declares bare-key shortcuts the splash answers, resolving with a
+        :class:`~meshterm.ui.tui.select.KeyRequest` (the picker's hide/show-all pair), and
+        ``key_hint`` names them per highlighted row so the footer only advertises a key
+        where it would act. ``footer_hint`` replaces the base sentence.
+        """
         raise NotImplementedError
 
     async def confirm_startup(
@@ -461,6 +470,9 @@ class PlainUi(Ui):
         default: Any = None,
         banner: Any = None,
         footnote: str | None = None,
+        footer_hint: str | None = None,
+        keys: Mapping[str, Any] | None = None,
+        key_hint: Callable[[Any], str] | None = None,
     ) -> Any:
         """Unsupported in scripted CLI mode."""
         raise self._no_prompt()
@@ -719,10 +731,20 @@ class TuiUi(Ui):
         default: Any = None,
         banner: Any = None,
         footnote: str | None = None,
+        footer_hint: str | None = None,
+        keys: Mapping[str, Any] | None = None,
+        key_hint: Callable[[Any], str] | None = None,
     ) -> Any:
         """Delegate to the session's chromeless startup select splash."""
         return await self.session.select_startup(
-            title, items, default=default, banner=banner, footnote=footnote
+            title,
+            items,
+            default=default,
+            banner=banner,
+            footnote=footnote,
+            keys=keys,
+            key_hint=key_hint,
+            **({} if footer_hint is None else {"footer_hint": footer_hint}),
         )
 
     async def confirm_startup(

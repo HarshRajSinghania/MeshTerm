@@ -9,7 +9,7 @@ arbitrary objects, so the same screen drives the main menu (tool names), the dev
 from __future__ import annotations
 
 import inspect
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -117,6 +117,25 @@ class DeleteRequest:
     """
 
     value: Any
+
+
+@dataclass
+class KeyRequest:
+    """A shortcut key pressed on a select list, with the row it was pressed on.
+
+    The sibling of :class:`DeleteRequest`, for a list that declares its own bare-key
+    shortcuts (see :class:`SelectScreen`'s ``keys``): the list resolves with this rather
+    than with a row's value, so the caller can tell "the user pressed *this key*" apart
+    from "the user chose this row" and act accordingly before re-opening the list.
+
+    Attributes:
+        action: The token the pressed key was declared for.
+        value: The :attr:`Choice.value` of the highlighted row, or ``None`` where the list
+            had no rows to highlight. A screen-wide shortcut simply ignores it.
+    """
+
+    action: Any
+    value: Any = None
 
 
 def _plain(label: str | Text) -> str:
@@ -300,6 +319,8 @@ class SelectScreen(Screen):
         filterable: bool = True,
         hscroll: bool = False,
         hscroll_hint: str = "←→ scroll",
+        keys: Mapping[str, Any] | None = None,
+        key_hint: Callable[[Any], str] | None = None,
     ) -> None:
         """Build a select screen.
 
@@ -331,6 +352,22 @@ class SelectScreen(Screen):
                 the move atom) while ``hscroll`` is on and the highlighted row overflows —
                 so ←→ advertises itself exactly when it would do something. Ignored when
                 ``hscroll`` is off.
+            keys: Bare-key shortcuts this list answers, mapping the character pressed to a
+                token naming what it means — the idiom
+                :meth:`~meshterm.ui.tui.session.TuiSession.button_dialog` already uses for a
+                dialog's y/n accelerators. The list resolves with a :class:`KeyRequest`
+                carrying the token and the highlighted row's value, so the caller can act
+                and re-open. **Only honoured on a non-filterable list**, where a bare letter
+                has nothing else to do: on a filtering list every letter belongs to the
+                query, and a shortcut stealing one would be a key that silently stops the
+                reader typing a name.
+            key_hint: What those shortcuts are called in the footer, asked of the *highlighted
+                row's value* on every paint and spliced in just before the trailing ``Esc``
+                clause. Return one ` · `-joined run of atoms, or ``""`` for a row none of the
+                shortcuts would touch — the same rule ``delete_hint`` follows, and for the
+                same reason: the footer must never name a key that would do nothing where the
+                reader is standing. The policy lives with the caller because only it knows
+                which rows its keys mean anything on.
         """
         super().__init__()
         self.title = title
@@ -342,6 +379,10 @@ class SelectScreen(Screen):
         # wherever it is opened, ``ctx.ui.select`` included.
         self._hscroll = hscroll or any(getattr(item, "hscroll_from", 0) > 0 for item in items)
         self._hscroll_hint = hscroll_hint
+        # Shortcuts are the non-filterable list's compensation for having no filter: the
+        # letters are free, so a list may spend them (see the ``keys`` argument).
+        self._keys: dict[str, Any] = {} if filterable else dict(keys or {})
+        self._key_hint = key_hint
         self._hshift = 0
         self._last_width = 0  # the last render width, for the footer's overflow probe
         if footer_hint is None:
@@ -502,6 +543,8 @@ class SelectScreen(Screen):
 
         * the :attr:`_delete_hint` atom, spliced just before the trailing ``Esc`` clause
           (see :func:`_splice_hint`) while the highlighted row is :attr:`Choice.deletable`;
+        * whatever ``key_hint`` names for the highlighted row's value — the shortcut keys
+          (``keys``) that would act on *it*, spliced the same way;
         * the :attr:`_hscroll_hint` atom (``hscroll`` lists only), inserted right after the
           move atom (see :func:`_insert_atom`) while the highlighted row overflows the width
           — a short row scrolls nowhere, so ←→ stays hidden on it.
@@ -513,6 +556,10 @@ class SelectScreen(Screen):
         current = self._current_choice()
         if self._delete_hint and current is not None and current.deletable:
             base = _splice_hint(base, self._delete_hint)
+        if self._key_hint is not None:
+            atoms = self._key_hint(current.value if current is not None else None)
+            if atoms:
+                base = _splice_hint(base, atoms)
         if self._hscroll and self._hscroll_hint and self._selected_overflows():
             base = _insert_atom(base, self._hscroll_hint)
         if self._filter:
@@ -858,6 +905,12 @@ class SelectScreen(Screen):
             self._filter = self._filter[:-1]
             self._index = 0
             self._hshift = 0
+        elif action == "text" and data in self._keys:
+            # A declared shortcut resolves the list with what was pressed and where the
+            # highlight was standing; only a non-filterable list can declare any.
+            self.resolve(
+                KeyRequest(self._keys[data], choices[self._index].value if choices else None)
+            )
         elif action == "text" and self._filterable and data.isprintable():
             # A leading space is ignored (the filter never begins with whitespace); a
             # trailing one is dropped when matching (see _rows), so spaces count only

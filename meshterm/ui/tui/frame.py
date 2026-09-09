@@ -376,6 +376,48 @@ def _banner_lines(banner: Sequence[str], cols: int) -> list[str]:
     return _center(padded, cols)
 
 
+def fit_hint(hint: str, width: int, *, shed_first: Sequence[str] = ()) -> str:
+    """Drop ``·`` atoms from a footer hint, right to left, until it fits ``width``.
+
+    The chromeless splash has one row of border for its hint and a box no wider than the
+    terminal less its gutter — 47 cells on the PicoCalc — while the hint itself grows as the
+    highlight moves onto a row with more keys to offer. Cutting the line at the edge takes
+    the *end* of it, and the end is ``Esc``: the one atom that must survive, being the only
+    way out. So atoms are dropped instead, from the right and never the last one, which
+    spends the cells on the keys nearest the front of the sentence — the ones that move and
+    commit — and gives up the optional ones a screen advertises elsewhere.
+
+    ``shed_first`` overrides that order for atoms whose key the reader would find anyway. A
+    scroll atom is the example: ←→ are the keys already named by the leading move atom, so
+    trying them costs nothing and teaches the rest, while a bare-letter shortcut is
+    unguessable and has nowhere else to be advertised on a chromeless splash. Given the
+    choice between those two, the sentence keeps the letter.
+
+    Args:
+        hint: The composed hint sentence.
+        width: Cells available.
+        shed_first: Atoms to drop before any others, in the order given.
+
+    Returns:
+        The hint, or as much of its head plus its final atom as fits (ellipsized only if
+        even those cannot).
+    """
+    if cell_len(hint) <= width:
+        return hint
+    atoms = hint.split(" · ")
+    for spare in shed_first:
+        if cell_len(" · ".join(atoms)) <= width:
+            break
+        if spare in atoms:
+            atoms.remove(spare)
+    while len(atoms) > 2 and cell_len(" · ".join(atoms)) > width:
+        del atoms[-2]  # the last atom is Esc's; drop what sits in front of it
+    fitted = " · ".join(atoms)
+    if cell_len(fitted) <= width:
+        return fitted
+    return crop_cells(Text(fitted), 0, max(1, width - 1)).plain + "…"
+
+
 def compose_startup(screen: Screen, cols: int, rows: int) -> str:
     """Compose a chromeless splash: a centered wordmark above a content-sized panel.
 
@@ -416,6 +458,10 @@ def compose_startup(screen: Screen, cols: int, rows: int) -> str:
     sizing_footer = getattr(screen, "sizing_footer_hint", screen.footer_hint)
     inner_w = max(measured, cell_len(screen.title), cell_len(sizing_footer))
     inner_w = max(10, min(inner_w, cols - 6))
+    # The hint is fitted to the box rather than cut off by it (see :func:`fit_hint`).
+    hint_text = fit_hint(
+        screen.footer_hint, inner_w, shed_first=getattr(screen, "spare_hint_atoms", ())
+    )
 
     # The probe render is the answer whenever it was already made at the width we settled
     # on — the common case, since a body narrower than the probe *is* what set inner_w.
@@ -455,10 +501,10 @@ def compose_startup(screen: Screen, cols: int, rows: int) -> str:
 
     body = Text.from_ansi("\n".join(visible))
     hint = hint_style("accent")
-    subtitle = f"[{hint}]{screen.footer_hint}[/]"
+    subtitle = f"[{hint}]{hint_text}[/]"
     if more_above or more_below:
         arrow = ("↑" if more_above else " ") + ("↓" if more_below else " ")
-        subtitle = f"[{hint}]{arrow} · {screen.footer_hint}[/]"
+        subtitle = f"[{hint}]{arrow} · {fit_hint(hint_text, inner_w - 5)}[/]"
     panel = Panel(
         body,
         title=f"[{title_style('accent')}]{screen.title}[/]" if screen.title else None,
