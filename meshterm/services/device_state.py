@@ -277,7 +277,9 @@ class DeviceState:
         The underlying probe (:func:`~meshterm.ui.channels.read_channel_slots`) walks every
         slot index on the firmware, which is one of the slowest reads on a screen open — so it
         is well worth reading once. It is best-effort itself (an unsupported firmware yields an
-        empty list rather than raising), and that result is cached as-is.
+        empty list rather than raising), but a probe that ended early because a *read failed*
+        is answered and then dropped rather than cached — see :func:`~meshterm.ui.channels.
+        probe_channel_slots` for why a short list is not a layout.
 
         Returns:
             One :class:`~meshterm.ui.channels.ChannelSlot` per configured slot, in index order.
@@ -285,10 +287,16 @@ class DeviceState:
         if self._channels is None:
             async with self._channels_lock:
                 if self._channels is None:
-                    from ..ui.channels import read_channel_slots
+                    from ..ui.channels import probe_channel_slots
 
                     device = await self._ctx.device()
-                    self._channels = await read_channel_slots(device)
+                    slots, complete = await probe_channel_slots(device)
+                    if complete:
+                        self._channels = slots
+                    # An incomplete probe is answered but not kept: one timed-out read used
+                    # to poison the whole session, and the shortfall does not announce
+                    # itself — an empty result reads exactly like a device with no channels.
+                    return slots
         return self._channels
 
     async def channel_capacity(self) -> int:

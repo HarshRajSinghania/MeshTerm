@@ -19,7 +19,7 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING
 
-from ..core.channels import CHANNEL_SLOT_PROBE_CAP, channel_identity
+from ..core.channels import channel_identity
 from ..core.connection import Unsubscribe
 from ..core.events import EventKind, MeshEvent
 from ..core.models import (
@@ -128,20 +128,16 @@ class ChatService:
         The map is what lets an inbound message (which carries only a slot index) be recorded
         against its channel's intrinsic identity. It is rebuilt wholesale so a reordered,
         renamed, re-keyed, or cleared slot is reflected accurately.
+
+        Read through the session cache, which is the same slot probe the channel manager is
+        about to make anyway — so a channel edit costs *one* walk of the device rather than
+        this one plus the manager's. Its own walk was also unbounded where the shared probe
+        is not: it skipped empty slots and kept going to the 64-slot cap, so on firmware that
+        never rejects an index every single edit paid 64 round-trips before the screen could
+        redraw. That is most of what "applying a change takes a while" was.
         """
-        device = await self._ctx.device()
-        ids: dict[int, str] = {}
-        for idx in range(CHANNEL_SLOT_PROBE_CAP):
-            try:
-                payload = await device.get_channel(idx)
-            except Exception:  # noqa: BLE001 - firmware may not support channel reads
-                break
-            if not payload:
-                continue  # an empty slot; keep scanning (slots can be non-contiguous)
-            name = str(payload.get("channel_name") or "")
-            secret = bytes(payload.get("channel_secret") or b"\x00" * 16)
-            ids[idx] = channel_identity(name, secret)
-        self._channel_ids = ids
+        slots = await self._ctx.devstate.channel_slots()
+        self._channel_ids = {slot.idx: channel_identity(slot.name, slot.secret) for slot in slots}
 
     async def channel_id_for(self, idx: int) -> str:
         """Resolve a channel slot index to its intrinsic identity, reading the slot fresh.

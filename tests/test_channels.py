@@ -945,3 +945,92 @@ async def test_a_busy_visit_says_nothing_on_the_way_out(ctx: AppContext) -> None
         ui.surface.note(result.message)
     await ui.surface.present(title="Channels")
     assert ui.session_spy.shown == []  # nothing shown, in either shape
+
+
+class _FlakyDevice:
+    """A device whose channel reads stop working partway through the probe.
+
+    ``fail_from`` is the first slot index that raises, and ``error`` is what it raises —
+    the two endings the probe has to tell apart: a firmware refusing a slot it does not
+    have (a plain rejection) and a link that stopped answering (a timeout).
+    """
+
+    def __init__(self, names: list[str], *, fail_from: int, error: BaseException) -> None:
+        self._names = names
+        self._fail_from = fail_from
+        self._error = error
+        self.written: list[tuple[int, str]] = []
+
+    async def get_channel(self, idx: int):  # noqa: ANN201
+        if idx >= self._fail_from:
+            raise self._error
+        if idx < len(self._names):
+            return {"channel_name": self._names[idx], "channel_secret": bytes(range(16))}
+        return None
+
+    async def set_channel(self, idx: int, name: str, secret) -> None:  # noqa: ANN001
+        self.written.append((idx, name))
+
+
+async def test_a_probe_cut_short_by_a_failed_read_is_not_a_layout() -> None:
+    """A timeout mid-probe reports incomplete; a refused slot reports a finished list.
+
+    They look identical in the returned list — a short one either way — which is what let
+    one timed-out read stand in for "this device has no channels".
+    """
+    from meshterm.core.connection import DeviceCommandError
+    from meshterm.ui.channels import probe_channel_slots
+
+    dropped = _FlakyDevice(["Alpha", "Beta"], fail_from=1, error=DeviceCommandError("no reply"))
+    slots, complete = await probe_channel_slots(dropped)
+    assert [s.name for s in slots] == ["Alpha"] and complete is False
+
+    at_the_end = _FlakyDevice(["Alpha", "Beta"], fail_from=2, error=RuntimeError("out of range"))
+    slots, complete = await probe_channel_slots(at_the_end)
+    assert [s.name for s in slots] == ["Alpha", "Beta"] and complete is True
+
+
+async def test_an_incomplete_probe_is_answered_but_never_cached(ctx: AppContext) -> None:
+    """One bad read must not read as "no channels" for the rest of the session."""
+    from meshterm.core.connection import DeviceCommandError
+
+    device = await ctx.device()
+    await device.set_channel(0, "Alpha", bytes(range(16)))
+
+    calls = {"n": 0}
+    real = device.get_channel
+
+    async def flaky(idx: int):  # noqa: ANN202
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise DeviceCommandError("timed out")
+        return await real(idx)
+
+    device.get_channel = flaky  # type: ignore[method-assign]
+    assert await ctx.devstate.channel_slots() == []  # the failed read, answered honestly
+    # ...and not kept: the next ask re-probes and finds the channel that was there all along.
+    assert [s.name for s in await ctx.devstate.channel_slots()] == ["Alpha"]
+
+
+async def test_a_slot_is_confirmed_empty_before_a_channel_is_written_over_it(
+    ctx: AppContext,
+) -> None:
+    """A slot missing from a short list must not be handed out as free.
+
+    The dangerous version of the bug above: a probe that stopped at slot 1 leaves slot 1
+    looking free, and every add flow writes to the slot it is given without asking.
+    """
+    from meshterm.ui.channels import _pick_free_slot
+
+    device = await ctx.device()
+    await device.set_channel(0, "Alpha", bytes(range(16)))
+    await device.set_channel(1, "Beta", bytes(range(16, 32)))
+
+    ui = _ScriptedUi(selects=[], texts=[], dialogs=[])
+    ctx.ui = ui
+    truncated = [ChannelSlot(idx=0, name="Alpha", secret=bytes(range(16)))]  # slot 1 unseen
+    assert await _pick_free_slot(ctx, device, truncated, 8) is None  # refused, not slot 1
+
+    # With the list telling the truth, the next genuinely free slot is handed out.
+    full_list = list(await read_channel_slots(device))
+    assert await _pick_free_slot(ctx, device, full_list, 8) == 2

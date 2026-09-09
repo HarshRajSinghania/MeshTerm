@@ -207,14 +207,16 @@ async def manage_channels(ctx: AppContext) -> int:
                 a count (see :func:`write_channel`, which drops the cache as it writes).
         """
         async with ctx.ui.busy_dialog("reading channels…", title="Channels"):
+            title_and_items = await reload()
             if moved:
                 # Inbound messages carry only a slot index, which the chat service maps to a
                 # channel identity through a cache keyed by slot; refresh it now so a message
                 # on a reused/re-keyed slot is filed under the channel that's actually there
                 # and not the one that used to be — otherwise its transcript surfaces in the
-                # wrong chat.
+                # wrong chat. After ``reload``, deliberately: it reads the same cached probe,
+                # so this way round the pair costs one walk of the device instead of two.
                 await _refresh_chat_channels(ctx)
-            return await reload()
+            return title_and_items
 
     async def handle(choice: object) -> bool:
         """Dispatch one menu choice (over the still-pushed list); ``False`` exits."""
@@ -342,13 +344,43 @@ async def read_channel_slots(device: Device) -> list[ChannelSlot]:
     Returns:
         One :class:`ChannelSlot` per configured slot (an empty slot is skipped).
     """
+    slots, _complete = await probe_channel_slots(device)
+    return slots
+
+
+async def probe_channel_slots(device: Device) -> tuple[list[ChannelSlot], bool]:
+    """The probe behind :func:`read_channel_slots`, reporting whether it *finished*.
+
+    The scan stops for two very different reasons and the plain list cannot tell them
+    apart. Off the end of the configured slots (a rejected index, or a long enough run of
+    empty ones) the answer is complete and worth keeping. A read that simply *failed* —
+    a timeout, a link hiccup, and then every subsequent read failing too because the
+    firmware's reply no longer matches the slot asked for — ends the scan early with
+    whatever it happened to have, which is not the device's layout and must not be cached
+    or acted on as if it were: an empty one reads as "no channels configured", and a
+    truncated one makes the next free slot look free when a channel is sitting in it.
+
+    The two endings raise different things, and that is what separates them: the firmware
+    *answering* "no such slot" surfaces as a plain rejection, while a link that stopped
+    answering surfaces as a timeout, a :class:`~meshterm.core.connection.DeviceCommandError`
+    (whose whole subject is a companion that did not reply in time), or one of the dropped-
+    link signatures :func:`~meshterm.core.connection.is_connection_lost` knows. Only the
+    first ending is a layout. A read that fails for some fourth reason is treated as a
+    rejection, which is the safe way round: the list is used but the cache re-probes.
+
+    Args:
+        device: The connected device to query.
+
+    Returns:
+        The slots read, and whether the scan ran to a clean end.
+    """
     slots: list[ChannelSlot] = []
     empty_run = 0
     for idx in range(CHANNEL_SLOT_PROBE_CAP):
         try:
             payload = await device.get_channel(idx)
-        except Exception:  # noqa: BLE001 - firmware may not support channel reads
-            break
+        except Exception as exc:  # noqa: BLE001 - a rejected index, or a read that failed
+            return slots, not _read_failed(exc)
         if payload and payload.get("channel_name"):
             empty_run = 0
             slots.append(
@@ -362,7 +394,19 @@ async def read_channel_slots(device: Device) -> list[ChannelSlot]:
             empty_run += 1
             if empty_run >= CHANNEL_SLOT_EMPTY_RUN:
                 break  # off the end of a never-rejecting firmware; nothing more to find
-    return slots
+    return slots, True
+
+
+def _read_failed(exc: BaseException) -> bool:
+    """Whether ``exc`` means the *read* failed, rather than the firmware refusing a slot.
+
+    A refusal is the probe's ordinary ending and leaves a complete list behind it. A
+    failure leaves a short one that looks exactly the same — which is the whole reason
+    this distinction has to be drawn somewhere (see :func:`probe_channel_slots`).
+    """
+    from ..core.connection import DeviceCommandError, is_connection_lost
+
+    return isinstance(exc, (TimeoutError, DeviceCommandError)) or is_connection_lost(exc)
 
 
 def _next_free_slot(slots: list[ChannelSlot], capacity: int) -> int | None:
@@ -819,7 +863,7 @@ async def _create_private(
     ctx: AppContext, device: Device, slots: list[ChannelSlot], capacity: int
 ) -> int:
     """Create a private channel with a fresh random key on the next free slot."""
-    idx = await _pick_free_slot(ctx, slots, capacity)
+    idx = await _pick_free_slot(ctx, device, slots, capacity)
     if idx is None:
         return 0
     name = await ctx.ui.text("Channel name:", validate=_nonblank)
@@ -835,7 +879,7 @@ async def _add_default_public(
     ctx: AppContext, device: Device, slots: list[ChannelSlot], capacity: int
 ) -> int:
     """Add MeshCore's built-in fixed-key ``Public`` channel on the next free slot."""
-    idx = await _pick_free_slot(ctx, slots, capacity)
+    idx = await _pick_free_slot(ctx, device, slots, capacity)
     if idx is None:
         return 0
     await write_channel(ctx, device, idx, "Public", DEFAULT_PUBLIC_SECRET)
@@ -846,7 +890,7 @@ async def _add_public(
     ctx: AppContext, device: Device, slots: list[ChannelSlot], capacity: int
 ) -> int:
     """Create a public channel whose key is derived from its (``#``-prefixed) name."""
-    idx = await _pick_free_slot(ctx, slots, capacity)
+    idx = await _pick_free_slot(ctx, device, slots, capacity)
     if idx is None:
         return 0
     raw = await ctx.ui.text(
@@ -874,7 +918,7 @@ async def _join_with_key(
     steps back to the name with what was typed still in the field, rather than throwing
     both away — a 32-hex key is a long thing to mistype.
     """
-    idx = await _pick_free_slot(ctx, slots, capacity)
+    idx = await _pick_free_slot(ctx, device, slots, capacity)
     if idx is None:
         return 0
     answers = await run_steps(
@@ -899,7 +943,7 @@ async def _import_link(
     ctx: AppContext, device: Device, slots: list[ChannelSlot], capacity: int
 ) -> int:
     """Import a channel from a pasted ``meshcore://channel/add`` link."""
-    idx = await _pick_free_slot(ctx, slots, capacity)
+    idx = await _pick_free_slot(ctx, device, slots, capacity)
     if idx is None:
         return 0
     url = await ctx.ui.text("Paste a meshcore:// channel link:", validate=_valid_link)
@@ -907,10 +951,7 @@ async def _import_link(
         return 0
     parsed = parse_share_url(url)
     if parsed is None:  # pragma: no cover - guarded by the validator
-        # Shown now, not banked: an error is about the action in front of the reader, and
-        # the only thing this one leaves behind is a slot that stayed empty.
-        ctx.ui.note("[err]not a valid channel link[/err]")
-        await ctx.ui.present(title="Channels")
+        await _say(ctx, "not a valid channel link", "err")
         return 0
     name, secret = parsed
     await write_channel(ctx, device, idx, name, secret)
@@ -1082,17 +1123,57 @@ async def _open_chat(ctx: AppContext, slot: ChannelSlot) -> None:
     await open_chat(ctx, slot.conversation)
 
 
-async def _pick_free_slot(ctx: AppContext, slots: list[ChannelSlot], capacity: int) -> int | None:
-    """Return the next free slot, warning (and returning ``None``) if all are full."""
+async def _pick_free_slot(
+    ctx: AppContext, device: Device, slots: list[ChannelSlot], capacity: int
+) -> int | None:
+    """Return a slot that is *confirmed* empty, or ``None`` (having said why) if there is none.
+
+    The list this picks from is a snapshot, and a snapshot can be short of the truth: a slot
+    probe that failed partway returns the slots it managed to read, so a slot holding a
+    channel the probe never reached looks free. Every add flow lands here, and what follows
+    it is an unconditional write — so the slot is read back one more time before it is handed
+    out. A channel is not something to overwrite on the strength of a list that might be
+    missing a row.
+
+    Args:
+        ctx: Shared application context (for the message surfaces).
+        device: The connected device, for the confirming read.
+        slots: The slots as last read.
+        capacity: The device's slot count.
+
+    Returns:
+        A free slot index, or ``None`` when there is none to give.
+    """
     idx = _next_free_slot(slots, capacity)
     if idx is None:
-        await ctx.ui.view(
-            Text.from_markup(
-                "[warn]All channel slots are full.[/warn] Clear one first, then try again."
-            ),
-            title="No free slot",
-        )
+        await _say(ctx, "all channel slots are full — clear one first, then try again", "warn")
+        return None
+    try:
+        occupant = await device.get_channel(idx)
+    except Exception as exc:  # noqa: BLE001 - unreadable is not provably free
+        ctx.log.debug("channels: could not confirm slot %s is free: %s", idx, exc)
+        await _say(ctx, f"could not read slot {idx} — nothing was written", "err")
+        return None
+    if occupant and occupant.get("channel_name"):
+        await _say(ctx, f"slot {idx} is in use — reopen Channels to see what is there", "err")
+        return None
     return idx
+
+
+async def _say(ctx: AppContext, text: str, style: str) -> None:
+    """Tell the reader something *now*, in a popup over the manager it happened in.
+
+    An in-visit outcome is not a tool result: it belongs to the action in front of the
+    reader, so it goes to the dialog surface rather than into the buffer the menu drains
+    once the whole tool has finished (which is where a failed import used to leave it).
+    """
+    mark = {"err": "✗", "warn": "⚠"}.get(style, "")
+    body = Text(f"{mark} {text}" if mark else text, style=style)
+    session = getattr(ctx.ui, "session", None)
+    if session is None:  # the scripted CLI has no dialog surface; print it
+        ctx.ui.note(f"[{style}]{body.plain}[/{style}]")
+        return
+    await session.message_dialog(body, title="Channels")
 
 
 # --- validators --------------------------------------------------------------
