@@ -13,6 +13,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from rich.cells import cell_len
 from rich.console import Console
 
 from meshterm.context import AppContext
@@ -580,7 +581,7 @@ async def test_channel_rows_carry_stats_unread_and_lanes(ctx: AppContext) -> Non
     ctx.chat._unread[slot.conversation.key] = 2  # as the service would after two arrivals
 
     title, items = _menu_items(ctx, slots, 8, _LiveStats(ctx))
-    assert title == "Channels — 1/8 slots"
+    assert title == "Channels · 1/8 slots"  # a status atom chains with ·, not an em dash
     row = next(it for it in items if isinstance(it, Choice) and it.value == 0)
     plain = row.label.plain  # the title is a live callable; .label resolves it
     assert "Ops" in plain
@@ -678,13 +679,47 @@ async def test_detail_summary_reads_slot_totals_and_unread(ctx: AppContext) -> N
     await device.set_channel(3, "Ops", bytes(range(16)))
     slot = next(s for s in await read_channel_slots(device) if s.idx == 3)
 
-    assert _detail_summary(ctx, slot, _LiveStats(ctx)) == "Slot 3 · no messages recorded yet"
+    # What the channel *is* leads — the openness and hash moved here out of a title that
+    # was 42 cells wide and left no room on the console for the bar that says Esc leaves.
+    assert _detail_summary(ctx, slot, _LiveStats(ctx)) == (
+        "private · hash be · slot 3 · no messages yet"
+    )
 
     ctx.repo.record_chat_message(ChatMessage(text="hi", is_channel=True, channel_id=slot.identity))
     ctx.chat._unread[slot.conversation.key] = 1
     summary = _detail_summary(ctx, slot, _LiveStats(ctx))
     # A fresh age reads as bare "now" (the app-wide format_ago grammar — never "now ago").
-    assert summary == "Slot 3 · 1 message · 1 unread · last message now"
+    assert summary == "private · hash be · slot 3 · 1 msg · 1 unread · last now"
+
+
+async def test_the_detail_summary_sheds_atoms_rather_than_wrapping(ctx: AppContext) -> None:
+    """One line, on both platforms: the traffic atoms go before the line does.
+
+    The identifying atoms are on the left and the describing ones on the right, so a line
+    too long for the console loses what the reader could already see in the row they opened
+    this screen from — never the channel's own identity.
+    """
+    from meshterm.core.models import ChatMessage
+    from meshterm.platforms import PICOCALC, REGULAR, set_platform
+    from meshterm.ui.channels import _detail_summary, _LiveStats
+
+    device = await ctx.device()
+    await device.set_channel(0, "Lakeside emergency net", bytes(range(16)))
+    slot = next(s for s in await read_channel_slots(device) if s.idx == 0)
+    for _ in range(3):
+        ctx.repo.record_chat_message(
+            ChatMessage(text="hi", is_channel=True, channel_id=slot.identity)
+        )
+    ctx.chat._unread[slot.conversation.key] = 2
+
+    try:
+        for platform in (REGULAR, PICOCALC):
+            set_platform(platform)
+            line = _detail_summary(ctx, slot, _LiveStats(ctx))
+            assert cell_len(line) <= platform.readable_cols, (platform.name, line)
+            assert line.startswith("private · hash be · slot 0")  # identity always survives
+    finally:
+        set_platform(REGULAR)
 
 
 # -- muting channel notifications ---------------------------------------------

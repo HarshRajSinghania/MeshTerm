@@ -40,6 +40,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from typing import TYPE_CHECKING
 
+from rich.cells import cell_len
 from rich.console import Group
 from rich.text import Text
 
@@ -62,15 +63,29 @@ from ..core.channels import (
 from ..core.connection import Device
 from ..core.models import Conversation
 from ..persistence.repository import ACTIVITY_DRAWN_BUCKETS
+from ..platforms import get_platform
 from .braillechart import activity_peak, activity_sparkline
-from .menus import command_label, fit_cells, menu_rows, run_steps, section_heading
+from .menus import (
+    Lane,
+    column_header,
+    fit_cells,
+    icon_lane,
+    marked_label,
+    menu_rows,
+    run_steps,
+    section_heading,
+)
 from .qr import share_popup
+from .theme import glyph
 from .tui import CANCEL, Choice, SelectScreen, Separator
 from .widgets import _age_seconds, _format_age, channel_glyph, format_ago
 
 if TYPE_CHECKING:
     from ..context import AppContext
     from ..persistence.repository import ChannelStats
+
+#: The manager's footer sentence: navigation, then the filter, then the action, Esc last.
+_MANAGER_HINT = "↑↓ move · type to filter · Enter open · Esc back"
 
 # Top-menu action sentinels (distinct from a plain slot index, which selects that channel).
 _CREATE = "__create__"
@@ -265,7 +280,10 @@ async def manage_channels(ctx: AppContext) -> int:
             if not keep:
                 return changes
             title, items = await settle(moved=ctx.devstate.channels_epoch != epoch)
-    menu = SelectScreen(title, items)
+    # ``Enter open``, not the list default: every slot row pushes the channel's detail
+    # screen and Reorder pushes the reorder screen, which is what the chat picker — the same
+    # channels, one screen over — has always said.
+    menu = SelectScreen(title, items, footer_hint=_MANAGER_HINT)
     async with session.stay(menu) as visit:
         while True:
             choice = await visit.result()
@@ -607,24 +625,36 @@ def _activity_sparkline(histogram: tuple[int, ...], peak: float) -> Text:
 # --- menus -------------------------------------------------------------------
 
 
-def _lanes_header(name_w: int) -> str:
+def _lanes_header(name_w: int, width: int) -> str:
     """Column headers over the channel list's fixed lanes (see :func:`_slot_text`).
 
-    The leading spaces cover the select screen's pointer column (2 cells) plus the glyph
-    lane (3 cells), so each header lands exactly over its column. ``UNREAD`` borrows its
-    lane's trailing gap — the badge lane itself is one cell too narrow for the word — which
-    still leaves a space before the message count. (No TYPE or HASH lane: the glyph already
-    carries the openness and the hash lives in Show key, which buys the activity sparkline
-    its room on a 72-column terminal.)
+    The indent covers the select screen's pointer column (2 cells, drawn on choice rows but
+    not separators) plus the glyph lane, *measured* rather than assumed: a channel's glyph
+    is two cells on the desktop and one on the console, so a hard-coded indent put every
+    label a column off there. ``UNREAD`` borrows its lane's trailing gap — the badge lane
+    itself is one cell too narrow for the word — which still leaves a space before the
+    message count. (No TYPE or HASH lane: the glyph already carries the openness and the
+    hash lives in Show key, which buys the activity sparkline its room on a 72-column
+    terminal.)
+
+    Resolved against the render width, because the header row is pinned and must stay one
+    row: at 53 columns the full line ran to 54 and wrapped, costing a content row out of
+    twenty-six and leaving the landmark drawn twice over. ``ACTIVITY`` gives its cells back
+    first (see :func:`~meshterm.ui.menus.column_header`).
     """
-    return (
-        "     "
-        + "CHANNEL".ljust(name_w + 2)
-        + "UNREAD".ljust(_BADGE_WIDTH + 2)
-        + f"{'MSGS':>{_COUNT_WIDTH}}"
-        + "  "
-        + f"{'LAST':>{_AGE_WIDTH}}"
-        + "  ACTIVITY"
+    return column_header(
+        [
+            Lane("CHANNEL", name_w + 2),
+            Lane("UNREAD", _BADGE_WIDTH + 2),
+            # Right-aligned, because the values under them are: a count and an age are
+            # padded to the right edge of their lane, so a left-aligned label would sit
+            # off the digits it names.
+            Lane(f"{'MSGS':>{_COUNT_WIDTH}}", _COUNT_WIDTH + 2),
+            Lane(f"{'LAST':>{_AGE_WIDTH}}", _AGE_WIDTH + 2),
+            Lane(("ACTIVITY", "ACT")),
+        ],
+        width,
+        indent=2 + cell_len(channel_glyph("Public", None)) + 1,
     )
 
 
@@ -661,8 +691,9 @@ def _slot_text(ctx: AppContext, slot: ChannelSlot, stats: _LiveStats, name_w: in
     text.append(fit_cells(slot.name, name_w))
     text.append("  ")
     if muted:
-        text.append("🔕", style="muted")  # 2 cells; pad the rest of the lane
-        text.append(" " * (_BADGE_WIDTH - 2))
+        mark = glyph("🔕")  # two cells on the desktop, one on the console
+        text.append(mark, style="muted")
+        text.append(" " * (_BADGE_WIDTH - cell_len(mark)))
     elif unread:
         text.append("●", style="err")
         text.append(f" {unread}".ljust(_BADGE_WIDTH - 1), style="warn")
@@ -674,7 +705,11 @@ def _slot_text(ctx: AppContext, slot: ChannelSlot, stats: _LiveStats, name_w: in
         # Clamped so a pathological backlog can't push the row out of its lanes.
         text.append(f"{min(total, 99999):>{_COUNT_WIDTH}}")
     else:
-        text.append(f"{'·':>{_COUNT_WIDTH}}", style="muted")
+        # ``○`` is the app's empty mark. ``·`` here was three things at once: the separator
+        # that chains status atoms, the picker's unknown-sender stand-in, and — two cells
+        # away in this very row — what the console folds ``🔕`` to, so a muted channel with
+        # no messages drew the same glyph twice meaning different things.
+        text.append(f"{'○':>{_COUNT_WIDTH}}", style="muted")
     text.append("  ")
     age = _format_age(_age_seconds(st.last_at)) if st is not None and st.last_at else ""
     text.append(f"{age:>{_AGE_WIDTH}}", style="muted")
@@ -699,56 +734,99 @@ def _menu_items(
         name_w = min(_NAME_WIDTH_MAX, max(len("CHANNEL"), *(len(s.name) for s in slots)))
         # The lane names are this block's only landmark (its section carries no ── heading ──),
         # so they pin overhead while the slots scroll and give way to Organize/Add a channel.
-        items.append(Separator(_lanes_header(name_w), heading=True))
+        items.append(Separator(lambda w: _lanes_header(name_w, w), heading=True))
         for slot in slots:
             items.append(Choice(title=_slot_row(ctx, slot, stats, name_w), value=slot.idx))
     else:
-        items.append(Separator("  no channels configured yet"))
+        items.append(Separator("  no channels yet — add one below"))
 
+    # One measured icon column for every command row on this screen, so the one-cell marks
+    # (↕) start their labels in the same column as the two-cell ones (＋ ＃ 🌐 🔑 🔗) instead
+    # of a column early — which the Organize row used to fix by hand, with two spaces and a
+    # four-line comment. Empty where the platform draws no icons, and the labels take the
+    # cells back.
+    lane = icon_lane(("↕", "🌐", "＋", "＃", "🔑", "🔗"))
     if len(slots) > 1:
         items.append(section_heading("Organize"))
-        # Two spaces after the arrow: ↕ (East-Asian-ambiguous width) renders one cell where
-        # the sibling rows' glyphs (＋ ＃ 🔑 🔗) render two, so the extra space keeps this
-        # label's text column-aligned with theirs. Both go together where the platform
-        # draws no icon lane at all.
-        items.append(Choice(title=command_label("↕  Reorder channels"), value=_REORDER))
+        reorder = marked_label("↕", "Reorder channels", "", lane=lane)
+        items.append(Choice(title=reorder, value=_REORDER))
 
     items.append(section_heading("Add a channel"))
+    if _next_free_slot(slots, capacity) is None:
+        # The list already knows there is nowhere to put one, so it says so here rather than
+        # offering four rows that all dead-end in the same refusal.
+        items.append(Separator("  every slot is full — clear one first"))
+        return f"Channels · {len(slots)}/{capacity} slots", items
     rows = []
     # The firmware's built-in fixed-key Public channel has one well-known secret, so it's the
     # same channel on every slot — offer to restore it only while no slot already holds it.
     if not any(s.secret == DEFAULT_PUBLIC_SECRET for s in slots):
         rows.append(
-            ("🌐 Standard Public channel", "MeshCore's built-in meshwide channel", _DEFAULT_PUBLIC)
+            (
+                marked_label("🌐", "Standard Public channel", "", lane=lane),
+                "MeshCore's built-in meshwide channel",
+                _DEFAULT_PUBLIC,
+            )
         )
     rows.extend(
         [
-            ("＋ New private channel…", "A fresh random key", _CREATE),
-            ("＃ Public channel…", "Key derived from its name", _PUBLIC),
-            ("🔑 Join with a key…", "Paste a channel's 32-hex key", _JOIN),
-            ("🔗 Import a link…", "Paste a meshcore:// share link", _IMPORT),
+            (
+                marked_label("＋", "New private channel…", "", lane=lane),
+                "A fresh random key",
+                _CREATE,
+            ),
+            (
+                marked_label("＃", "Public channel…", "", lane=lane),
+                "Key derived from its name",
+                _PUBLIC,
+            ),
+            (
+                marked_label("🔑", "Join with a key…", "", lane=lane),
+                "Paste a channel's 32-hex key",
+                _JOIN,
+            ),
+            (
+                marked_label("🔗", "Import a link…", "", lane=lane),
+                "Paste a meshcore:// share link",
+                _IMPORT,
+            ),
         ]
     )
     items.extend(menu_rows(rows))
 
-    return f"Channels — {len(slots)}/{capacity} slots", items
+    # ``·`` chains a status atom; ``—`` would introduce a subject, and the slot count is not
+    # what this screen is about (see Contacts, which reads "Contacts · 12 known").
+    return f"Channels · {len(slots)}/{capacity} slots", items
 
 
 def _detail_summary(ctx: AppContext, slot: ChannelSlot, stats: _LiveStats) -> str:
-    """One line of vital signs for the detail screen: slot, totals, unread, mute, last activity."""
+    """One line of vital signs for the detail screen: what it is, then how it has been used.
+
+    The openness and the hash lead, having moved here out of the screen's title, which was
+    carrying them in a parenthesised blob and running to 42 cells — the whole of the
+    PicoCalc's borderless title bar, leaving no room for the one place that says Esc leaves.
+
+    The line is one line. Atoms are shed from the right until it fits the platform's
+    readable width, because the ones on the left identify the channel and the ones on the
+    right describe traffic the reader can also see in the row they came from.
+    """
     st = stats.get(slot.identity)
     unread = ctx.chat.unread(slot.conversation.key)
-    muted = _is_muted(ctx, slot)
+    kind = "public" if slot.is_public else "private"
+    parts = [kind, f"hash {slot.hash}", f"slot {slot.idx}"]
     if st is None or not st.total:
-        base = f"Slot {slot.idx} · no messages recorded yet"
-        return f"{base} · muted" if muted else base
-    parts = [f"Slot {slot.idx}", f"{st.total} message{'' if st.total == 1 else 's'}"]
-    if unread:
-        parts.append(f"{unread} unread")
-    if muted:
+        parts.append("no messages yet")
+    else:
+        parts.append(f"{st.total} msg{'' if st.total == 1 else 's'}")
+        if unread:
+            parts.append(f"{unread} unread")
+    if _is_muted(ctx, slot):
         parts.append("muted")
-    if st.last_at is not None:
-        parts.append(f"last message {format_ago(_age_seconds(st.last_at))}")
+    if st is not None and st.last_at is not None:
+        parts.append(f"last {format_ago(_age_seconds(st.last_at))}")
+    width = get_platform().readable_cols
+    while len(parts) > 1 and cell_len(" · ".join(parts)) > width:
+        parts.pop()
     return " · ".join(parts)
 
 
@@ -763,31 +841,49 @@ def _detail_items(ctx: AppContext, slot: ChannelSlot) -> list:
     err-tinted label so it reads as such.
     """
     unread = ctx.chat.unread(slot.conversation.key)
-    chat_label = Text("💬 Open in chat")
+    # ✎ and 🗑 are one cell where 📱 🔑 💬 🔔 🔕 are two, so the column is measured once and
+    # every mark padded out to it — otherwise the edit and clear rows start their labels a
+    # column left of the rows above them.
+    lane = icon_lane(("📱", "🔑", "💬", "🔔", "🔕", "✎", "🗑"))
+    chat_label = marked_label("💬", "Open in chat", "", lane=lane)
     if unread:
         chat_label.append("  ●", style="err")
         chat_label.append(f" {unread}", style="warn")
     if _is_muted(ctx, slot):
         mute_row = (
-            "🔔 Unmute notifications",
+            marked_label("🔔", "Unmute notifications", "", lane=lane),
             "Show new messages here in the unread badge",
             _MUTE,
         )
     else:
         mute_row = (
-            "🔕 Mute notifications",
+            marked_label("🔕", "Mute notifications", "", lane=lane),
             "Hide new messages here from the unread badge",
             _MUTE,
         )
     items = menu_rows(
         [
-            ("📱 Show QR code", "Share this channel as a scannable code", _QR),
-            ("🔑 Show key", "The name, key, hash, and share link", _KEY),
+            (
+                marked_label("📱", "Show QR code", "", lane=lane),
+                "Share this channel as a scannable code",
+                _QR,
+            ),
+            (
+                marked_label("🔑", "Show key", "", lane=lane),
+                "The name, key, hash, and share link",
+                _KEY,
+            ),
             (chat_label, "Read and send messages on this channel", _CHAT),
             mute_row,
-            ("✎ Rename / change key…", "Edit the name or paste a different key", _EDIT),
             (
-                Text("🗑 Clear this slot…", style="err"),
+                marked_label("✎", "Rename / change key…", "", lane=lane),
+                "Edit the name or paste a different key",
+                _EDIT,
+            ),
+            (
+                # The tint goes on the mark, not the words — and falls back to the words only
+                # where the platform draws no mark at all (see menus.marked_label).
+                marked_label("🗑", "Clear this slot…", "err", lane=lane),
                 "Remove the channel from this device",
                 _CLEAR,
             ),
@@ -810,8 +906,9 @@ async def _channel_detail(
     rename/re-key or clear closes the detail (the slot's occupant changed, so the caller
     re-reads the device); the read-only actions loop back here.
     """
-    kind = "public" if slot.is_public else "private"
-    title = f"{slot.name}  ({kind}, hash {slot.hash})"
+    # ``Feature — subject``: what the openness and the hash used to be doing in here is now
+    # the first two atoms of the summary line below the title (see :func:`_detail_summary`).
+    title = f"Channel — {slot.name}"
 
     async def handle(choice: object) -> int | None:
         """Run one action; an int closes the detail with that many changes, ``None`` stays."""

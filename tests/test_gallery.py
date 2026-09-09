@@ -29,12 +29,14 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from rich.cells import cell_len
 from rich.text import Text
 
 from meshterm.core.advert_store import AdvertPolicy
+from meshterm.core.channels import DEFAULT_PUBLIC_SECRET, derive_secret
 from meshterm.core.courier_store import CourierStore
 from meshterm.core.models import (
     NODE_TYPE_REPEATER,
@@ -417,6 +419,77 @@ def _chat_picker(cols: int, rows: int) -> Screen:
     )
 
 
+def _channels_manager(cols: int, rows: int) -> Screen:
+    """The channel manager at its widest: every lane populated, every action row drawn.
+
+    Built through the feature's own row funnel, so the header line, the glyph lane, the
+    unread badge, the counts, the ages and the sparkline are laid out by the code the app
+    runs. The cases that matter are here: a name at the lane's ceiling, a muted channel (its
+    mark folds to a different glyph on the console), a channel with no messages at all, and
+    a three-digit unread badge.
+    """
+    from meshterm.ui.channels import _MANAGER_HINT, ChannelSlot, _LiveStats, _menu_items
+
+    slots = [
+        ChannelSlot(idx=0, name="Public", secret=DEFAULT_PUBLIC_SECRET),
+        ChannelSlot(idx=1, name="Lakeside emergency", secret=bytes(range(16))),
+        ChannelSlot(idx=2, name="#montreal", secret=derive_secret("#montreal")),
+        ChannelSlot(idx=3, name="Ops", secret=bytes(range(16, 32))),
+    ]
+    ctx = _ChannelsCtx(muted={slots[3].identity})
+    title, items = _menu_items(ctx, slots, 8, _LiveStats(ctx))
+    return SelectScreen(title, items, footer_hint=_MANAGER_HINT)
+
+
+def _channel_detail(cols: int, rows: int) -> Screen:
+    """One channel's action page, its vital-signs line above the rows."""
+    from meshterm.ui.channels import ChannelSlot, _detail_items, _detail_summary, _LiveStats
+
+    slot = ChannelSlot(idx=2, name="Lakeside emergency", secret=bytes(range(16)))
+    ctx = _ChannelsCtx(muted=set())
+    stats = _LiveStats(ctx)
+    return SelectScreen(
+        f"Channel — {slot.name}",
+        _detail_items(ctx, slot),
+        prompt=_detail_summary(ctx, slot, stats),
+        footer_hint="↑↓ move · Enter select · Esc back",
+    )
+
+
+class _ChannelsChat:
+    """The chat service surface the channel rows read: unread counts and mute state."""
+
+    def __init__(self, muted: set[str]) -> None:
+        self._muted = muted
+
+    def unread(self, key: str) -> int:
+        """A three-digit badge on one channel, so the lane is drawn at its widest."""
+        return 128 if key.endswith("slot:1") or "Lakeside" in key else 0
+
+
+class _ChannelsCtx:
+    """The minimal AppContext surface the channel rows and detail page read."""
+
+    def __init__(self, muted: set[str]) -> None:
+        self.chat = _ChannelsChat(muted)
+        self.repo = _ChannelsRepo()
+        self.preferences = Preferences()
+        self._muted = muted
+
+    @property
+    def mute_store(self):  # noqa: ANN201 - a stand-in for the real store
+        """A store answering only the one question a row asks it."""
+        return SimpleNamespace(is_muted=lambda identity: identity in self._muted)
+
+
+class _ChannelsRepo:
+    """Channel statistics with one busy channel, one quiet one, and one never used."""
+
+    def channel_stats(self, *a, **k):  # noqa: ANN002, ANN003, ANN201
+        """Return nothing: the rows then draw their empty marks, which is the tighter case."""
+        return {}
+
+
 class _PickerCtx:
     """The minimal AppContext surface :meth:`ChatTool._picker_items` reads."""
 
@@ -789,6 +862,8 @@ _ENTRIES: list[_Entry] = [
     _Entry("map", _map),
     _Entry("chat", _chat),
     _Entry("chat_picker", _chat_picker),
+    _Entry("channels_manager", _channels_manager),
+    _Entry("channel_detail", _channel_detail),
     _Entry("livefeed", _livefeed),
     _Entry("walk", _walk),
     _Entry("timemachine", _timemachine),
