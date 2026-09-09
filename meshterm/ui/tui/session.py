@@ -895,14 +895,16 @@ class TuiSession:
         default: Any = None,
         banner: Any | None = None,
         footnote: str | None = None,
-        footer_hint: str = "↑↓ move · Enter select · Esc quit",
+        footer_hint: str = "↑↓ move · Enter select · Esc bye",
         keys: Mapping[str, Any] | None = None,
         key_hint: Callable[[Any], str] | None = None,
     ) -> Any:
         """Show a chromeless select splash (banner above a content-sized box).
 
         Like :meth:`select`, but drawn without the header/footer status bars and centered
-        under ``banner`` — the startup device picker's presentation. Type-to-filter is off:
+        under ``banner`` — the startup device picker's presentation. Esc's verb here is
+        ``bye``, the app's one send-off: this splash is the door, and the reader leaving it
+        has not started anything to quit out of. Type-to-filter is off:
         the device list is short and fixed, so stray keys never narrow it. An optional
         ``footnote`` (e.g. a copyright notice) sits muted below the box. When any row opts
         into removal (a :attr:`~meshterm.ui.tui.select.Choice.deletable` row), a "Del remove"
@@ -932,10 +934,12 @@ class TuiSession:
         screen.banner = banner
         screen.footnote = footnote
         # The splash's border is its only hint line and it is narrow (47 cells on the
-        # PicoCalc), so when the sentence outgrows the box the scroll atom is the one it
-        # can spare: ←→ are already named by the move atom in front of it, while a
-        # bare-letter shortcut is unguessable and has nowhere else to be advertised here.
-        screen.spare_hint_atoms = ("←→ scroll",)
+        # PicoCalc), so when the sentence outgrows the box it gives up the scroll atom
+        # first — ←→ are already named by the move atom in front of it — and then the
+        # *hide* key. Between the two shortcuts the one that survives is the way back:
+        # ⇧H only appears at all once something is hidden, which is exactly the state where
+        # a reader needs to be told how to undo it, and by then they have already found h.
+        screen.spare_hint_atoms = ("←→ scroll", "h hide")
         result = await self.run_screen(screen)
         return None if result is CANCEL else result
 
@@ -1005,7 +1009,7 @@ class TuiSession:
             backdrop_title,
             backdrop_items,
             default=backdrop_default,
-            footer_hint="↑↓ move · Enter select · Esc quit",
+            footer_hint="↑↓ move · Enter select · Esc bye",
             delete_hint="Del remove",
             filterable=False,
         )

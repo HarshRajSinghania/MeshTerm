@@ -297,6 +297,9 @@ async def prompt_device(
         which the caller treats as a request to exit.
     """
     scanned = list(devices)
+    #: The row the *next* redraw should open on, when the pass just finished moved the list
+    #: under the reader (see :func:`_after_hiding`). Cleared as soon as it is spent.
+    focus: DiscoveredDevice | None = None
     while True:
         remembered = store.load()
         # The full registry (not just the single last device) so *every* confirmed companion
@@ -318,13 +321,19 @@ async def prompt_device(
         # row hidden a moment ago is gone the next time the list is drawn — which is the
         # only feedback hiding needs.
         hidden = store.hidden_ids()
-        visible = [d for d in listed if d.stable_id not in hidden]
-        # Preselect the remembered "last known good" device when it is currently attached/in range.
-        default = next((d for d in visible if remembered and remembered.matches(d)), None)
+        # In display order, so a shortcut acting on a row can say what the row *after* it is.
+        ordered = _order([d for d in listed if d.stable_id not in hidden], registry)
+        # Preselect the remembered "last known good" device when it is currently attached/in
+        # range — unless the last pass asked for a particular row, which a hide does so the
+        # highlight lands where the vanished row was rather than jumping back to the default.
+        default = next((d for d in ordered if remembered and remembered.matches(d)), None)
+        if focus is not None:
+            default = focus if focus in ordered else default
+            focus = None
 
         # Build the rows once so the same list can be redrawn as the backdrop behind a
         # removal confirm (so it floats over the picker rather than replacing it).
-        items = _build_items(visible, remembered, registry, hidden=len(hidden))
+        items = _build_items(ordered, remembered, registry, hidden=len(hidden))
         chosen = await ui.select_startup(
             "Select a companion device",
             items,
@@ -339,7 +348,7 @@ async def prompt_device(
             return None
 
         if isinstance(chosen, KeyRequest):
-            _run_shortcut(store, chosen)
+            focus = _run_shortcut(store, chosen, ordered)
             continue
 
         if chosen is _ADD_TCP:
@@ -372,20 +381,52 @@ async def prompt_device(
         return chosen
 
 
-def _run_shortcut(store: DeviceStore, request: KeyRequest) -> None:
-    """Act on ``h`` / ``⇧H``; the redrawn list is the feedback either way.
+def _run_shortcut(
+    store: DeviceStore, request: KeyRequest, listed: list[DiscoveredDevice]
+) -> DiscoveredDevice | None:
+    """Act on ``h`` / ``⇧H``, and say which row the redrawn list should open on.
 
-    Nothing is said about it, because there is nothing to say that the list does not: after
-    a hide the row is gone, after a show-all the hidden rows are back. A dialog acknowledging
-    a change the reader is looking straight at is the acknowledgement this app has been
-    taking out of screens, not adding to them.
+    Nothing is *said* about either: after a hide the row is gone, after a show-all the hidden
+    rows are back, and a dialog acknowledging a change the reader is looking straight at is
+    the acknowledgement this app takes out of screens rather than adding to them. What the
+    redraw does owe them is their place — see :func:`_after_hiding`.
+
+    Args:
+        store: The registry the hidden set lives in.
+        request: The shortcut the splash resolved with.
+        listed: The devices as displayed, in display order.
+
+    Returns:
+        The device to highlight when the list is redrawn, or ``None`` to let the remembered
+        default decide (which is what a show-all wants: the list it restores is a different
+        list, and the reader's place in the old one means nothing in it).
     """
     if request.action is _SHOW_ALL:
         store.show_all()
-    elif request.action is _HIDE and isinstance(request.value, DiscoveredDevice):
+        return None
+    if request.action is _HIDE and isinstance(request.value, DiscoveredDevice):
         # Only a device row can be hidden — ``h`` on Add a network device or Quit is inert,
         # the way Delete is on a row that never opted into removal.
         store.hide(request.value.stable_id)
+        return _after_hiding(listed, request.value)
+    return None
+
+
+def _after_hiding(
+    listed: list[DiscoveredDevice], hidden: DiscoveredDevice
+) -> DiscoveredDevice | None:
+    """The row the highlight should land on once ``hidden`` leaves the list.
+
+    The next device down, so a run of adapters can be cleared with a run of presses without
+    the hand moving; the one above where there is no next, because the highlight has reached
+    the end and there is nowhere further down to go. Neither ever rolls round to the top —
+    nothing in the app does — and an emptied list has nothing to land on at all.
+    """
+    remaining = [d for d in listed if d.stable_id != hidden.stable_id]
+    if not remaining:
+        return None
+    at = next((i for i, d in enumerate(listed) if d.stable_id == hidden.stable_id), 0)
+    return remaining[min(at, len(remaining) - 1)]
 
 
 def _shortcut_hint(hidden: int) -> Callable[[object], str]:
@@ -415,14 +456,12 @@ def _shortcut_hint(hidden: int) -> Callable[[object], str]:
 
 
 def _hidden_note(hidden: int) -> Separator:
-    """The muted row stating what the list is *not* showing, and the key that brings it back.
+    """The muted row that stands in for a list hiding has emptied.
 
-    Hiding is the one action here that leaves no trace: a row that is gone looks exactly like
-    a device that was never plugged in, so without this the list would quietly misrepresent
-    the machine. It also carries ``⇧H`` in the body, which matters on a console whose splash
-    border is 47 cells wide — the footer atom naming that key is among the first to be shed
-    when the sentence outgrows the box (see :func:`~meshterm.ui.tui.frame.fit_hint`), and a
-    way back that can be squeezed off the screen is not a way back.
+    Only then. With devices still listed, the footer already names ``⇧H`` on every row and a
+    standing line saying the same thing is a row of the box spent on chrome. With *nothing*
+    listed there is no footer atom to read it off — and "no companion devices detected" would
+    be a lie about a machine with a radio plugged into it.
     """
     it = "it" if hidden == 1 else "them"
     device = "device" if hidden == 1 else "devices"
@@ -801,8 +840,6 @@ def _build_items(
         # remembered endpoint, so forgetting it is the only way it leaves the picker. A scanned
         # serial/BLE device would just reappear, so Delete stays inert on those rows.
         items.append(Choice(title=row, value=device, deletable=device.is_tcp, hscroll_from=head))
-    if hidden:
-        items.append(_hidden_note(hidden))
     items.extend(_action_rows())
     return items
 

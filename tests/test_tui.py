@@ -3085,7 +3085,8 @@ async def test_the_splash_hides_the_highlighted_device_and_redraws(tmp_path) -> 
 
 
 def test_the_splash_says_so_when_it_is_empty_only_because_of_hiding() -> None:
-    """ "Nothing detected" would be a lie, and the way back is a key nobody could guess."""
+    """Nothing-detected would be a lie, and with no rows there is no footer atom either."""
+    from meshterm.core.discovery import serial_device
     from meshterm.ui.device_picker import _build_items
 
     lines = [str(it.title) for it in _build_items([], None, {}, hidden=2)]
@@ -3093,6 +3094,28 @@ def test_the_splash_says_so_when_it_is_empty_only_because_of_hiding() -> None:
 
     detected = [str(it.title) for it in _build_items([], None, {}, hidden=0)]
     assert any("no companion devices detected" in line for line in detected)
+
+    # With something still listed the footer names ⇧H on every row, so the line would be a
+    # row of the box spent saying it twice.
+    radio = serial_device("COM7", name="A Radio")
+    rows = [str(it.title) for it in _build_items([radio], None, {}, hidden=2)]
+    assert not any("hidden" in line for line in rows)
+
+
+def test_hiding_a_device_leaves_the_highlight_where_the_row_was() -> None:
+    """The next device down, or the one above at the end — so a run of adapters clears in a run."""
+    from meshterm.core.discovery import serial_device
+    from meshterm.ui.device_picker import _after_hiding
+
+    first, middle, last = (serial_device(f"COM{n}", name=f"D{n}") for n in (1, 2, 3))
+    listed = [first, middle, last]
+
+    assert _after_hiding(listed, first) is middle
+    assert _after_hiding(listed, middle) is last
+    # Off the end there is nowhere further down, so the highlight steps up rather than
+    # rolling round to the top — nothing in the app rolls over.
+    assert _after_hiding(listed, last) is middle
+    assert _after_hiding([first], first) is None  # an emptied list has nothing to land on
 
 
 def test_the_splash_names_a_shortcut_only_where_it_would_act() -> None:
@@ -3126,10 +3149,15 @@ def test_a_hint_too_long_for_its_box_drops_atoms_rather_than_its_tail() -> None:
     assert fit_hint(full, 45) == "↑↓ move · ←→ scroll · Enter select · Esc quit"
     assert fit_hint(full, 20).endswith("Esc quit")
 
-    # ...unless the caller names an atom it can spare first: the scroll keys are already
-    # named by the move atom, while a bare letter is unguessable.
-    spared = fit_hint(full, 56, shed_first=("←→ scroll",))
+    # ...unless the caller names atoms it can spare first, in the order it can spare them:
+    # the scroll keys are already named by the move atom, and between the two hide keys the
+    # one to keep is the way back.
+    spared = fit_hint(full, 56, shed_first=("←→ scroll", "h hide"))
     assert spared == "↑↓ move · Enter select · h hide · ⇧H show all · Esc quit"
+    assert (
+        fit_hint(full, 50, shed_first=("←→ scroll", "h hide"))
+        == "↑↓ move · Enter select · ⇧H show all · Esc quit"
+    )
 
 
 def test_the_splash_scrolls_the_hardware_column_of_the_row_it_is_on() -> None:
@@ -3184,7 +3212,7 @@ def test_the_splash_hint_stays_inside_the_box_it_is_drawn_in() -> None:
     from meshterm.ui.device_picker import _shortcut_hint
     from meshterm.ui.tui.select import _splice_hint
 
-    base = "↑↓ move · Enter select · Esc quit"
+    base = "↑↓ move · Enter select · Esc bye"  # the splash's own send-off
     radio = serial_device("COM7", name="A Radio")
     common = _splice_hint(base, _shortcut_hint(0)(radio))
     for platform in (REGULAR, PICOCALC):

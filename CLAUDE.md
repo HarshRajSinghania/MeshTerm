@@ -187,8 +187,15 @@ as a grouped list does. Filling a page in is editing its `.md`; no Python follow
 - ≤72 cells. Sentence shape: navigation keys, then action keys, **Esc last**.
 - Esc verb by surface: `Esc back` leaves a screen · `Esc close` dismisses a read-only
   floating view · `Esc cancel` abandons a prompt/dialog · `Esc keep` leaves a value
-  picker unchanged · `Esc quit` only at the main menu. While a find-as-you-type filter
-  is standing the verb becomes `Esc clear`, because that is what the press does then.
+  picker unchanged · `Esc quit` only at the main menu · `Esc bye` only on the device
+  splash, which is the door rather than a screen — nothing has been started there to
+  quit out of. While a find-as-you-type filter is standing the verb becomes `Esc clear`,
+  because that is what the press does then.
+- A hint that outgrows the surface drawing it **sheds atoms rather than being cut off**,
+  because the cut takes the end and the end is Esc (`frame.fit_hint`, the chromeless
+  splash). They go from the right, in front of Esc; a screen may name the ones it can
+  spare first (`spare_hint_atoms`) — a key the reader would find anyway, like the ←→ its
+  move atom already named, before one that is unguessable and advertised nowhere else.
 - Enter verb by action: `Enter open` when the row pushes a screen or dialog ·
   `Enter select` when it picks a value or action row · `Enter set` in a value picker.
   A more specific committing verb (`Enter adopt path`, `Enter add`) is fine; a synonym
