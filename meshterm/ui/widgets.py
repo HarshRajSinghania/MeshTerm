@@ -1432,6 +1432,23 @@ _BATTERY_FLASH_PCT = 100 / _BATTERY_STEPS / 2
 #: Frames in the charging sweep: empty → four fills → round again (bottom-to-full loop).
 _CHARGE_FRAMES = 5
 
+#: A full pack reads ``100``, with no ``%`` — the one charge whose sign is dropped, so the
+#: reading is three cells wide exactly as ``99%`` is.
+#:
+#: Which matters because 99 and 100 are the two numbers a topped-off pack sits *between*:
+#: the charger cuts out at full, the pack settles back to 99, the charger restarts, and the
+#: companion reports the flip every poll for as long as it is plugged in (JP, 2026-09-09).
+#: The gauge is pinned to the header's right edge and the pulse takes what is left, so a
+#: number that grew a cell at the top of the range took that cell off the sparkline and
+#: redrew the whole activity history at a new scale, twice a minute, on a device sitting
+#: still. Every other width change in the range — 9 to 10 on the way down — is a boundary a
+#: discharging pack crosses once and never comes back over, so it costs one repaint and
+#: needs no answer.
+#:
+#: A bare ``100`` beside a full block reads as a percentage without being told; ``%`` is
+#: doing its work at the readings that could be mistaken for something else.
+_BATTERY_FULL = "100"
+
 
 def _braille_fill(steps: int) -> str:
     """A single braille cell filled from the bottom by ``steps`` (0–8) half-rows.
@@ -1504,7 +1521,9 @@ def battery_cell(percent: int, *, charging: bool = False, frame: int = 0) -> Tex
 
     A pack at 100% is drawn as **not charging** whichever way the flag reads: a full cell
     resting full is the honest picture, and a topped-off charger left plugged in shouldn't
-    leave the gauge sweeping forever.
+    leave the gauge sweeping forever. It also drops its ``%`` (:data:`_BATTERY_FULL`), so
+    that full reading is the same three cells as the 99% it keeps flipping back to and the
+    header stops resizing under a pack on a charger.
 
     Args:
         percent: State of charge, 0–100 (clamped).
@@ -1513,7 +1532,8 @@ def battery_cell(percent: int, *, charging: bool = False, frame: int = 0) -> Tex
             steadily-incrementing integer animates the two live states.
 
     Returns:
-        A Rich :class:`Text`: the coloured block, a space, and ``NN%`` in muted text — the
+        A Rich :class:`Text`: the coloured block, a space, and ``NN%`` in muted text — a
+        full pack's bare ``100`` the one exception (:data:`_BATTERY_FULL`) — with the
         block's colours on the glyph's span alone, so the ground stops at the cell.
     """
     pct = max(0, min(100, int(percent)))
@@ -1530,5 +1550,5 @@ def battery_cell(percent: int, *, charging: bool = False, frame: int = 0) -> Tex
     # muted percent onto the coloured ground alongside the cell.
     out = Text()
     out.append(_braille_fill(steps), style=color)
-    out.append(f" {pct}%", style="muted")
+    out.append(f" {_BATTERY_FULL if pct == 100 else f'{pct}%'}", style="muted")
     return out

@@ -77,6 +77,27 @@ def test_battery_cell_shows_the_true_percent() -> None:
     assert battery_cell(42).plain == chr(0x2800 | 0xE4) + " 42%"
 
 
+def test_battery_cell_drops_the_sign_at_full_so_the_header_stops_moving() -> None:
+    """A full pack reads ``100`` — three cells, exactly as ``99%`` is.
+
+    Those two readings are the ones a topped-off pack sits between: the charger cuts out
+    at full, the pack settles to 99, the charger restarts, and the flip repeats every poll
+    for as long as it is plugged in. The gauge is pinned to the header's right edge and the
+    pulse takes what is left, so a fourth cell at the top of the range came off the
+    sparkline and rescaled the whole activity history, twice a minute, on a device sitting
+    still. Dropping the one sign that can be inferred costs nothing and settles it.
+    """
+    assert battery_cell(100).plain.endswith(" 100")  # no sign — a full block says it
+    assert battery_cell(99).cell_len == battery_cell(100).cell_len
+    # Every other reading keeps its sign; the charging sweep and the alarm never touch it.
+    assert battery_cell(99).plain.endswith(" 99%") and battery_cell(9).plain.endswith(" 9%")
+    assert {
+        battery_cell(pct, charging=True, frame=f).plain.endswith("%")
+        for pct in (5, 99)
+        for f in range(6)
+    } == {True}
+
+
 def test_battery_cell_colours_by_band_while_the_dots_carry_the_detail() -> None:
     """Three broad bands over half / over a quarter / below, each a block of its own hue."""
     assert _glyph_style(battery_cell(100)) == "batt.full"  # light green on green
@@ -143,8 +164,8 @@ def test_battery_cell_animates_off_the_frame_counter_alone() -> None:
 
 def test_battery_cell_at_full_rests_full_however_the_charging_flag_reads() -> None:
     """A topped-off pack draws as not charging, so a plugged-in charger stops the sweep."""
-    assert battery_cell(100, charging=True, frame=0).plain == "⣿ 100%"
-    assert {battery_cell(100, charging=True, frame=f).plain for f in range(6)} == {"⣿ 100%"}
+    assert battery_cell(100, charging=True, frame=0).plain == "⣿ 100"
+    assert {battery_cell(100, charging=True, frame=f).plain for f in range(6)} == {"⣿ 100"}
     # One percent short is still filling, and still sweeps.
     assert battery_cell(99, charging=True, frame=0).plain[0] == chr(0x2800)
 
