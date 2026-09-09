@@ -121,9 +121,19 @@ gh run watch --exit-status
 gh release view vX.Y.Z
 ```
 
-Five platform builds plus the release job, so it takes a few minutes. Report the release
-URL and whether the notes came out of the changelog or fell back to "No changelog entry".
-If a build fails, the tag is already public: fix forward with a new patch version rather
+Five platform builds plus the release job, so it takes a few minutes. **Check the notes
+actually came out of the changelog** — a green run is not proof, because the fallback is a
+successful step:
+
+```
+gh release view vX.Y.Z --json body --jq .body | head -3
+```
+
+If that reads "No changelog entry for X.Y.Z.", the extraction failed rather than the
+changelog being empty. Fix the workflow, then repair the published notes in place with
+`gh release edit vX.Y.Z --notes-file` — the binaries are fine and the tag does not move.
+
+If a *build* fails, the tag is already public: fix forward with a new patch version rather
 than deleting and re-pushing a tag people may have fetched.
 
 ## At 0.9.0 the changelog resets

@@ -74,17 +74,22 @@ jobs:
         run: |
           # The section for this version, between its own heading and the next one. If the
           # changelog has nothing for it, say so plainly rather than inventing notes.
-          if awk -v v="$VERSION" '
-                $0 ~ "^## \\[" v "\\]" {found=1; next}
-                found && /^## \[/ {exit}
-                found {print}
-              ' CHANGELOG.md | sed '/^$/d' | head -1 | grep -q .; then
-            awk -v v="$VERSION" '
-                $0 ~ "^## \\[" v "\\]" {found=1; next}
-                found && /^## \[/ {exit}
-                found {print}
-              ' CHANGELOG.md > notes.md
-          else
+          #
+          # Extracted once, into the file, and the *file* is what gets tested. It used to
+          # run twice — once down a `| sed | head -1 | grep -q .` pipeline to decide, then
+          # again for real — and this step runs under `bash -e -o pipefail`, where that
+          # pipeline is a race it can lose. `head -1` exits the moment it has its line and
+          # closes the pipe; if `sed` still has bytes to write it dies on SIGPIPE, pipefail
+          # promotes that to a failed condition, and a version with a perfectly good
+          # changelog section publishes "No changelog entry" instead. It only bites once a
+          # section outgrows one buffered write, which is why every entry under 4 KB was
+          # fine and 0.3.1 was not — while 0.3.0, the same size, happened to win.
+          awk -v v="$VERSION" '
+              $0 ~ "^## \\[" v "\\]" {found=1; next}
+              found && /^## \[/ {exit}
+              found {print}
+            ' CHANGELOG.md > notes.md
+          if ! grep -q '[^[:space:]]' notes.md; then
             echo "No changelog entry for $VERSION." > notes.md
           fi
           echo "--- notes ---"; cat notes.md
