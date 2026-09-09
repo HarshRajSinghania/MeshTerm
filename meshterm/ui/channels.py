@@ -902,18 +902,34 @@ async def _channel_detail(
     pushed while each action's prompts float over it, and the rows and the vital-signs line
     are swapped in place afterwards rather than the screen being drawn again. Both are live
     (the mute row is a toggle; the summary counts unread and ages the last message), so both
-    are re-read each round, and the highlight stays on the row that was just used. A
-    rename/re-key or clear closes the detail (the slot's occupant changed, so the caller
-    re-reads the device); the read-only actions loop back here.
+    are re-read each round, and the highlight stays on the row that was just used.
+
+    A **clear** closes the page, because the channel it was about is gone. A **rename or
+    re-key does not**: the channel is still there and this is still its page, so the new name
+    and key are read back into the title, the summary and the rows, and the reader stays
+    where they were. The page used to close on both, for no better reason than ``slot`` being
+    a snapshot that the rename had made stale.
     """
-    # ``Feature — subject``: what the openness and the hash used to be doing in here is now
-    # the first two atoms of the summary line below the title (see :func:`_detail_summary`).
-    title = f"Channel — {slot.name}"
+    changes = 0
+
+    def title_for() -> str:
+        """``Feature — subject``: the openness and the hash lead the summary line instead."""
+        return f"Channel — {slot.name}"
+
+    async def reread() -> bool:
+        """Re-point ``slot`` at what now occupies its index; ``False`` if nothing does."""
+        nonlocal slot
+        fresh = next((s for s in await ctx.devstate.channel_slots() if s.idx == slot.idx), None)
+        if fresh is None:
+            return False
+        slot = fresh
+        return True
 
     async def handle(choice: object) -> int | None:
         """Run one action; an int closes the detail with that many changes, ``None`` stays."""
+        nonlocal changes
         if choice is None:  # Esc
-            return 0
+            return changes
         if choice == _QR:
             await _show_share(ctx, slot.name, slot.secret)
         elif choice == _KEY:
@@ -925,9 +941,11 @@ async def _channel_detail(
             # detail (whose rows re-render to the new state) without counting a channel change.
             _toggle_mute(ctx, slot)
         elif choice == _EDIT and await _edit(ctx, device, slot):
-            return 1
+            changes += 1
+            if not await reread():  # pragma: no cover - the slot we just wrote is there
+                return changes
         elif choice == _CLEAR and await _clear(ctx, device, slot):
-            return 1
+            return changes + 1  # the channel this page is about is gone; so is the page
         return None
 
     # A surface with no session (the plain CLI, scripted tests) has no stack to stay on and
@@ -935,12 +953,12 @@ async def _channel_detail(
     session = getattr(ctx.ui, "session", None)
     if session is None:
         while True:
-            result = await _menu_round(ctx, title, _detail_items(ctx, slot), handle=handle)
+            result = await _menu_round(ctx, title_for(), _detail_items(ctx, slot), handle=handle)
             if result is not None:
                 return result
 
     menu = SelectScreen(
-        title,
+        title_for(),
         _detail_items(ctx, slot),
         prompt=_detail_summary(ctx, slot, stats),
     )
@@ -950,7 +968,11 @@ async def _channel_detail(
             result = await handle(None if choice is CANCEL else choice)
             if result is not None:
                 return result
-            menu.replace_items(_detail_items(ctx, slot), prompt=_detail_summary(ctx, slot, stats))
+            menu.replace_items(
+                _detail_items(ctx, slot),
+                title=title_for(),
+                prompt=_detail_summary(ctx, slot, stats),
+            )
 
 
 # --- create / join flows -----------------------------------------------------
@@ -975,7 +997,15 @@ async def _create_private(
 async def _add_default_public(
     ctx: AppContext, device: Device, slots: list[ChannelSlot], capacity: int
 ) -> int:
-    """Add MeshCore's built-in fixed-key ``Public`` channel on the next free slot."""
+    """Add MeshCore's built-in fixed-key ``Public`` channel on the next free slot.
+
+    One well-known secret means it is the same channel on every slot, so a second copy is
+    not a channel but a duplicate row. The menu already drops this action once a slot holds
+    it; this is the same check where the action *runs*, for a press that was on its way while
+    the first one was still being written.
+    """
+    if any(s.secret == DEFAULT_PUBLIC_SECRET for s in slots):
+        return 0
     idx = await _pick_free_slot(ctx, device, slots, capacity)
     if idx is None:
         return 0
@@ -1164,7 +1194,16 @@ async def _reorder_channels(ctx: AppContext, device: Device, slots: list[Channel
     # the channels automatically — reordering needs no history migration. The slot→identity
     # cache the chat service resolves inbound messages through is refreshed centrally by
     # manage_channels once any change lands (see :func:`_refresh_chat_channels`).
-    return await _apply_order(ctx, device, slots, order)
+    try:
+        return await _apply_order(ctx, device, slots, order)
+    except Exception as exc:  # noqa: BLE001 - reported here, where the half-done state is
+        # A relay is a sequence of writes with no transaction under it, so a link that drops
+        # partway leaves the slots between the two orders. That is worth saying plainly and
+        # at once: the manager re-reads on the way out of this round, so what the reader is
+        # about to look at *is* the half-applied layout, and nothing else would tell them so.
+        ctx.log.debug("channels: reorder stopped partway: %s", exc)
+        await _say(ctx, f"reorder stopped partway — {exc}", "err")
+        return 0
 
 
 # --- shared views ------------------------------------------------------------
@@ -1246,7 +1285,8 @@ async def _pick_free_slot(
         await _say(ctx, "all channel slots are full — clear one first, then try again", "warn")
         return None
     try:
-        occupant = await device.get_channel(idx)
+        async with ctx.ui.busy_dialog(f"checking slot {idx}…", title="Channels"):
+            occupant = await device.get_channel(idx)
     except Exception as exc:  # noqa: BLE001 - unreadable is not provably free
         ctx.log.debug("channels: could not confirm slot %s is free: %s", idx, exc)
         await _say(ctx, f"could not read slot {idx} — nothing was written", "err")

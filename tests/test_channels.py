@@ -1069,3 +1069,94 @@ async def test_a_slot_is_confirmed_empty_before_a_channel_is_written_over_it(
     # With the list telling the truth, the next genuinely free slot is handed out.
     full_list = list(await read_channel_slots(device))
     assert await _pick_free_slot(ctx, device, full_list, 8) == 2
+
+
+async def test_a_rename_keeps_the_page_it_renamed(ctx: AppContext) -> None:
+    """Renaming a channel re-reads it in place; only a clear closes the page.
+
+    The channel is still there and this is still its page. It used to close on both, which
+    left the reader back in the list to find the row again — for no better reason than the
+    snapshot the page was holding having gone stale under the rename.
+    """
+    from meshterm.ui.channels import _CHAT, _EDIT, _channel_detail, _LiveStats
+
+    device = await ctx.device()
+    await device.set_channel(0, "Ops", bytes(range(16)))
+    slot = next(s for s in await read_channel_slots(device) if s.idx == 0)
+
+    opened: list[str] = []
+    ui = _ScriptedUi(
+        # Rename, then open chat (proving the page is still up and knows the new name), Esc.
+        selects=[_EDIT, _CHAT, None],
+        texts=["Lakeside", ""],  # the new name, and a blank key (derive it from the name)
+        dialogs=[],
+    )
+    ctx.ui = ui
+
+    import meshterm.ui.channels as channels_mod
+
+    async def fake_chat(_ctx, opened_slot):  # noqa: ANN001, ANN202
+        opened.append(opened_slot.name)
+
+    original = channels_mod._open_chat
+    channels_mod._open_chat = fake_chat
+    try:
+        changes = await _channel_detail(ctx, device, slot, _LiveStats(ctx))
+    finally:
+        channels_mod._open_chat = original
+
+    assert opened == ["Lakeside"]  # the page stayed, pointing at the renamed channel
+    assert changes == 1  # ...and still reports the rename when it finally closes
+
+
+async def test_the_standard_public_channel_is_not_added_twice(ctx: AppContext) -> None:
+    """A re-fired add is refused where it runs, not only where it is drawn.
+
+    The menu drops the row once a slot holds the channel, but the row is dispatched by a
+    sentinel: a press already on its way while the first write ran would add a second copy
+    of a channel that has exactly one well-known key.
+    """
+    from meshterm.ui.channels import _add_default_public
+
+    device = await ctx.device()
+    ctx.ui = _ScriptedUi(selects=[], texts=[], dialogs=[])
+    slots: list[ChannelSlot] = []
+
+    assert await _add_default_public(ctx, device, slots, 8) == 1
+    slots = list(await read_channel_slots(device))
+    assert await _add_default_public(ctx, device, slots, 8) == 0  # refused, not duplicated
+    assert [s.name for s in await read_channel_slots(device)] == ["Public"]
+
+
+async def test_a_reorder_that_breaks_partway_says_so(ctx: AppContext) -> None:
+    """A relay has no transaction under it, so a link that drops mid-way is reported."""
+    from meshterm.ui.channels import _reorder_channels
+
+    device = await ctx.device()
+    await device.set_channel(0, "Alpha", bytes(range(16)))
+    await device.set_channel(1, "Beta", bytes(range(16, 32)))
+    slots = list(await read_channel_slots(device))
+
+    said: list[str] = []
+
+    class _Ui(_ScriptedUi):
+        def note(self, markup: str) -> None:
+            said.append(markup)
+
+        async def reorder(self, title: str, labels: list):  # noqa: ANN201
+            return [1, 0]  # swap them
+
+    ctx.ui = _Ui(selects=[], texts=[], dialogs=[])
+
+    real = device.set_channel
+    calls = {"n": 0}
+
+    async def flaky(idx: int, name: str, secret) -> None:  # noqa: ANN001
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise RuntimeError("link dropped")
+        await real(idx, name, secret)
+
+    device.set_channel = flaky  # type: ignore[method-assign]
+    assert await _reorder_channels(ctx, device, slots) == 0  # not counted as a clean reorder
+    assert said and "reorder stopped partway" in said[0]
