@@ -20,7 +20,15 @@ from prompt_toolkit.output import DummyOutput
 
 from meshterm.ui.tui.progress import ProgressScreen
 from meshterm.ui.tui.prompt import ButtonDialog
-from meshterm.ui.tui.screen import CANCEL, POP_ALL, BusyScreen, PopToMenu, Screen, ScrollScreen
+from meshterm.ui.tui.screen import (
+    CANCEL,
+    POP_ALL,
+    BusyDialog,
+    BusyScreen,
+    PopToMenu,
+    Screen,
+    ScrollScreen,
+)
 from meshterm.ui.tui.select import Choice, SelectScreen
 from meshterm.ui.tui.session import _CTRL_LETTER_CHORDS, _KEY_ACTIONS, TuiSession
 
@@ -585,6 +593,7 @@ def test_pop_all_is_refused_over_anything_modal() -> None:
         ButtonDialog("Delete it?", [("Cancel", False), ("Delete", True)]),
         ProgressScreen("Working"),
         BusyScreen("checking…"),
+        BusyDialog("saving Lakeside…"),
     ):
         session.push(layer)
         assert session.request_pop_all() is False, f"{type(layer).__name__} must block ^W"
@@ -733,6 +742,10 @@ def test_only_navigational_layers_are_non_modal() -> None:
     assert SelectScreen("list", [Choice("a", 1)]).modal is False
     assert BusyScreen("checking…").floating is False
     assert BusyScreen("checking…").modal is True
+    # ...and its twin is the same claim on the keyboard drawn as a box over what it
+    # interrupts, which is the pair's whole point.
+    assert BusyDialog("saving…").floating is True
+    assert BusyDialog("saving…").modal is True
     assert Screen().modal is False
     assert CANCEL is not POP_ALL
 
@@ -809,3 +822,81 @@ async def test_a_detached_flow_still_reports_a_real_failure() -> None:
     task = session.run_detached(work())
     with pytest.raises(RuntimeError):
         await task
+
+
+# --- work in flight ----------------------------------------------------------
+
+
+async def test_a_key_pressed_during_a_slow_action_reaches_the_hub_that_is_still_armed() -> None:
+    """The defect ``busy_dialog`` exists to close, stated as a test.
+
+    A hub kept up with ``stay`` is armed for the whole visit, so a key pressed while the
+    caller is off doing slow device work still lands on it. Esc resolves the round nobody
+    is waiting for yet, and it is handed back the instant the work finishes — the screen
+    closing on its own a beat after a press that appeared to do nothing.
+    """
+    with create_pipe_input() as inp:
+        session = _session(inp)
+        screen = SelectScreen("hub", [Choice("alpha", 1)])
+        banked: list = []
+
+        async def main() -> None:
+            async with session.stay(screen) as visit:
+                inp.send_text(ESC)  # pressed "while the write is running"
+                await asyncio.sleep(0.05)  # let the input loop dispatch it
+                banked.append(await asyncio.wait_for(visit.result(), timeout=1))
+
+        await asyncio.wait_for(session.run(main()), timeout=5)
+
+    assert banked == [CANCEL]  # the press was banked and comes straight back
+
+
+async def test_the_busy_dialog_takes_the_keys_the_hub_would_have_banked() -> None:
+    """With the card up, the same press dies on it: nothing is banked, nothing resolves.
+
+    This is what makes a slow channel write safe to sit through — the list underneath
+    cannot be filtered down to nothing, cannot be re-fired by an impatient second Enter,
+    and cannot be closed by an Esc that looks ignored until the work lands.
+    """
+    with create_pipe_input() as inp:
+        session = _session(inp)
+        screen = SelectScreen("hub", [Choice("alpha", 1)])
+        timed_out = []
+
+        async def main() -> None:
+            async with session.stay(screen) as visit:
+                async with session.busy_dialog("saving…", title="Channels"):
+                    inp.send_text(ESC + "zzz" + ENTER)  # Esc, filter letters, and Enter
+                    await asyncio.sleep(0.05)
+                    assert session.top.__class__ is BusyDialog  # the card owns the keyboard
+                try:
+                    await asyncio.wait_for(visit.result(), timeout=0.2)
+                except asyncio.TimeoutError:
+                    timed_out.append(True)
+
+        await asyncio.wait_for(session.run(main()), timeout=5)
+
+    assert timed_out == [True]  # nothing was banked while the card was up
+    assert screen._filter == ""  # and the letters never reached the list's filter
+
+
+async def test_the_busy_dialog_is_one_card_however_deeply_it_nests() -> None:
+    """A batch of writes reports as one wait, not a box flashing per write."""
+    with create_pipe_input() as inp:
+        session = _session(inp)
+        depths: list[int] = []
+
+        async def main() -> None:
+            session.push(ScrollScreen("hub", floating=False))
+            async with session.busy_dialog("reordering channels…") as outer:
+                depths.append(len(session._stack))
+                async with session.busy_dialog("moving Lakeside · 1/2") as inner:
+                    assert inner is outer  # the nested wait rides the card already up
+                    depths.append(len(session._stack))
+                outer.message = "moving Dorval · 2/2"  # the owner retitles it as it goes
+                depths.append(len(session._stack))
+            depths.append(len(session._stack))
+
+        await asyncio.wait_for(session.run(main()), timeout=5)
+
+    assert depths == [2, 2, 2, 1]  # pushed once, popped once, hub still underneath

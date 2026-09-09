@@ -32,7 +32,7 @@ from .prompt import (
     TypedConfirmDialog,
     byte_counter,
 )
-from .screen import CANCEL, BusyScreen, PopToMenu, Screen, ScrollScreen
+from .screen import CANCEL, BusyDialog, BusyScreen, PopToMenu, Screen, ScrollScreen
 from .select import Choice, DeleteRequest, SelectScreen, Separator
 from .session import TuiSession, Visit
 from .spinner import Spinner
@@ -41,6 +41,7 @@ __all__ = [
     "TuiSession",
     "Screen",
     "ScrollScreen",
+    "BusyDialog",
     "BusyScreen",
     "SelectScreen",
     "Choice",

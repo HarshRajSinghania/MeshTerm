@@ -46,7 +46,7 @@ from .prompt import (
     TypedConfirmDialog,
     Validator,
 )
-from .screen import CANCEL, POP_ALL, BusyScreen, PopToMenu, Screen, ScrollScreen
+from .screen import CANCEL, POP_ALL, BusyDialog, BusyScreen, PopToMenu, Screen, ScrollScreen
 from .select import Choice, ReorderScreen, SelectScreen, Separator
 from .spinner import spinner_interval
 
@@ -496,6 +496,10 @@ class TuiSession:
         # deliberately *not* on the screen stack: it hovers above every layer and is shown/
         # hidden by busy_overlay, independent of whatever screens are pushed.
         self._overlay: BusyOverlay | None = None
+        # The busy card currently pushed by :meth:`busy_dialog`, or None. Unlike the overlay
+        # this one *is* a screen — it has to be, to take the keys the hub underneath would
+        # otherwise bank — and this holds it so a nested wait rides it instead of stacking.
+        self._busy: BusyDialog | None = None
         # What each drawn layer last composed — ``layer -> (text, carries a wide glyph)`` — so
         # :meth:`_emit` can tell a frame that actually changed from one the 1 Hz refresh just
         # re-rendered identically, and can ask whether anything currently on screen needs the
@@ -1387,6 +1391,91 @@ class TuiSession:
                 pass
             self._overlay = None
             self.invalidate()
+
+    @asynccontextmanager
+    async def busy_dialog(
+        self,
+        message: str = "",
+        *,
+        title: str = "",
+        interval: float | None = None,
+    ) -> AsyncIterator[BusyDialog]:
+        """Float a modal busy card over the current screen for the duration of a block.
+
+        The in-stack counterpart to :meth:`busy_overlay`, and the one a screen wants when
+        *it* starts the slow work::
+
+            async with session.busy_dialog("saving Lakeside…", title="Channels"):
+                await device.set_channel(...)
+
+        Two things separate it from the overlay, and both are why the overlay could not do
+        this job. It is a real :class:`~meshterm.ui.tui.screen.BusyDialog` *pushed on the
+        stack*, so it draws over a hub instead of only in the gaps between screens — the
+        overlay paints on an empty stack alone (see :meth:`_overlay_visible`), which is
+        exactly never while a hub is visited. And being modal, it **owns the keyboard**: a
+        hub kept up with :meth:`stay` stays armed while the work runs, so without a modal
+        layer every key pressed during the wait still reaches it — letters landing in its
+        live filter (a list that comes back showing nothing), Esc resolving it to be handed
+        back the instant the work finishes (a screen that appears to close on its own a
+        beat later). Those presses now reach this card and stop there.
+
+        Nesting keeps the outermost card, so a batch of writes reports as one wait rather
+        than flashing a box per write; the inner block still runs. The caller may retitle
+        the card as it goes — ``busy.message = …`` — which is how a sequence says which
+        step it is on.
+
+        Unlike :meth:`busy_overlay` there is no fade-in. The fade is there so a fast
+        operation shows nothing at all, and that is a fine trade for a cosmetic card; this
+        one is also the key guard, and a guard that arrives late is a guard with a hole in
+        it.
+
+        Args:
+            message: The caption drawn beside the spinner.
+            title: An optional heading naming the feature doing the work.
+            interval: Seconds between spinner frames; defaults to the platform's cadence
+                (see :meth:`busy_startup`, which shares the hazard: the card animates *over*
+                a device read, so a rate the console can't sustain steals the loop from the
+                work it is reporting on).
+
+        Yields:
+            The live :class:`~meshterm.ui.tui.screen.BusyDialog`, so its caption can change.
+        """
+        tick = spinner_interval() if interval is None else interval
+        if self._busy is not None:  # a nested wait rides the card its caller already put up
+            yield self._busy
+            return
+        screen = BusyDialog(message, title=title)
+        # A lone floating screen on an empty stack is drawn *as* the background, framed and
+        # full-frame rather than as a box, so it gets the same blank backdrop every other
+        # dialog uses (see :meth:`_run_dialog_screen`).
+        backdrop = None
+        if not self._stack:
+            backdrop = ScrollScreen("", floating=False, footer_hint="")
+            self.push(backdrop)
+        self._busy = screen
+        self.push(screen)
+
+        async def animate() -> None:
+            while True:
+                await asyncio.sleep(tick)
+                screen.tick()
+                self.invalidate()
+
+        ticker = asyncio.ensure_future(animate())
+        try:
+            yield screen
+        finally:
+            ticker.cancel()
+            try:
+                await ticker
+            except asyncio.CancelledError:
+                pass
+            except Exception:  # noqa: BLE001 - a spinner hiccup must never break a flow
+                pass
+            self._busy = None
+            self.pop(screen)
+            if backdrop is not None:
+                self.pop(backdrop)
 
     # --- application lifecycle ------------------------------------------------
 

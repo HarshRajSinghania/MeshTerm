@@ -17,6 +17,7 @@ from collections.abc import Callable, Sequence
 from collections.abc import Sequence as _SequenceABC
 from typing import Any
 
+from rich.cells import cell_len
 from rich.console import RenderableType
 from rich.text import Text
 
@@ -721,3 +722,47 @@ class BusyScreen(Screen):
     def handle(self, action: str, data: str = "") -> None:
         """Swallow all keys: the splash dismisses itself when the task finishes."""
         return
+
+
+class BusyDialog(BusyScreen):
+    """A busy splash drawn as a box over the screen it interrupts.
+
+    :class:`BusyScreen`'s twin, for work started *from* a screen rather than instead of one:
+    same spinner, same caption, same swallow-everything :meth:`~BusyScreen.handle` — but
+    ``floating``, so the hub that started the work stays visible beneath it as a backdrop
+    instead of being replaced.
+
+    Modal by inheritance, and that is the half that matters. A hub screen kept on the stack
+    with ``session.stay`` is *armed the whole time* (see
+    :meth:`~meshterm.ui.tui.session.Visit._arm`), so while it sits there waiting for a slow
+    device write every key a reader presses still reaches it: letters land in its live filter
+    and Esc resolves it, to be handed back the instant the work finishes. A modal screen on
+    top is what stops that — the key reaches this dialog and dies here.
+
+    :meth:`~meshterm.ui.tui.session.TuiSession.busy_overlay` cannot do the job: it is not a
+    screen, so it is never consulted for a keypress, and it paints only when the stack is
+    empty — over a pushed hub it draws nothing at all.
+    """
+
+    floating = True
+
+    @property
+    def dialog_width(self) -> int:
+        """Hug the caption rather than stretching to the dialog cap.
+
+        A spinner and four words have no business in a 94-cell box. The compositor still
+        caps this to the terminal (see :func:`~meshterm.ui.tui.frame._dialog_layout`), and
+        the width ratchets, so a caption that grows mid-batch never makes the box shrink
+        back and jitter.
+        """
+        return cell_len(self._message) + 8  # spinner, its two spaces, and the padded border
+
+    @property
+    def message(self) -> str:
+        """The caption beside the spinner."""
+        return self._message
+
+    @message.setter
+    def message(self, text: str) -> None:
+        """Retitle the card mid-batch (a sequence of writes reporting which one it is on)."""
+        self._message = text

@@ -134,6 +134,18 @@ class Ui:
         """
         raise NotImplementedError
 
+    def busy_dialog(self, message: str = "", *, title: str = ""):  # noqa: ANN201 - async CM, varies by backend
+        """Return an async context manager that floats a **modal** busy card over a screen.
+
+        The counterpart to :meth:`busy_overlay`, for slow work a *screen* starts rather than
+        work that happens in the gap between screens. The overlay is not a screen at all: it
+        draws only on an empty stack and it takes no keys, so a hub that stays pushed while
+        it works gets neither the card nor the protection. This one is pushed and modal — see
+        :meth:`~meshterm.ui.tui.session.TuiSession.busy_dialog` for what that buys. In
+        scripted CLI mode it does nothing, as the overlay does.
+        """
+        raise NotImplementedError
+
     async def select(
         self,
         title: str,
@@ -407,6 +419,11 @@ class PlainUi(Ui):
         """Do nothing: the scripted CLI has no full-screen surface to float a skeleton over."""
         yield
 
+    @asynccontextmanager
+    async def busy_dialog(self, message: str = "", *, title: str = "") -> AsyncIterator[None]:
+        """Do nothing: there is no screen to interrupt and no keyboard to take."""
+        yield
+
     def _no_prompt(self) -> RuntimeError:
         """Build the error raised if a rich prompt is reached on the non-interactive path."""
         return RuntimeError("interactive prompts are only available in the menu")
@@ -655,6 +672,10 @@ class TuiUi(Ui):
     def busy_overlay(self, message: str = "", *, title: str = ""):  # noqa: ANN201
         """Float the session's top-most skeleton card while the wrapped block runs."""
         return self.session.busy_overlay(message, title=title)
+
+    def busy_dialog(self, message: str = "", *, title: str = ""):  # noqa: ANN201
+        """Push the session's modal busy card over the current screen while the block runs."""
+        return self.session.busy_dialog(message, title=title)
 
     # --- input ---------------------------------------------------------------
 
