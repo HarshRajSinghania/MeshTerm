@@ -15,6 +15,129 @@ allowed to change behaviour, not just add to it.
   getting ready. Keep the dates and the tags; replace the prose.
 -->
 
+## [Unreleased]
+
+## [0.3.1] — 2026-09-09
+
+### Added
+
+- **Devices you never want to connect to can be hidden from the splash.** A machine with a
+  debug probe, a programmer and a USB adapter soldered into it listed all three on every
+  start, in front of the one radio you came for. `h` drops the highlighted device and
+  remembers it, `⇧H` brings every hidden one back, and both keys are named in the footer
+  only where they would act.
+
+  Hiding is a listing choice and nothing else — a hidden device is still remembered, still
+  resolvable by `--port`, and shows itself again the moment it is connected to. The
+  highlight stays where the row was rather than jumping back to the remembered default, so
+  a run of adapters clears with a run of presses.
+
+### Changed
+
+- **The chat picker's conversation lane is measured against the names the list actually
+  holds**, instead of a flat 22 cells. Every cell past the longest name was padding in
+  front of a short one, taken straight out of the last-message preview — the only run on
+  the row with something to say, and on the PicoCalc's 53 columns it left the message 12
+  cells. The preview keeps what it saves: 31 cells to 37 on a 72-column terminal, 12 to 18
+  on the console. What the cap costs is the tail of a long name, so `←→` now slides the
+  message under the pinned columns to read one past its own edge.
+
+- **Channels shows the wait instead of announcing the result.** Every action banked a
+  "created X" note that surfaced only once the manager closed — by which time the refreshed
+  list had already shown the result — and the notes accumulated: at three changes in one
+  visit the outcome outgrew the acknowledgement popup and came back as the full-frame
+  result window instead, so the same visit reported itself two different ways depending on
+  how much had been done in it. Every device action now reports while it runs, under a
+  modal busy card, and the count stays in the run log.
+
+- Renaming a channel no longer closes the page it renamed. The channel is still there and
+  that is still its page, so the new name and key are read back into the title and the
+  rows, and the reader stays put. Only clearing it closes it, which is the one case where
+  what the page was about is gone.
+
+- `Esc` on the device splash says **bye** rather than quit — the splash is the door, and
+  nothing has been started there to quit out of.
+
+### Fixed
+
+- **macOS and Linux were drawing the whole app in 256 colours.** prompt_toolkit picks the
+  colour depth per output class, and its two classes disagree: the Windows one returns
+  truecolor outright, the VT100 one returns 8-bit for every `TERM` but `linux`. Nothing
+  ever passed a depth, so the same build drawing the same theme was 24-bit on Windows and
+  quantized to the 216-colour cube everywhere else — silently, which is why it went
+  unnoticed. The app looked fine, just flatter.
+
+  It costs exactly what this palette is made of. The seven heat steps and the per-node hue
+  wheel are close pastels chosen to be told apart; snapped to the cube, neighbours collide
+  and an identity stops being distinguishable by hue. `COLORTERM` is not consulted by
+  prompt_toolkit at all, so a terminal announcing truecolor the conventional way was still
+  handed 256.
+
+  The resolver only ever raises the verdict. A terminal that cannot be shown to do better
+  keeps precisely the depth it had, because guessing 24-bit at a terminal without it costs
+  not a duller palette but the colour entirely. A 16-slot console is never promoted — the
+  theme addresses its palette by index, and RGB has nowhere to land there.
+
+- **Adding a channel could write straight over one that was already there.** The free-slot
+  probe stops for two very different reasons and returned the same short list either way:
+  off the end of the configured slots it is the truth, but a read that simply failed left
+  whatever it had — and that was cached for the session, an empty one reading exactly like
+  a device with no channels, a truncated one making the next free slot look free with a
+  channel sitting in it. The probe now says whether it finished, an unfinished one is
+  answered but not kept, and every add confirms the slot is empty before anything is
+  written to it.
+
+- Keys tapped during a slow channel write were landing in the filter of the list
+  underneath, which then came back showing nothing. The busy card is modal, so the press
+  dies on the card instead.
+
+- **Channels at 53 columns.** The column header was a hand-built string with no idea of the
+  render width: it ran to 54 cells and wrapped, costing a content row out of twenty-six and
+  drawing the pinned landmark twice. The command rows hand-padded their icons, so the
+  one-cell marks started their labels a column left of the two-cell ones. The empty-message
+  count was `·`, which in that same row is also the status separator and what the console
+  folds 🔕 to — a muted channel with no messages drew it twice, two cells apart, meaning
+  different things; it is `○` now, the app's empty mark. And the detail title was a 42-cell
+  parenthesised blob that filled the PicoCalc's whole title bar, leaving nowhere to say Esc
+  leaves.
+
+- Every channel edit paid up to 64 device round-trips before the screen could redraw. The
+  chat service's slot map was walking the radio itself, unbounded, skipping empty slots all
+  the way to the 64-slot cap on firmware that never rejects an index — on top of the
+  manager's own re-read. It builds from the probe that was being made anyway.
+
+- A channel write that landed and then raised never invalidated what it had made stale, so
+  a slot list and a chat slot map outlived a layout that had already moved. A reorder that
+  drops partway now says so at once, since the reader is about to be looking straight at
+  the half-applied layout, and the standard Public channel can no longer be added twice by
+  a second press already on its way.
+
+- Two of the Trophy case's seven discipline marks started their titles a column left of
+  their siblings: 🛣 and 🕸 sit outside Emoji_Presentation, so Rich and wcwidth both measure
+  them at one cell where the other five measure two. The marks now pad out to the widest of
+  the seven, measured against what the platform will actually draw rather than written
+  down.
+
+- A route that has finished no longer ends on the chevron that means "the path runs on past
+  the edge" — it ends square, and the cell that frees up goes back to the route.
+
+- **A fully charged pack redrew the activity sparkline twice a minute.** The charger cuts
+  out at full, the pack settles back to 99, the charger restarts, and the companion reports
+  that flip every poll for as long as the thing is plugged in. The gauge is pinned to the
+  header's right edge and the pulse takes whatever is left, so the fourth cell `100%`
+  needed came off the sparkline and redrew the whole activity history at a new scale, on a
+  device sitting still. A full pack reads `100` now, with no sign: three cells, exactly as
+  the `99%` it keeps flipping back to, and the one reading whose `%` can be inferred.
+
+- On the PicoCalc every channel row in the chat picker sat a cell to the left of every
+  direct row, with the header over neither — the marker lane padded to a two-cell channel
+  glyph that the console font draws in one.
+
+- The device splash's own header wrapped at 53 columns, and its DEVICE lane sized itself to
+  the longest name — which for a USB adapter is a forty-character product string, pushing
+  HARDWARE off the edge entirely. The name lane yields now, and `←→` reads the rest of a
+  long model string with the lanes in front of it pinned.
+
 ## [0.3.0] — 2026-09-08
 
 The command line was rebuilt around the fact that it has **two readers**, and that trying
@@ -395,8 +518,13 @@ deliberately not reconstructed here.
 - Two `TYPE_CHECKING` imports the test suite referenced but never imported, on paths that
   happened never to run.
 
-[Unreleased]: https://github.com/jpmartineau/MeshTerm/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/jpmartineau/MeshTerm/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/jpmartineau/MeshTerm/releases/tag/v0.3.1
 [0.3.0]: https://github.com/jpmartineau/MeshTerm/releases/tag/v0.3.0
+[0.2.8]: https://github.com/jpmartineau/MeshTerm/releases/tag/v0.2.8
+[0.2.7]: https://github.com/jpmartineau/MeshTerm/releases/tag/v0.2.7
+[0.2.6]: https://github.com/jpmartineau/MeshTerm/releases/tag/v0.2.6
+[0.2.5]: https://github.com/jpmartineau/MeshTerm/releases/tag/v0.2.5
 [0.2.4]: https://github.com/jpmartineau/MeshTerm/releases/tag/v0.2.4
 [0.2.3]: https://github.com/jpmartineau/MeshTerm/releases/tag/v0.2.3
 [0.2.2]: https://github.com/jpmartineau/MeshTerm/releases/tag/v0.2.2
