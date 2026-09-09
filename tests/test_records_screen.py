@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
+from rich.cells import cell_len
 from rich.console import Console
 
 from meshterm.context import AppContext
@@ -22,7 +23,13 @@ from meshterm.core.config import Settings
 from meshterm.core.device_store import DeviceStore
 from meshterm.persistence.repository import DiscoveredPath, Repository
 from meshterm.services.records import CATEGORIES, CATEGORY_BY_ID
-from meshterm.ui.records_screen import RecordDialog, WalkVertex, open_records
+from meshterm.ui.records_screen import (
+    RecordDialog,
+    WalkVertex,
+    discipline_label,
+    discipline_lane,
+    open_records,
+)
 from meshterm.ui.surface import TuiUi
 from meshterm.ui.tui import frame
 from meshterm.ui.tui.prompt import TypedConfirmDialog
@@ -513,7 +520,14 @@ async def test_the_board_pins_its_discipline_heading_and_description(tui_ctx) ->
         blocks = [
             [_plain([line]).strip() for line in rows] for _idx, rows in browser._sticky_headers
         ]
-        assert [rows[0] for rows in blocks] == [f"── {c.icon} {c.title} ──" for c in CATEGORIES]
+        lane = discipline_lane()
+        assert [rows[0] for rows in blocks] == [
+            f"── {discipline_label(c, lane)} ──" for c in CATEGORIES
+        ]
+        # And every one of them starts its title in the same column: the marks are not all
+        # the same width (🛣 and 🕸 are one cell where the rest are two), so the lane pads.
+        starts = {cell_len(discipline_label(c, lane)) - cell_len(c.title) for c in CATEGORIES}
+        assert len(starts) == 1
         assert all(len(rows) >= 2 for rows in blocks)  # each carries its description too
         # Highlighting deep in the one populated board scrolls its heading off the top of a
         # short viewport; the heading leads what pins, its description under it.
@@ -521,7 +535,7 @@ async def test_the_board_pins_its_discipline_heading_and_description(tui_ctx) ->
             browser.handle("down")
         visible, above, _below = frame._visible_slice(browser, browser.render_body(72), 10)
         board = CATEGORY_BY_ID["grand_tour"]
-        assert _plain([visible[0]]).strip() == f"── {board.icon} {board.title} ──"
+        assert _plain([visible[0]]).strip() == f"── {discipline_label(board, lane)} ──"
         assert _plain([visible[1]]).strip().startswith(board.description[:20])
         assert above is True
         browser.resolve(None)  # Esc

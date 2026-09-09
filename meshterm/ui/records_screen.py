@@ -51,7 +51,7 @@ from .mapcanvas import RGB, MapCanvas
 from .menus import fit_cells, marked_label, section_heading
 from .pathgraph import PathLayer, render_path_graph
 from .pathline import path_line
-from .theme import name_style, snr_style
+from .theme import glyph, name_style, snr_style
 from .tui.render import render_hanging, render_to_ansi
 from .tui.screen import Screen
 from .widgets import (
@@ -100,6 +100,42 @@ _SIDE_BY_SIDE_MIN = 44
 #: lanes, the spec row's hanging indent, the recorded line — shares this one column, so
 #: the values align whatever the label says.
 _LABEL_W = 12
+
+
+def discipline_label(category: Category, lane: int) -> str:
+    """One discipline's mark padded to ``lane`` cells, then its title.
+
+    THE way a board's name is written, so the seven headings — and the seven rows of the
+    delete picker — start their titles in one column instead of two. The marks are not all
+    the same width: ``🛣`` and ``🕸`` sit outside Emoji_Presentation and are one cell where
+    the other five are two, which is what left ``🛣 Longest distance`` a column adrift of
+    ``🎯 Farthest node``, and its gap looking closed on a terminal that paints the road
+    wider than it advances (JP, 2026-09-09).
+
+    The same rule as a command row's icon column (:func:`~meshterm.ui.menus.icon_lane`) and
+    deliberately not that function: a command row *drops* its icon where the platform draws
+    no icon lane, and a board's mark is part of its name on both platforms. So the lane is
+    measured over what :func:`~meshterm.ui.theme.glyph` will actually draw here, and the
+    marks stay.
+
+    Args:
+        category: The discipline being named.
+        lane: The mark column's width, from :func:`discipline_lane`.
+
+    Returns:
+        ``"<mark><pad><title>"``, its trailing separator space included in the pad.
+    """
+    mark = glyph(category.icon)
+    return f"{mark}{' ' * max(1, lane - cell_len(mark) + 1)}{category.title}"
+
+
+def discipline_lane() -> int:
+    """Cells the widest discipline mark claims on this platform (see :func:`discipline_label`).
+
+    Measured, never written down: the marks change with the platform, and a substitution
+    that later narrows simply tightens every heading by a cell without anything else moving.
+    """
+    return max(cell_len(glyph(category.icon)) for category in CATEGORIES)
 
 
 def _drawn_rows(lines: list[str]) -> list[str]:
@@ -577,6 +613,9 @@ async def open_records(ctx: AppContext) -> dict:
     # its far node). Read once here; the far node is matched against these keys per record.
     target_counts = ctx.repo.target_trace_counts()
 
+    # The mark column every board heading writes its title after (see discipline_label).
+    mark_lane = discipline_lane()
+
     # Node positions and types for a record's area drawing, gathered live the same way the
     # trace tools gather them to score a walk: adverts we've heard, contacts over them. A
     # record stores canonical ids, so match those the resolver's way (a prefix either side).
@@ -694,7 +733,7 @@ async def open_records(ctx: AppContext) -> dict:
 
     def describe(category: Category) -> list:
         """The heading and its word-wrapped description as non-selectable rows."""
-        rows: list = [section_heading(f"{category.icon} {category.title}")]
+        rows: list = [section_heading(discipline_label(category, mark_lane))]
         desc = category.description
         if category.needs_positions and self_pos is None:
             desc += " — needs your location (set it in Config) to score"
@@ -776,12 +815,13 @@ async def open_records(ctx: AppContext) -> dict:
     async def delete_category_flow() -> None:
         """Pick a discipline, confirm, and delete its records (every width)."""
         rows: list = []
+        lane = discipline_lane()
         for category in CATEGORIES:
             count = len(ctx.repo.discoveries(category.id))
             rows.append(
                 Choice(
                     title=Text.assemble(
-                        (f"{category.icon} {category.title}  ", ""),
+                        (f"{discipline_label(category, lane)}  ", ""),
                         (f"{count} record{'s' if count != 1 else ''}, all widths", "muted"),
                     ),
                     value=category.id,

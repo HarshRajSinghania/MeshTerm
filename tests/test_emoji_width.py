@@ -132,6 +132,10 @@ def test_bare_text_default_emoji_are_left_exactly_as_measured() -> None:
     # A heading built around one costs its own cells and no more, so the row frames flush.
     caption = cell_len(f"── {_ROAD} Longest distance ──")
     assert caption == len("── ") + 1 + len(" Longest distance ──")
+    # The Trophy case's *visible* gap after the road is not this module's business and must
+    # not become it: the heading pads the mark out to the widest of the seven disciplines
+    # (records_screen.discipline_label), which costs a real cell the terminal advances over
+    # — where widening the glyph here would claim one it does not.
 
 
 def test_flags_measure_two_cells_in_both_authorities() -> None:
