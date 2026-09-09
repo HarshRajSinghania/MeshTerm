@@ -146,6 +146,16 @@ class ChannelSlot:
 async def manage_channels(ctx: AppContext) -> int:
     """Run the interactive channel manager until the user backs out.
 
+    The visit acknowledges itself **once**, through the count returned here: the tool turns
+    it into a single line and the menu floats that as an OK popup. Each action used to bank
+    a "✓ created …" note of its own on top of that, which nobody could read until the
+    manager closed — by which time the refreshed list had already shown the result — and
+    three of them in one visit pushed the outcome past the popup's line budget (see
+    :func:`~meshterm.ui.surface._collapse_to_message`) and into the full result window, so
+    the same visit reported itself as a dialog or as a window depending on how much had been
+    done in it. An error is the exception, and is shown when it happens rather than banked
+    (see :func:`_import_link`).
+
     Args:
         ctx: Shared application context (provides the connected device and UI surface).
 
@@ -765,7 +775,6 @@ async def _create_private(
         return 0
     secret = random_secret()
     await write_channel(ctx, device, idx, name.strip(), secret)
-    ctx.ui.note(f"[ok]✓[/ok] created private channel [brand]{name.strip()}[/brand]")
     await _show_share(ctx, name.strip(), secret, intro="Share this channel:")
     return 1
 
@@ -778,7 +787,6 @@ async def _add_default_public(
     if idx is None:
         return 0
     await write_channel(ctx, device, idx, "Public", DEFAULT_PUBLIC_SECRET)
-    ctx.ui.note("[ok]✓[/ok] added the standard [brand]Public[/brand] channel")
     return 1
 
 
@@ -801,7 +809,6 @@ async def _add_public(
         name = f"#{name}"
     secret = derive_secret(name)  # what the firmware will compute; kept for the QR/share
     await write_channel(ctx, device, idx, name, None)  # None => firmware derives the key from name
-    ctx.ui.note(f"[ok]✓[/ok] added public channel [brand]{name}[/brand]")
     await _show_share(ctx, name, secret, intro="Share this channel:")
     return 1
 
@@ -833,7 +840,6 @@ async def _join_with_key(
     name, key = answers
     secret = normalize_secret(key)
     await write_channel(ctx, device, idx, name.strip(), secret)
-    ctx.ui.note(f"[ok]✓[/ok] joined [brand]{name.strip()}[/brand]")
     return 1
 
 
@@ -849,11 +855,13 @@ async def _import_link(
         return 0
     parsed = parse_share_url(url)
     if parsed is None:  # pragma: no cover - guarded by the validator
+        # Shown now, not banked: an error is about the action in front of the reader, and
+        # the only thing this one leaves behind is a slot that stayed empty.
         ctx.ui.note("[err]not a valid channel link[/err]")
+        await ctx.ui.present(title="Channels")
         return 0
     name, secret = parsed
     await write_channel(ctx, device, idx, name, secret)
-    ctx.ui.note(f"[ok]✓[/ok] imported [brand]{name}[/brand]")
     return 1
 
 
@@ -890,7 +898,6 @@ async def _edit(ctx: AppContext, device: Device, slot: ChannelSlot) -> bool:
     name = name.strip()
     secret = normalize_secret(key) if key.strip() else None
     await write_channel(ctx, device, slot.idx, name, secret)
-    ctx.ui.note(f"[ok]✓[/ok] updated channel [brand]{name}[/brand]")
     return True
 
 
@@ -913,7 +920,6 @@ async def _clear(ctx: AppContext, device: Device, slot: ChannelSlot) -> bool:
     ctx.chat.set_active(slot.conversation.key)  # drop its unread before the slot goes away
     ctx.chat.set_active(None)
     await write_channel(ctx, device, slot.idx, "", None)  # empty name => the slot reads as unused
-    ctx.ui.note(f"[warn]cleared channel {slot.name}[/warn]")
     return True
 
 

@@ -35,6 +35,7 @@ from meshterm.persistence.repository import Repository
 from meshterm.services.chat_service import ChatService
 from meshterm.tools.channels import ChannelsTool
 from meshterm.ui.channels import (
+    _CREATE,
     ChannelSlot,
     _apply_order,
     _next_free_slot,
@@ -878,3 +879,57 @@ async def test_cli_clear_of_an_empty_slot_is_a_no_op(ctx: AppContext) -> None:
     tool = ChannelsTool()
     result = await tool.run(ctx, {"cli_action": "clear", "index": 7})
     assert result.summary == {"index": 7, "cleared": False}
+
+
+class _RecordingSession:
+    """Records which surface :meth:`TuiUi.present` chose — the popup or the result window."""
+
+    def __init__(self) -> None:
+        self.shown: list[tuple[str, str]] = []
+
+    async def message_dialog(self, message, title: str = "") -> None:  # noqa: ANN001
+        self.shown.append(("popup", title))
+
+    async def scroll(self, renderable, *, title: str = "", footer_hint: str = "") -> None:  # noqa: ANN001
+        self.shown.append(("window", title))
+
+
+class _PresentingUi(_ScriptedUi):
+    """Scripted answers, but real note buffering — so what the visit *shows* can be asserted."""
+
+    def __init__(self, selects: list, texts: list, dialogs: list) -> None:
+        from meshterm.ui.surface import TuiUi
+
+        super().__init__(selects, texts, dialogs)
+        self.session_spy = _RecordingSession()
+        self.surface = TuiUi(self.session_spy)  # no ``.session`` attribute: stays headless
+
+    def note(self, markup: str) -> None:
+        self.surface.note(markup)
+
+    def ack(self, markup: str) -> None:
+        self.surface.ack(markup)
+
+
+async def test_a_busy_visit_still_reports_itself_in_a_popup(ctx: AppContext) -> None:
+    """Three changes in one visit must acknowledge as a dialog, not the full result window.
+
+    Reproduces the reported bug: every action banked its own "✓ created …" note, so the
+    outcome grew a line per change and the third one pushed it past the popup's budget —
+    the same visit reported itself as a tidy dialog or as a full-frame window depending on
+    how much had been done in it. The visit now acknowledges once, in the tool's summary.
+    """
+    ui = _PresentingUi(
+        selects=[_CREATE, _CREATE, _CREATE, None],  # create three channels, then Esc
+        texts=["One", "Two", "Three"],
+        dialogs=[],
+    )
+    ctx.ui = ui
+    result = await ChannelsTool().run(ctx, {})
+
+    assert result.summary == {"changes": 3}
+    # The menu's own tail: note the tool's message, then present what the run buffered.
+    if result.message:
+        ui.surface.note(result.message)
+    await ui.surface.present(title="Channels")
+    assert ui.session_spy.shown == [("popup", "Channels")]
