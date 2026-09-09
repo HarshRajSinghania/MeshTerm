@@ -25,17 +25,17 @@ OK, WARN, INFO = "ok  ", "warn", "    "
 
 def git(*args: str) -> str:
     """Run a git command in the repo, returning stripped stdout ('' on failure)."""
-    done = subprocess.run(
-        ["git", "-C", str(ROOT), *args], capture_output=True, text=True
-    )
+    done = subprocess.run(["git", "-C", str(ROOT), *args], capture_output=True, text=True)
     return done.stdout.strip() if done.returncode == 0 else ""
 
 
 def say(mark: str, line: str) -> None:
+    """Print one finding, indented under its heading; a blank mark is a plain note."""
     print(f"  {mark}  {line}" if mark.strip() else f"      {line}")
 
 
 def current_version() -> str:
+    """The version `meshterm/__init__.py` declares - the only place one is written."""
     found = re.search(r'^__version__\s*=\s*"([^"]+)"', INIT.read_text(encoding="utf-8"), re.M)
     return found.group(1) if found else "?"
 
@@ -49,6 +49,7 @@ def latest_tag() -> str:
 
 
 def next_patch(version: str) -> str:
+    """The default bump. Any other part is JP's call, and he says which."""
     parts = version.split(".")
     if len(parts) != 3 or not parts[2].isdigit():
         return "?"
@@ -56,6 +57,7 @@ def next_patch(version: str) -> str:
 
 
 def main() -> int:
+    """Print the report. Nothing here blocks; every line is for a person to act on."""
     version, tag = current_version(), latest_tag()
     text = CHANGELOG.read_text(encoding="utf-8")
 
@@ -92,22 +94,26 @@ def main() -> int:
     refs = set(re.findall(r"^\[(\d[^\]]*)\]:", text, re.M))
     missing = sorted(versions - refs, key=lambda v: [int(p) for p in re.findall(r"\d+", v)])
     if missing:
+        # Cosmetic only: the heading renders as literal brackets instead of a link. The
+        # release notes come from the section body, so a published release is unaffected.
         say(WARN, f"link refs missing at the bottom for: {', '.join(missing)}")
+        say(INFO, "(cosmetic - the heading loses its link; release notes are unaffected)")
     else:
         say(OK, "every version heading has its link ref")
 
     print("\nTree")
     dirty = git("status", "--porcelain")
-    say(OK if not dirty else WARN,
-        "clean" if not dirty else f"{len(dirty.splitlines())} uncommitted change(s)")
+    say(
+        OK if not dirty else WARN,
+        "clean" if not dirty else f"{len(dirty.splitlines())} uncommitted change(s)",
+    )
     branch = git("rev-parse", "--abbrev-ref", "HEAD")
     say(OK if branch == "main" else WARN, f"on {branch}")
     git("fetch", "--quiet", "origin")
     counts = git("rev-list", "--left-right", "--count", "origin/main...HEAD")
     if counts:
         behind, ahead = counts.split()
-        say(OK if behind == "0" else WARN,
-            f"{ahead} ahead / {behind} behind origin/main")
+        say(OK if behind == "0" else WARN, f"{ahead} ahead / {behind} behind origin/main")
 
     print("\nRun the gates before tagging:")
     print("      python -m pytest -q && ruff check . && ruff format --check .\n")
