@@ -146,21 +146,24 @@ class ChannelSlot:
 async def manage_channels(ctx: AppContext) -> int:
     """Run the interactive channel manager until the user backs out.
 
-    The visit acknowledges itself **once**, through the count returned here: the tool turns
-    it into a single line and the menu floats that as an OK popup. Each action used to bank
-    a "✓ created …" note of its own on top of that, which nobody could read until the
-    manager closed — by which time the refreshed list had already shown the result — and
-    three of them in one visit pushed the outcome past the popup's line budget (see
-    :func:`~meshterm.ui.surface._collapse_to_message`) and into the full result window, so
-    the same visit reported itself as a dialog or as a window depending on how much had been
-    done in it. An error is the exception, and is shown when it happens rather than banked
-    (see :func:`_import_link`).
+    The visit says **nothing** on the way out. It used to bank a note per action and then an
+    "✓ applied 3 channel changes" line on top of those, shown once the manager had already
+    closed — an acknowledgement for changes the reader had just watched land in the list in
+    front of them, arriving as a tidy popup or as a full-frame window depending on how many
+    lines had piled up. An error is the exception, and is shown when it happens (see
+    :func:`_import_link`).
+
+    What the reader gets instead is the wait itself: every device action reports *while it
+    runs*, under the modal busy card (:meth:`~meshterm.ui.surface.Ui.busy_dialog`) — see
+    :func:`write_channel` and ``settle`` below for where those are drawn, and why the card
+    has to be modal.
 
     Args:
         ctx: Shared application context (provides the connected device and UI surface).
 
     Returns:
-        The number of channels created, changed, or cleared during the session.
+        How many channels were created, changed, or cleared — the run log's record of what
+        the visit did (``ToolResult.summary``), not anything the reader is shown.
     """
     device = await ctx.device()
     # The firmware's slot count is fixed for the session, so discover it once (a read-only
@@ -174,7 +177,6 @@ async def manage_channels(ctx: AppContext) -> int:
     stats = _LiveStats(ctx)
     changes = 0
     highlight: object | None = None
-
     slots: list = []
 
     async def reload() -> tuple[str, list]:
@@ -190,13 +192,36 @@ async def manage_channels(ctx: AppContext) -> int:
         slots = list(await ctx.devstate.channel_slots())
         return _menu_items(ctx, slots, capacity, stats)
 
+    async def settle(*, moved: bool = False) -> tuple[str, list]:
+        """Re-probe the layout — and, when a slot actually moved, re-file what points at it.
+
+        Two device round-trips back to back when something changed (the chat service's slot
+        map and the slot probe ``reload`` calls one of the slowest reads the app makes), so
+        they report as a single wait rather than boxes flashing in sequence — and while the
+        card is up the reader cannot type into a list whose rows are being replaced
+        underneath them.
+
+        Args:
+            moved: Whether a slot's occupant changed during the round just finished. The
+                caller decides that by comparing ``devstate.channels_epoch``, not by trusting
+                a count (see :func:`write_channel`, which drops the cache as it writes).
+        """
+        async with ctx.ui.busy_dialog("reading channels…", title="Channels"):
+            if moved:
+                # Inbound messages carry only a slot index, which the chat service maps to a
+                # channel identity through a cache keyed by slot; refresh it now so a message
+                # on a reused/re-keyed slot is filed under the channel that's actually there
+                # and not the one that used to be — otherwise its transcript surfaces in the
+                # wrong chat.
+                await _refresh_chat_channels(ctx)
+            return await reload()
+
     async def handle(choice: object) -> bool:
         """Dispatch one menu choice (over the still-pushed list); ``False`` exits."""
         nonlocal changes, highlight
         if choice is None:  # Esc
             return False
         highlight = choice
-        before = changes
         if choice == _CREATE:
             changes += await _create_private(ctx, device, slots, capacity)
         elif choice == _DEFAULT_PUBLIC:
@@ -213,17 +238,6 @@ async def manage_channels(ctx: AppContext) -> int:
             slot = next((s for s in slots if s.idx == choice), None)
             if slot is not None:
                 changes += await _channel_detail(ctx, device, slot, stats)
-        if changes > before:
-            # A slot's occupant changed (created, re-keyed, cleared, or moved). Drop the
-            # session cache's channel list so the dashboard (and anything else reading it)
-            # re-reads the new layout instead of a stale copy.
-            ctx.devstate.invalidate_channels()
-            # Inbound messages carry only a slot index, which the chat service maps to a
-            # channel identity through a cache keyed by slot; refresh it now so a message
-            # on a reused/re-keyed slot is filed under the channel that's actually there
-            # and not the one that used to be — otherwise its transcript surfaces in the
-            # wrong chat.
-            await _refresh_chat_channels(ctx)
         return True
 
     # The list stays pushed for the whole visit: every sub-flow — creating a channel,
@@ -231,20 +245,38 @@ async def manage_channels(ctx: AppContext) -> int:
     # swapped in place afterwards, so the highlight (and any typed filter) survives a layout
     # that changed under it. A surface with no session — the plain CLI, scripted tests — has
     # no stack to stay on and runs the same dispatcher a round at a time.
-    title, items = await reload()
+    title, items = await settle()
     session = getattr(ctx.ui, "session", None)
     if session is None:
         while True:
-            if not await _menu_round(ctx, title, items, default=highlight, handle=handle):
+            epoch = ctx.devstate.channels_epoch
+            try:
+                keep = await _menu_round(ctx, title, items, default=highlight, handle=handle)
+            except BaseException:
+                # A write that landed and then raised — or a ^W unwinding out through the QR
+                # view opened after it — moved the device just as much as one that returned
+                # cleanly. The epoch says so where the action's return value never got the
+                # chance to, so the chat map is re-filed on the way past.
+                if ctx.devstate.channels_epoch != epoch:
+                    await _refresh_chat_channels(ctx)
+                raise
+            if not keep:
                 return changes
-            title, items = await reload()
+            title, items = await settle(moved=ctx.devstate.channels_epoch != epoch)
     menu = SelectScreen(title, items)
     async with session.stay(menu) as visit:
         while True:
             choice = await visit.result()
-            if not await handle(None if choice is CANCEL else choice):
+            epoch = ctx.devstate.channels_epoch
+            try:
+                keep = await handle(None if choice is CANCEL else choice)
+            except BaseException:
+                if ctx.devstate.channels_epoch != epoch:  # see the note on the other loop
+                    await _refresh_chat_channels(ctx)
+                raise
+            if not keep:
                 return changes
-            title, items = await reload()
+            title, items = await settle(moved=ctx.devstate.channels_epoch != epoch)
             menu.replace_items(items, title=title)
 
 
@@ -354,6 +386,11 @@ async def write_channel(
     a name-derived channel's derived key so it can later be replayed as-is. Remembering is
     best-effort: it never blocks or fails the actual device write.
 
+    Being the one boundary, it is also where the *wait* is reported: the write and the
+    identity probe behind it are a device round-trip each, and until the card went up the
+    list sat there looking idle and fully interactive while they ran. A batch (a reorder)
+    nests inside its caller's card rather than flashing one box per slot.
+
     Args:
         ctx: Shared application context (for the channel store and cached self-info).
         device: The connected device to write to.
@@ -361,6 +398,21 @@ async def write_channel(
         name: The channel name (empty clears the slot).
         secret: The 16-byte secret, or ``None`` to let the firmware derive it from the name.
     """
+    caption = f"clearing slot {idx}…" if not name.strip() else f"saving {name.strip()}…"
+    async with ctx.ui.busy_dialog(caption, title="Channels"):
+        await _write_and_remember(ctx, device, idx, name, secret)
+    # The layout on the device is no longer what anything cached, so say so here rather
+    # than leaving each caller to remember: the menu's manager did (and lost it whenever an
+    # action raised on its way back), and the four CLI subcommands never did at all. The
+    # bump also *is* the signal a caller compares across a round — see
+    # :attr:`~meshterm.services.device_state.DeviceState.channels_epoch`.
+    ctx.devstate.invalidate_channels()
+
+
+async def _write_and_remember(
+    ctx: AppContext, device: Device, idx: int, name: str, secret: bytes | None
+) -> None:
+    """Do the write itself and the channel-store bookkeeping (see :func:`write_channel`)."""
     await device.set_channel(idx, name, secret)
     store = ctx.channel_store
     if store is None:
@@ -944,14 +996,22 @@ async def _apply_order(
     in-memory snapshot, so the interleaved writes never clobber a not-yet-placed channel.
     """
     indices = sorted(s.idx for s in slots)  # the physical slots to fill, ascending
-    changes = 0
-    for target_idx, pos in zip(indices, order, strict=True):
-        slot = slots[pos]
-        if slot.idx == target_idx:
-            continue  # already in place; no write needed
-        await _write_slot(ctx, device, target_idx, slot)
-        changes += 1
-    return changes
+    moves = [
+        (target_idx, slots[pos])
+        for target_idx, pos in zip(indices, order, strict=True)
+        if slots[pos].idx != target_idx  # already in place; no write needed
+    ]
+    if not moves:
+        return 0
+    # One card for the whole batch, retitled as it walks: this is the longest thing the
+    # manager does — a write per moved channel, each a device round-trip — and the one place
+    # where a count is worth showing, because the reader can see it is progressing rather
+    # than stuck. The per-write cards inside nest into this one.
+    async with ctx.ui.busy_dialog("reordering channels…", title="Channels") as busy:
+        for position, (target_idx, slot) in enumerate(moves, start=1):
+            busy.message = f"moving {slot.name} · {position}/{len(moves)}"
+            await _write_slot(ctx, device, target_idx, slot)
+    return len(moves)
 
 
 async def _reorder_channels(ctx: AppContext, device: Device, slots: list[ChannelSlot]) -> int:

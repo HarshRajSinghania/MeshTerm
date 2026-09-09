@@ -7,8 +7,10 @@ run against the :class:`MockDevice` simulator and a temporary database.
 from __future__ import annotations
 
 import re
+from contextlib import asynccontextmanager
 from hashlib import sha256
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from rich.console import Console
@@ -369,6 +371,11 @@ class _ScriptedUi:
 
     def show(self, *renderables) -> None:  # noqa: ANN002
         pass
+
+    @asynccontextmanager
+    async def busy_dialog(self, message: str = "", *, title: str = ""):  # noqa: ANN201
+        """No card without a screen stack — every mutation path goes through this."""
+        yield SimpleNamespace(message=message)
 
     def note(self, markup: str) -> None:
         pass
@@ -911,13 +918,17 @@ class _PresentingUi(_ScriptedUi):
         self.surface.ack(markup)
 
 
-async def test_a_busy_visit_still_reports_itself_in_a_popup(ctx: AppContext) -> None:
-    """Three changes in one visit must acknowledge as a dialog, not the full result window.
+async def test_a_busy_visit_says_nothing_on_the_way_out(ctx: AppContext) -> None:
+    """A visit that changed three channels closes silently — no popup, no window.
 
-    Reproduces the reported bug: every action banked its own "✓ created …" note, so the
-    outcome grew a line per change and the third one pushed it past the popup's budget —
-    the same visit reported itself as a tidy dialog or as a full-frame window depending on
-    how much had been done in it. The visit now acknowledges once, in the tool's summary.
+    The history this pins, in the order it happened: every action banked its own "✓ created
+    …" note, so the outcome grew a line per change and the third pushed it past the
+    acknowledgement popup's budget into the full-frame result window — the same visit
+    reporting itself two different ways depending on how much had been done in it. Folding
+    those into one summary line fixed the shape and left the real problem: an
+    acknowledgement for changes the reader had just watched land in the list in front of
+    them. So the line went too. The count survives in ``summary`` for the run log, which
+    nobody reads off the screen.
     """
     ui = _PresentingUi(
         selects=[_CREATE, _CREATE, _CREATE, None],  # create three channels, then Esc
@@ -927,9 +938,10 @@ async def test_a_busy_visit_still_reports_itself_in_a_popup(ctx: AppContext) -> 
     ctx.ui = ui
     result = await ChannelsTool().run(ctx, {})
 
-    assert result.summary == {"changes": 3}
+    assert result.summary == {"changes": 3}  # the run log still records what was done
+    assert result.message is None
     # The menu's own tail: note the tool's message, then present what the run buffered.
     if result.message:
         ui.surface.note(result.message)
     await ui.surface.present(title="Channels")
-    assert ui.session_spy.shown == [("popup", "Channels")]
+    assert ui.session_spy.shown == []  # nothing shown, in either shape

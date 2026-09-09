@@ -52,6 +52,14 @@ def _dialog_max_cells() -> int:
     return _DIALOG_MAX_CELLS if get_platform().frame_border else 43
 
 
+class _NullBusy:
+    """The scripted surface's stand-in for a busy card: a caption that goes nowhere."""
+
+    def __init__(self) -> None:
+        """Start with an empty caption; assigning to it is the whole of the contract."""
+        self.message = ""
+
+
 def _collapse_to_message(buffered: list[RenderableType]) -> Text | None:
     """Collapse small, text-only buffered output into one dialog message.
 
@@ -420,9 +428,13 @@ class PlainUi(Ui):
         yield
 
     @asynccontextmanager
-    async def busy_dialog(self, message: str = "", *, title: str = "") -> AsyncIterator[None]:
-        """Do nothing: there is no screen to interrupt and no keyboard to take."""
-        yield
+    async def busy_dialog(self, message: str = "", *, title: str = "") -> AsyncIterator[_NullBusy]:
+        """Do nothing: there is no screen to interrupt and no keyboard to take.
+
+        Still yields something with a settable caption, because a caller that retitles the
+        card mid-batch must not have to ask which surface it is running on.
+        """
+        yield _NullBusy()
 
     def _no_prompt(self) -> RuntimeError:
         """Build the error raised if a rich prompt is reached on the non-interactive path."""

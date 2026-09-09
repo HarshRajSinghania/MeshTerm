@@ -54,7 +54,7 @@ class ChannelsTool(Tool):
             params: A ``cli_action`` with its arguments (CLI), or empty for the menu.
 
         Returns:
-            A :class:`ToolResult` summarizing what happened.
+            A :class:`ToolResult` recording what happened (the menu path shows nothing).
         """
         action = params.get("cli_action")
         if action is not None:
@@ -62,14 +62,11 @@ class ChannelsTool(Tool):
 
         from ..ui.channels import manage_channels
 
-        changes = await manage_channels(ctx)
-        message = (
-            f"[ok]✓[/ok] applied [brand]{changes}[/brand] "
-            f"channel change{'' if changes == 1 else 's'}"
-            if changes
-            else None
-        )
-        return ToolResult(summary={"changes": changes}, message=message)
+        # No message: the manager acknowledged its work on the way out, which meant telling
+        # the reader that changes they had just watched land were applied. The count still
+        # goes to the run log through ``summary``, which is the record of what an invocation
+        # did rather than anything shown.
+        return ToolResult(summary={"changes": await manage_channels(ctx)})
 
     # -- CLI --------------------------------------------------------------------
 

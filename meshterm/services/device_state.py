@@ -94,6 +94,7 @@ class DeviceState:
         self._self_info: dict | None = None
         self._path_hash_mode: int | None = None
         self._channels: list[ChannelSlot] | None = None
+        self._channels_epoch = 0
         self._channel_capacity: int | None = None
         # One lock per slow fetch so overlapping first-access callers (two screens opened in
         # quick succession) collapse onto a single round-trip instead of each firing their own.
@@ -373,9 +374,21 @@ class DeviceState:
         """Drop the cached path-hash mode — call after writing it in the config editor."""
         self._path_hash_mode = None
 
+    @property
+    def channels_epoch(self) -> int:
+        """How many times the channel layout has been dropped this session.
+
+        A caller that wants to know whether *anything* rewrote a slot while it was busy
+        compares this across the gap rather than trusting a return value: a write that
+        landed and then raised on its way back moved the device just as much as one that
+        returned cleanly, and the count it never got to increment cannot say so.
+        """
+        return self._channels_epoch
+
     def invalidate_channels(self) -> None:
         """Drop the cached channel slots — call after the channel editor saves or clears one."""
         self._channels = None
+        self._channels_epoch += 1
 
     def invalidate_config(self) -> None:
         """Drop everything the config editor can change in one call (self-info + routing mode).
