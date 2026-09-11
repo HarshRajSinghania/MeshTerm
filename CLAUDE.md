@@ -264,12 +264,18 @@ as a grouped list does. Filling a page in is editing its `.md`; no Python follow
   same fill are the exception the interlock can't draw: the point drops its background so
   the page cuts the wedge. An elision breaks the ribbon rather than joining it — bare `⋯`
   on the page between a closing point and the next chip's notch, no fill, no padding.
-- The ribbon's **outer ends**: the chevron means *the route continues*, so a path that has
-  finished never wears one. It ends **square** — nothing appended, the last chip's own pad
-  is the edge — and opens square the same way; a full Nerd Font rounds both ends into a
-  lozenge instead (`POWERLINE_ROUND_*`, drawn only where `termfont.powerline_full`). A
-  *wrapped* line the path outruns still closes on the point: there the route really does
-  go on, which is the cue arrow mode spells with a trailing `→`.
+- The ribbon's **outer ends**: the chevron means *the route continues*, so an end that is
+  the route's own never wears one. It ends **square** — nothing appended, the last chip's
+  own pad is the edge — and opens square the same way; a full Nerd Font rounds such ends
+  into a lozenge instead (`POWERLINE_ROUND_*`, drawn only where `termfont.powerline_full`).
+  Two things put the chevron back, and either is enough. A *wrapped* line the path outruns
+  closes on the point: there the route really does go on. And a line drawing only the
+  **middle** of a route — a packet's `via` chain, the TX sweep's composed relays: hops that
+  are neither the node the frame came from nor the one it reached — opens on the notch and
+  closes on the point, because a square end is the promise that the chip beside it is
+  where the route began or ended (`PathLine(from_origin=…, to_destination=…)`, defaulting
+  to a whole route). Arrow mode spells the same claim with the separator alone, a leading
+  or trailing `→` with no hop on the far side of it.
 - Concept icons: 📡 advert · 🕒 clock/sync · 🔄 reboot · 💾 backup · 📂 restore ·
   🔑 channel/credential key · 🔐 identity/auth secret · 🗑 clear/delete · ✎ compose/edit ·
   ⚙ parameter · `#` count · ▶ run · ⚡ explore/probe · ★ best/winner · ⭐ watch ·

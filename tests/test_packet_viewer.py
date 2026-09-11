@@ -309,7 +309,7 @@ def test_packet_viewer_via_wraps_at_hop_boundaries_under_its_own_lane() -> None:
     entry = PacketEntry(when=utcnow(), kind="packet", path=",".join(names))
     lines = _stripped(PacketViewer([entry], 0, resolve=lambda h: names.get(h, "")).render_body(72))
     via_at = next(i for i, line in enumerate(lines) if line.startswith("via"))
-    end = next(i for i, line in enumerate(lines) if "reception describes" in line)
+    end = next(i for i, line in enumerate(lines) if line.strip() == "8 hops")
     folded = lines[via_at:end]
     assert len(folded) > 1  # a chain this long does not fit one lane
     assert all(line.startswith(" " * 11) for line in folded[1:])  # hangs past the label lane
@@ -317,6 +317,20 @@ def test_packet_viewer_via_wraps_at_hop_boundaries_under_its_own_lane() -> None:
         assert any(name in line for line in folded)  # every hop survives the fold whole
     assert all(line.rstrip().endswith("→") for line in folded[:-1])  # the "goes on" cue
     assert all(len(line.rstrip()) <= 72 for line in folded)
+
+
+def test_packet_viewer_via_chain_is_drawn_as_the_middle_of_a_route() -> None:
+    """``via`` names relays, so neither end of it is where the frame set out or arrived.
+
+    The chain opens and closes on the "there is more out there" mark — the chevron in
+    chips, the bare separator in arrows — rather than on the flat end that would claim
+    the first relay was the origin.
+    """
+    entry = PacketEntry(when=utcnow(), kind="packet", node="c0ffee", path="a1b2c3,d4e5f6")
+    via = next(ln for ln in _stripped(_viewer(entry).render_body(80)) if ln.startswith("via"))
+    chain = via.split(None, 1)[1].strip()
+    assert chain.startswith("→ ") and chain.endswith(" →")
+    assert chain.count("→") == 3  # both open ends, and the one join between the two relays
 
 
 def test_packet_viewer_from_row_leads_with_the_node_type_mark() -> None:
@@ -491,12 +505,13 @@ def test_packet_viewer_omits_links_for_a_trace_nobody_relayed() -> None:
     assert "links" not in _plain(_viewer(entry).render_body(80))
 
 
-def test_packet_viewer_says_whose_signal_the_reading_is() -> None:
-    """The SNR beside a frame measures its last transmitter — which is not always a relay.
+def test_packet_viewer_counts_the_relays_under_the_chain() -> None:
+    """The hop count hangs under the ``via`` chain — the figure the chips never state.
 
-    A relayed frame's reading belongs to the repeater that passed it on, and reading it as
-    the origin's would be wrong. One that crossed nothing was heard straight off its
-    sender, so the reading is exactly that link — the strongest evidence there is.
+    It is the app's own hop atom, so a count here reads as it does on the node page's
+    routes and under a trace scenario. An empty chain has no count: the ``via`` row has
+    already said "direct — no relays" in words, and ``direct`` under it would be the same
+    answer twice.
     """
 
     def note(path: str) -> str:
@@ -505,9 +520,10 @@ def test_packet_viewer_says_whose_signal_the_reading_is() -> None:
         )
         return _plain(_viewer(entry).render_body(80))
 
-    assert "last relay, not the origin" in note("a1b2c3,d4e5f6")
-    assert "the sender itself" in note("")
-    assert "last relay" not in note("")
+    assert "2 hops" in note("a1b2c3,d4e5f6")
+    assert "1 hop" in note("a1b2c3") and "1 hops" not in note("a1b2c3")
+    assert "direct" not in note("a1b2c3")
+    assert note("").count("direct") == 1  # the via row's own words, and nothing under them
 
 
 def test_packet_viewer_does_not_call_a_walked_trace_direct() -> None:
@@ -526,7 +542,6 @@ def test_packet_viewer_does_not_call_a_walked_trace_direct() -> None:
     body = _plain(_viewer(entry).render_body(80))
     assert "3 hops walked" in body
     assert "direct — no relays" not in body
-    assert "last relay, not the origin" in body  # something *did* relay it
 
 
 def test_packet_viewer_still_calls_an_unwalked_frame_direct() -> None:
@@ -538,7 +553,6 @@ def test_packet_viewer_still_calls_an_unwalked_frame_direct() -> None:
             ).render_body(80)
         )
         assert "direct — no relays" in body, raw
-        assert "the sender itself" in body, raw
 
 
 def test_packet_viewer_counts_one_walked_hop_in_the_singular() -> None:

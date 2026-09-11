@@ -54,7 +54,7 @@ from ..services.trace_runner import NodeResolver
 from .map_render import _SELF, _UNKNOWN
 from .menus import SEP_COMPACT, SEP_ROOMY
 from .pathgraph import PathLayer, render_path_graph, revisited_hops
-from .pathline import PathLine, path_line
+from .pathline import PathLine, hops_atom, path_line
 from .theme import glyph, name_style, snr_style
 from .trace_screen import snr_bar
 from .tui.render import render_lines, render_to_ansi
@@ -869,6 +869,12 @@ class PacketViewer(Screen):
         with an empty path and a full set of readings, and "direct — no relays" would be
         a flat contradiction of the ``links`` row two lines above. It says how far the
         packet got instead, which is the one thing those readings do establish.
+
+        The chain is the route's *middle* — the ``path`` field names the relays that
+        forwarded the frame and neither the node that sent it nor the one that received
+        it — so both ends are drawn open (``from_origin``/``to_destination``): the
+        chevron says the route carries on past the chip, where a flat end would claim
+        the first relay was the origin.
         """
         return path_line(
             (entry.path or "").split(","),
@@ -876,6 +882,8 @@ class PacketViewer(Screen):
             prefix_bytes=self._prefix_bytes,
             self_name=self._self_name,
             empty=self._empty_via(entry),
+            from_origin=False,
+            to_destination=False,
         )
 
     @staticmethod
@@ -904,26 +912,15 @@ class PacketViewer(Screen):
         if route:
             rows.append(("route", Text(route.replace("_", " ").lower())))
         rows.append(("via", self._via_path(entry)))
-        # Which node the SNR beside it actually measured. On a relayed frame that is the
-        # last repeater, and saying so stops the figure being read as the origin's signal;
-        # on one that crossed nothing it *is* the origin's, which is worth saying outright
-        # — a frame heard straight off its sender is the best evidence a link ever gives.
-        # A trace that walked counts as relayed even with no hops to name: its readings
-        # are the proof something forwarded it (see :meth:`_via_path`).
-        relayed = bool(
-            [hop for hop in (entry.path or "").split(",") if hop] or raw.get("trace_snrs")
-        )
-        rows.append(
-            (
-                "",
-                Text(
-                    "reception describes the last relay, not the origin"
-                    if relayed
-                    else "reception describes the sender itself — nothing relayed it",
-                    style="faint",
-                ),
-            )
-        )
+        # The figure the chain above encodes but never states, hung under it as the app's
+        # own hop atom — the same one the node page's routes and the trace scenarios carry
+        # (:func:`~meshterm.ui.pathline.hops_atom`), so a count reads the same wherever a
+        # path has one. Only where there is a chain to count: an empty ``path`` has already
+        # been spelt out in words on the row above (:meth:`_empty_via`), and a second line
+        # reading ``direct`` under ``direct — no relays`` would be the same answer twice.
+        relays = [hop for hop in (entry.path or "").split(",") if hop]
+        if relays:
+            rows.append(("", hops_atom(len(relays))))
         # A chain that names one hop twice reads as a mistake until it is explained; the graph
         # below draws that hop twice too (see ``_graph_lines``), so the note covers both.
         revisits = revisit_note(

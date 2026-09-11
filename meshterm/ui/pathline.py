@@ -22,7 +22,13 @@ drawn*, so every surface the survey found can eventually route through it:
   that name. A chip caught by a *cut* — a lane that ran out, a line scrolled past its
   edge — breaks off on a half block in its own fill
   (:func:`cut_mark`), and that crack is what says the segment continues; only chips
-  crack, an arrow line still ellipsizes. A row that also carries the app-wide
+  crack, an arrow line still ellipsizes. A line's two *outer* ends read the same way:
+  a path that begins at its origin and ends at its destination opens and closes flat (a
+  rounded cap where the font has one), while one drawing only the *middle* of a route —
+  a packet's ``via`` chain, which names relays and neither of the nodes the packet went
+  between — wears the chevron at that end instead, the same mark a wrapped line uses for
+  "there is more of this out there" (``from_origin`` / ``to_destination``).
+  A row that also carries the app-wide
   opens-further-prompts ``…`` hangs it *outside* the budget
   (:func:`with_action_mark`) — chrome may not cost the route cells. ``auto`` (the default)
   picks powerline exactly when the terminal can draw it
@@ -405,6 +411,12 @@ class PathLine:
             surface with its own convention (the mesh walk trail's ``" › "``) may pass
             it. Ignored by powerline mode.
         empty: The muted text a hopless path reads as (``"direct"``).
+        from_origin: The first hop *is* the route's origin. Clear it where the line
+            draws only the middle of a route — a packet's ``via`` chain names its
+            relays and neither the node that sent it nor the one that received it — and
+            the head is drawn as a continuation instead of as a beginning.
+        to_destination: The last hop *is* the route's destination. Clear it under the
+            same reading at the other end.
     """
 
     def __init__(
@@ -414,6 +426,8 @@ class PathLine:
         mode: str = "auto",
         separator: str = _ARROW,
         empty: str = "direct",
+        from_origin: bool = True,
+        to_destination: bool = True,
     ) -> None:
         """Hold the hops and the drawing choices; nothing is measured or drawn yet.
 
@@ -423,6 +437,8 @@ class PathLine:
         self._mode = mode
         self._separator = separator
         self._empty = empty
+        self._from_origin = from_origin
+        self._to_destination = to_destination
 
     @property
     def hops(self) -> list[PathHop]:
@@ -616,14 +632,22 @@ class PathLine:
         """
         if plain:
             plain_cells = [self._plain_hop(hop).cell_len for hop in hops]
-            return plain_cells, cell_len(self._separator), 0, 0, 0, 0
+            head = 0 if self._from_origin else cell_len(self._separator.lstrip())
+            foot = 0 if self._to_destination else cell_len(self._separator.rstrip())
+            return plain_cells, cell_len(self._separator), 0, 0, head, foot
         widths = [
             cell_len(hop.label) if hop.gap else self._chip(hop, self._chip_fill(hop)).cell_len
             for hop in hops
         ]
         sep = cell_len(POWERLINE_SEP)
         cap = cell_len(POWERLINE_ROUND_OPEN) if powerline_full() else 0
-        return widths, sep, sep, sep, cap, cap
+        # An end the route runs on past costs its chevron whatever the font can draw:
+        # the point and the notch are core glyphs, and it is the *cap* that is optional.
+        # So a relays-only line is measured a cell wider at that end than a whole route
+        # is on a terminal with no rounded caps to spend.
+        head = cap if self._from_origin else sep
+        foot = cap if self._to_destination else sep
+        return widths, sep, sep, sep, head, foot
 
     @staticmethod
     def _fill(
@@ -797,17 +821,33 @@ class PathLine:
         if not force_plain and self._resolved_mode() == "powerline":
             line = self._render_chips(hops, carry_in=carry_in, carry_on=carry_on)
         else:
-            line = self._render_plain(hops)
+            line = self._render_plain(hops, carry_in=carry_in, carry_on=carry_on)
         line.style = PATH_INK
         return line
 
-    def _render_plain(self, hops: list[PathHop]) -> Text:
-        """Arrow-joined hops — ``path_text``'s presentation, hop by hop."""
+    def _render_plain(
+        self, hops: list[PathHop], *, carry_in: bool = False, carry_on: bool = False
+    ) -> Text:
+        """Arrow-joined hops — ``path_text``'s presentation, hop by hop.
+
+        An end the route runs on past wears the separator with nothing on the far side
+        of it: a leading ``→`` where the origin isn't drawn, a trailing one where the
+        destination isn't. Arrow mode already spells "the path goes on" with that
+        trailing mark when a line wraps, so a chain of relays says it the same way —
+        which is what keeps the two modes telling the reader the same thing on a console
+        with no chevrons to shear (see :meth:`_render_chips`). The wrap flags win where
+        they overlap: a continuation already opens under its predecessor, and
+        :meth:`wrapped` appends the cue itself on a line the path outruns.
+        """
         text = Text()
+        if hops and not carry_in and not self._from_origin and not hops[0].gap:
+            text.append(self._separator.lstrip(), style="muted")
         for i, hop in enumerate(hops):
             if i:
                 text.append(self._separator, style="faint" if hop.dim else "muted")
             text.append_text(self._plain_hop(hop))
+        if hops and not carry_on and not self._to_destination and not hops[-1].gap:
+            text.append(self._separator.rstrip(), style="muted")
         return text
 
     def _plain_hop(self, hop: PathHop) -> Text:
@@ -845,19 +885,27 @@ class PathLine:
     ) -> Text:
         """Powerline chips: each hop filled with its hue, a two-cell gap at every seam.
 
-        The two outer ends say whether this line *is* the path or only part of it. A
-        line that opens the path opens rounded; one that continues a wrapped path opens
-        on the break's other half — which is exactly the seam's own second cell, so a
-        fold looks like the seam it interrupted. A line that ends the path closes
-        rounded; one the path outruns closes on the point, the same "goes on" cue arrow
-        mode spells with a trailing ``→``.
+        The two outer ends say whether the reader is looking at the whole route, and
+        two separate things can shorten it. **This line** may be one of several a wrapped
+        path folds into (``carry_in``/``carry_on``), and **the path itself** may only ever
+        have been the middle of a route — a packet's ``via`` chain names its relays and
+        neither of the nodes it actually went between (``from_origin``/``to_destination``
+        on the line). Either one draws the same mark at that end, because the reader is
+        being told the same thing: *the route goes on out there, past what is drawn*. A
+        head like that opens on the break's other half — the seam's own second cell, so a
+        fold looks like the seam it interrupted, and a relays-only chain looks like a
+        route caught mid-stride. A tail like that closes on the point, the same "goes on"
+        cue arrow mode spells with a trailing ``→``.
 
-        Where the font has no rounded caps both outer ends are drawn **square** — the
-        chip's own pad is the edge, and nothing is appended. Square is not a degraded
-        cap, it is the one shape left that says *stop*: the point is spoken for as the
-        continuation cue, so closing a finished path on one claimed a hop had been cut
-        off (JP, 2026-09-09). Only the *opening* used to square itself off, which left
-        every route on a core-only terminal ending on the mark for "there is more".
+        An end that really is the route's own opens or closes **rounded**, and, where the
+        font has no rounded caps, **square** — the chip's own pad is the edge, and nothing
+        is appended. Square is not a degraded cap, it is the one shape left that says
+        *stop*: the point is spoken for as the continuation cue, so closing a finished
+        path on one claimed a hop had been cut off (JP, 2026-09-09). Only the *opening*
+        used to square itself off, which left every route on a core-only terminal ending
+        on the mark for "there is more". The pair now reads both ways round — a square end
+        is a promise that the node beside it is where the route began or ended, which is
+        why a chain that starts and finishes on relays must not wear one (JP, 2026-09-09).
 
         An elision (:attr:`PathHop.gap`) interrupts the ribbon rather than joining it: the
         chip before it closes on the page, the mark sits on the page bare, and the chip
@@ -871,8 +919,12 @@ class PathLine:
         """
         fills = [self._chip_fill(hop) for hop in hops]
         rounded = powerline_full()
+        # A fold and a half-drawn route are two reasons for the same mark; either is
+        # enough. An elision already breaks the ribbon on that side, and a mark cut out
+        # of a bare ``⋯`` would have no fill to cut into.
+        opens_mid = (carry_in or not self._from_origin) and not hops[0].gap
         text = Text()
-        if carry_in:
+        if opens_mid:
             text.append_text(self._notch(fills[0]))  # the break's other half
         elif rounded and not hops[0].gap:
             text.append(POWERLINE_ROUND_OPEN, style=fills[0])
@@ -890,7 +942,7 @@ class PathLine:
                 text.append_text(self._chip(hop, fills[i]))
         if hops[-1].gap:
             return text  # the line ended on the page; there is no chip left to close
-        if carry_on:
+        if carry_on or not self._to_destination:
             text.append(POWERLINE_SEP, style=fills[-1])  # the point: the path goes on
         elif rounded:
             text.append(POWERLINE_ROUND_CLOSE, style=fills[-1])  # the lozenge's far end
@@ -1019,6 +1071,8 @@ def path_line(
     dim_self: bool = True,
     cursor: int | None = None,
     mode: str = "auto",
+    from_origin: bool = True,
+    to_destination: bool = True,
 ) -> PathLine:
     """Build a :class:`PathLine` from raw hop hashes — ``path_text``'s vocabulary.
 
@@ -1067,6 +1121,10 @@ def path_line(
             as ``dim_from`` is, and applied after them, so a slot never shifts what a
             hop shows or fades. ``None`` draws no cursor.
         mode: The :class:`PathLine` mode (``"auto"``/``"powerline"``/``"plain"``).
+        from_origin: The first hop is the route's origin (see :class:`PathLine`). Clear
+            it where ``hops`` is a chain of *relays* — the raw ``path`` field a packet
+            carries names neither the node it came from nor the one it reached.
+        to_destination: The last hop is the route's destination, same reading.
 
     Returns:
         The assembled :class:`PathLine`.
@@ -1116,4 +1174,10 @@ def path_line(
             built.append(PathHop(compact))
     if cursor is not None:
         built.insert(max(0, min(cursor, len(built))), PathHop(CURSOR_GLYPH, cursor=True))
-    return PathLine(built, mode=mode, empty=empty)
+    return PathLine(
+        built,
+        mode=mode,
+        empty=empty,
+        from_origin=from_origin,
+        to_destination=to_destination,
+    )

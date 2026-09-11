@@ -391,8 +391,19 @@ class TxSweepScreen(Screen):
         if key == "route":
             _icon(text, "✎", "brand")
             if self.route_hops:
+                # The composed relays alone — the sweep always sets out from us and always
+                # lands on the repeater being tuned, and neither is a hop anyone picked
+                # here. So both ends are drawn open: the chevrons say the route runs on
+                # past them, which is exactly what ``via`` claims in the word before it.
                 text.append("Route — via ")
-                text.append_text(path_line(list(self.route_hops), self._resolve).text())
+                text.append_text(
+                    path_line(
+                        list(self.route_hops),
+                        self._resolve,
+                        from_origin=False,
+                        to_destination=False,
+                    ).text()
+                )
             else:
                 text.append(f"Route — direct to {self._admin_label}")
         elif key == "range":

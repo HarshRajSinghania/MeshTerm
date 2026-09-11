@@ -559,6 +559,85 @@ def test_rounded_caps_finish_a_path_only_where_the_font_has_them(monkeypatch) ->
     assert all(text.cell_len <= 20 for text in wrapped)
 
 
+def test_a_line_drawing_only_a_route_middle_wears_the_chevron_at_that_end(monkeypatch) -> None:  # noqa: ANN001
+    """A chain of relays has no endpoints of its own, so neither end may claim to be one.
+
+    A packet's ``via`` field names the nodes that forwarded it and neither the node it
+    came from nor the one that received it. A flat end there would say the first relay
+    *is* where the route began — so the line opens on the notch and closes on the point
+    instead, the same "there is more of this out there" mark a wrapped line uses. The cap
+    is what the flags trade away: a full Nerd Font rounds only the ends that are real.
+    """
+    hops = [PathHop(label, key=key) for label, key in (("AAAA", "aa"), ("BBBB", "77"))]
+    middle = PathLine(hops, mode="powerline", from_origin=False, to_destination=False)
+
+    monkeypatch.setattr(pathline, "powerline_full", lambda: True)
+    text = middle.text()
+    assert text.plain.startswith(POWERLINE_SEP + " AAAA")  # the notch, not the lozenge
+    assert text.plain.endswith("BBBB " + POWERLINE_SEP)  # the point: the route goes on
+    opening = next(s for s in text.spans if s.start == 0 and str(s.style) != PATH_INK)
+    assert str(opening.style) == f"{_style_hex(node_style('aa'))} reverse"  # cut out of AAAA
+
+    # One end at a time: the half that *is* an endpoint keeps its cap either way.
+    head = PathLine(hops, mode="powerline", to_destination=False).text().plain
+    assert head.startswith(POWERLINE_ROUND_OPEN) and head.endswith(POWERLINE_SEP)
+    tail = PathLine(hops, mode="powerline", from_origin=False).text().plain
+    assert tail.startswith(POWERLINE_SEP) and tail.endswith(POWERLINE_ROUND_CLOSE)
+
+    monkeypatch.setattr(pathline, "powerline_full", lambda: False)
+    squared = PathLine(hops, mode="powerline").text().plain  # the whole route, for contrast
+    assert squared.startswith(" AAAA") and squared.endswith("BBBB ")
+    assert middle.text().plain.startswith(POWERLINE_SEP)  # …the chevron is not the cap
+    assert middle.text().plain.endswith(POWERLINE_SEP)
+
+
+def test_arrow_mode_says_a_route_middle_with_the_separator_it_joins_with() -> None:
+    """No chevrons to shear on a console, so the arrow itself carries the same claim.
+
+    A leading ``→`` where the origin is not drawn, a trailing one where the destination
+    is not — the mark arrow mode already spells "the path goes on" with when a line
+    wraps. Both modes tell the reader the same thing.
+    """
+    hops = [PathHop(label, key=key) for label, key in (("AAAA", "aa"), ("BBBB", "77"))]
+    assert PathLine(hops, mode="plain").text().plain == "AAAA → BBBB"
+    middle = PathLine(hops, mode="plain", from_origin=False, to_destination=False)
+    assert middle.text().plain == "→ AAAA → BBBB →"
+    assert PathLine(hops, mode="plain", from_origin=False).text().plain == "→ AAAA → BBBB"
+    assert PathLine(hops, mode="plain", to_destination=False).text().plain == "AAAA → BBBB →"
+
+
+def test_a_wrapped_route_middle_pays_for_both_its_chevrons() -> None:
+    """The marks are measured, not appended past the budget — on either mode.
+
+    A relays-only line spends a cell at each outer end that a whole route spends only
+    where the font has caps, so the fit has to know about them; the wrap flags and the
+    endpoint flags must not both draw at the same break either.
+    """
+    hops = [
+        PathHop(label, key=key)
+        for label, key in (("AAAA", "aa"), ("BBBB", "77"), ("CCCC", "3d"), ("DDDD", "f2"))
+    ]
+    lines = PathLine(hops, mode="powerline", from_origin=False, to_destination=False).wrapped(
+        20, indent=2
+    )
+    assert len(lines) == 2
+    assert all(line.cell_len <= 20 for line in lines)
+    assert lines[0].plain.startswith(POWERLINE_SEP)  # opens mid-route…
+    assert lines[0].plain.endswith(POWERLINE_SEP)  # …and the fold goes on
+    assert lines[-1].plain.endswith(POWERLINE_SEP)  # …as does the route past the last chip
+    # Never both marks at one break: a fold that also happens to be the head or the
+    # tail of the drawn route still draws one chevron there, not two.
+    assert POWERLINE_SEP * 2 not in "".join(line.plain for line in lines)
+
+    folded = PathLine(hops, mode="plain", from_origin=False, to_destination=False).wrapped(
+        22, indent=2
+    )
+    assert len(folded) > 1 and all(line.cell_len <= 22 for line in folded)
+    assert folded[0].plain.startswith("→ AAAA")  # the head mark, once
+    assert folded[-1].plain.rstrip().endswith("→")
+    assert not folded[-1].plain.strip().startswith("→")  # a continuation opens on its hop
+
+
 def test_a_seam_between_two_of_one_colour_falls_back_to_the_page() -> None:
     """Where two chips land on the same fill, the seam falls back to the bare page.
 
