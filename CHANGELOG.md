@@ -17,6 +17,67 @@ allowed to change behaviour, not just add to it.
 
 ## [Unreleased]
 
+## [0.3.2] — 2026-09-11
+
+### Added
+
+- **Device config holds every setting the companion firmware has, and the device actions
+  with them.** Clock sync, backup and restore, the identity key, reboot and factory reset
+  were a menu entry of their own; they are an Actions section on the Device config page
+  now, and the page takes the repeater admin page's shape — full-screen, titled with the
+  node's name and a staged count, with Apply sending in place one value at a time and
+  leaving a value the device refused staged beside its reason.
+
+  The settings were checked against the firmware itself rather than the library that
+  talks to it. New are client repeat, the auto-add hop limit and a row for each custom
+  variable the device reports, and the firmware's own bounds apply: a PIN of 0 or six
+  digits, path-hash modes 0–2, 150–2500 MHz, 7–500 kHz, TX power from −9 dBm.
+
+- **Both editor pages pick a location on the map.** A "Pick location on map…" row sits
+  above separate latitude and longitude rows, opens the map on the position as staged — or
+  as the device last reported it — and stages both coordinates at once. Device config's
+  single Location row and its Pick / Type / Clear dialog are gone.
+
+### Changed
+
+- **Repeater admin speaks the firmware's own CLI, every setting of it.** The catalog had
+  been written from convention, and the firmware disagreed: the delays are floats (0.5
+  showed as 0, and typing it back was refused), bandwidth, spreading factor and coding rate
+  are one `radio` setting rather than three keys, the guest password is readable, and
+  `path.hash.mode` and twenty-odd others were missing. It is transcribed from the firmware
+  source now. Read settings leaves every row answered — a value, `empty`, or `n/a` where
+  the node's firmware lacks the setting — and `^R` (F3 on the PicoCalc) re-reads the
+  highlighted row alone.
+
+- Repeater admin fills the frame like Device config, instead of floating over the node
+  picker it was opened from.
+
+- **A packet's relay chain is drawn as the middle of a route.** The `via` field names the
+  repeaters that forwarded a frame and neither the node that sent it nor the one that
+  heard it, yet its ribbon opened and closed square — the mark for *the route began and
+  ended here*. Both ends wear the chevron now, as the TX sweep's composed relays do, and
+  arrow mode says the same with a leading and a trailing `→`. Under the chain, the note
+  about which node the reception described gives way to the hop count.
+
+### Fixed
+
+- **Retuning a companion's radio switched off its relaying.** The firmware reads the radio
+  command's trailing client-repeat byte as *off* when it is missing, and nothing sent it.
+  Every radio edit restates it now.
+
+- The location picker opens at once. It waited on the radio for the contact list first,
+  and a busy companion held it shut for twenty-odd seconds only to open with no contacts
+  anyway; it opens on what is cached now and adds the rest when the radio answers.
+
+- A repeater setting its firmware lacks reads `n/a`, rather than the `?` that says it was
+  never asked.
+
+- Every icon-led list starts its labels in the same cell. Some icons draw one cell wide and
+  most emoji two, so a row led by `↻`, `⌨` or `🗑` started its words a column early; each
+  list pads its icons out to the widest one now.
+
+- Neither editor page slides its rows sideways any more — a long row ends at the edge.
+
 ## [0.3.1] — 2026-09-09
 
 ### Added
@@ -518,7 +579,8 @@ deliberately not reconstructed here.
 - Two `TYPE_CHECKING` imports the test suite referenced but never imported, on paths that
   happened never to run.
 
-[Unreleased]: https://github.com/jpmartineau/MeshTerm/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/jpmartineau/MeshTerm/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/jpmartineau/MeshTerm/releases/tag/v0.3.2
 [0.3.1]: https://github.com/jpmartineau/MeshTerm/releases/tag/v0.3.1
 [0.3.0]: https://github.com/jpmartineau/MeshTerm/releases/tag/v0.3.0
 [0.2.8]: https://github.com/jpmartineau/MeshTerm/releases/tag/v0.2.8
