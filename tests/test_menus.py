@@ -12,6 +12,7 @@ from rich.text import Text
 
 from meshterm.ui.menus import (
     Lane,
+    align_icons,
     changes_phrase,
     column_header,
     exit_rows,
@@ -239,6 +240,75 @@ def test_marked_label_lines_up_a_mixed_list_when_told_its_lane() -> None:
         )
         == 2
     )
+
+
+def _plain(label) -> str:
+    return label.plain if isinstance(label, Text) else label
+
+
+def test_align_icons_starts_every_word_in_the_same_cell() -> None:
+    """A one-cell and a two-cell icon inside label strings pad out to one column.
+
+    The fault this closes kept reappearing a screen at a time (the node page, the main
+    menu, the repeater admin's ``↻``/``⌨`` rows), because each list had to remember to
+    measure its own icon column. Iconless labels pass through as the object they were.
+    """
+    plain_row = "Reorder"
+    labels = align_icons(
+        [f"{_NARROW} Purge contacts…", Text.assemble((_WIDE, "ok"), " View archived"), plain_row]
+    )
+    assert [_plain(label) for label in labels] == [
+        f"{_NARROW}  Purge contacts…",
+        f"{_WIDE} View archived",
+        "Reorder",
+    ]
+    assert labels[2] is plain_row
+    styled = labels[1]
+    assert any(
+        span.style == "ok" and styled.plain[span.start : span.end] == _WIDE for span in styled.spans
+    ), "the icon's own tint survives the padding"
+
+
+def test_align_icons_keeps_a_base_style_and_never_adds_to_an_existing_gap() -> None:
+    """A whole-row tint survives as a span; aligning an aligned list changes nothing."""
+    danger = Text(f"{_NARROW} Factory reset…", style="err")
+    once = align_icons([danger, f"{_WIDE} Sync clock…"])
+    words = once[0].plain.index("Factory")
+    assert any(span.style == "err" and span.start <= words < span.end for span in once[0].spans)
+    twice = align_icons(once)
+    assert [_plain(label) for label in twice] == [_plain(label) for label in once]
+    padded_by_hand = marked_label(_NARROW, "Delete", "", lane=icon_lane((_NARROW, _WIDE)))
+    assert _plain(align_icons([padded_by_hand, f"{_WIDE} Keep"])[0]) == padded_by_hand.plain
+
+
+def test_menu_rows_line_up_mixed_icon_widths_without_being_told() -> None:
+    """A list built through menu_rows gets the icon column for free — no lane to pass."""
+    from rich.cells import cell_len
+
+    rows = menu_rows(
+        [
+            (f"{_NARROW} Read settings", "one", 1),
+            (f"{_WIDE} Send advert…", "two", 2),
+            (Text(f"{_NARROW} Factory reset…", style="err"), "three", 3),
+        ]
+    )
+    starts = {
+        cell_len(row.title.plain[: row.title.plain.index(word)])
+        for row, word in zip(rows, ("Read", "Send", "Factory"), strict=True)
+    }
+    assert starts == {3}
+
+
+def test_align_icons_pads_nothing_where_the_platform_draws_no_icons() -> None:
+    """No icon lane: the icons go, and no padding is left standing in their place."""
+    from meshterm.platforms import PICOCALC, REGULAR, set_platform
+
+    set_platform(PICOCALC)
+    try:
+        labels = align_icons([f"{_NARROW} Purge contacts…", f"{_WIDE} View archived"])
+        assert [_plain(label) for label in labels] == ["Purge contacts…", "View archived"]
+    finally:
+        set_platform(REGULAR)
 
 
 def test_the_main_menu_starts_every_title_in_the_same_cell() -> None:

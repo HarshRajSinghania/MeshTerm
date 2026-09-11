@@ -18,12 +18,13 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from rich.cells import cell_len
 from rich.text import Text
 
 from ..core.models import Contact
 from ..core.watch_store import OFF, SILENCE_CHOICES_H, Alert, WatchedNode
 from ..services.trace_runner import make_name_key_resolver
-from .menus import command_label, marked_label, section_heading
+from .menus import icon_lane, icon_mark, marked_label, section_heading
 from .theme import name_style
 from .tui import Choice, Separator
 from .widgets import _DEFAULT_GLYPH, _NODE_GLYPHS, _age_seconds, _format_age
@@ -195,12 +196,19 @@ def _menu_items(
                 hscroll_from=lanes.cell_len,
             )
         )
+    # One measured icon column for every action row on this screen, across its headings: the
+    # terminal draws ✓ and 🗑 in one cell and ⭐ and 🔔 in two, so the bulk actions used to
+    # start their words a column left of Watch a node… and the new-node toggle below them.
+    # Declared whole rather than from the rows present, so the column holds still as the
+    # conditional rows come and go; empty where the platform draws no icons.
+    lane = icon_lane(("✓", "🗑", "⭐", "🔔"))
     unacked = sum(1 for a in alerts if not a.acked)
     acked = len(alerts) - unacked
     if unacked:
-        items.append(Choice(marked_label("✓", f"Acknowledge all ({unacked})", "ok"), _ACK_ALL))
+        ack_all = marked_label("✓", f"Acknowledge all ({unacked})", "ok", lane=lane)
+        items.append(Choice(ack_all, _ACK_ALL))
     if acked:
-        items.append(Choice(marked_label("🗑", "Clear acknowledged", "err"), _CLEAR))
+        items.append(Choice(marked_label("🗑", "Clear acknowledged", "err", lane=lane), _CLEAR))
 
     items.append(Separator(" "))
     items.append(section_heading("Watched nodes"))
@@ -208,20 +216,14 @@ def _menu_items(
         items.append(Separator("  none starred yet — silence and SNR rules need one"))
     for key in sorted(watched, key=lambda k: watched[k].name.casefold()):
         items.append(Choice(_watched_row(watched[key], type_of), ("node", key)))
-    items.append(Choice(command_label("⭐ Watch a node…"), _WATCH))
+    items.append(Choice(marked_label("⭐", "Watch a node…", "", lane=lane), _WATCH))
 
     items.append(Separator(" "))
     state = "[ok]on[/ok]" if new_node_alerts else "[muted]off[/muted]"
-    items.append(
-        Choice(
-            command_label(
-                Text.from_markup(
-                    f"🔔 New-node alerts: {state}  [muted]— announce first-ever appearances[/muted]"
-                )
-            ),
-            _TOGGLE_NEW,
-        )
+    toggle = Text.from_markup(
+        f"New-node alerts: {state}  [muted]— announce first-ever appearances[/muted]"
     )
+    items.append(Choice(Text.assemble(icon_mark("🔔", "", lane), toggle), _TOGGLE_NEW))
 
     return items
 
@@ -349,19 +351,9 @@ async def _node_rules(ctx: AppContext, key: str) -> None:
         entry = store.watched().get(key)
         if entry is None:
             return
-        silence = "off" if entry.silence_hours == OFF else f"after {entry.silence_hours} h"
-        items = [
-            Choice(command_label(f"🕒 Silence alarm      {silence}"), "silence"),
-            Choice(
-                command_label("📶 SNR watch          " + ("on" if entry.snr_watch else "off")),
-                "snr",
-            ),
-            Separator(" "),
-            Choice(marked_label("✗", "Stop watching this node", "err"), "unwatch"),
-        ]
         picked = await session.select(
             f"Rules — {entry.name}",
-            items,
+            _rule_items(entry),
             filterable=False,
             footer_hint="↑↓ move · Enter change · Esc back",
         )
@@ -374,6 +366,47 @@ async def _node_rules(ctx: AppContext, key: str) -> None:
         elif picked == "unwatch":
             store.unwatch(key)
             return
+
+
+#: Cells between the widest rule name and its value in the rule popover.
+_RULE_VALUE_GAP = 6
+
+
+def _rule_items(entry: WatchedNode) -> list:
+    """One watched node's rule popover rows: its two rules with their values, then Stop.
+
+    The terminal draws ``🕒`` and ``📶`` in two cells and ``✗`` in one, so the rows share one
+    measured icon column — the Stop row used to start its words a column left of the rules
+    above it. The value lane is measured too, in cells from the rule names, rather than
+    padded by hand with spaces: it then sits in one column whatever the icon column comes
+    to, including nothing at all where the platform draws no icons.
+
+    Args:
+        entry: The watched node whose rules the rows show.
+
+    Returns:
+        The popover's rows, ``"silence"``/``"snr"``/``"unwatch"`` as their values.
+    """
+    lane = icon_lane(("🕒", "📶", "✗"))
+    silence = "off" if entry.silence_hours == OFF else f"after {entry.silence_hours} h"
+    snr = "on" if entry.snr_watch else "off"
+    rules = (("🕒", "Silence alarm", silence, "silence"), ("📶", "SNR watch", snr, "snr"))
+    name_w = max(cell_len(name) for _, name, _, _ in rules)
+    items: list = [
+        Choice(
+            Text.assemble(
+                icon_mark(icon, "", lane),
+                name,
+                " " * (name_w - cell_len(name) + _RULE_VALUE_GAP),
+                value,
+            ),
+            choice,
+        )
+        for icon, name, value, choice in rules
+    ]
+    items.append(Separator(" "))
+    items.append(Choice(marked_label("✗", "Stop watching this node", "err", lane=lane), "unwatch"))
+    return items
 
 
 async def _pick_silence(ctx: AppContext, key: str, entry: WatchedNode) -> None:

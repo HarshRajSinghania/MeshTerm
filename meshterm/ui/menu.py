@@ -31,7 +31,6 @@ from .braillechart import activity_peak, activity_sparkline
 from .menus import (
     SEP_COMPACT,
     SEP_ROOMY,
-    command_label,
     icon_lane,
     icon_mark,
     section_heading,
@@ -468,7 +467,37 @@ async def _unpair_on_exit(ctx: AppContext) -> None:
         await MeshCoreDevice.unpair_ble(address)
 
 
-def _menu_labels(tools: Sequence[Any]) -> list[Text]:
+#: The mark the menu's closing Quit row leads with. Named rather than written inline in the
+#: row because the menu's icon column has to *measure* it: it is one of the icons the list
+#: can show, the same as any tool's.
+_QUIT_ICON = "🚪"
+
+#: The value the Quit row resolves with — Esc's ``CANCEL`` and this both open the quit
+#: confirm (see :func:`_menu_round`).
+_QUIT_VALUE = "__quit__"
+
+
+def _menu_lane(tools: Sequence[Any]) -> int:
+    """The main menu's icon column in cells: every tool's mark *and* the Quit row's.
+
+    The Quit row shares the list with the tool rows, so it has to share their column too.
+    It used to write ``🚪 Quit`` as a plain string outside the measurement. That only lined
+    up because ``🚪`` happened to be as wide as the widest tool icon. A one-cell quit mark
+    would have started *Quit* a column early. A three-cell tool icon (a ZWJ cluster, say)
+    would have left it a column behind. Measuring the column over both makes the alignment
+    hold by construction instead of by luck.
+
+    Args:
+        tools: The menu's visible tools.
+
+    Returns:
+        The column width from :func:`~meshterm.ui.menus.icon_lane` — ``0`` where the
+        platform draws no icon lane.
+    """
+    return icon_lane([*(tool.icon for tool in tools), _QUIT_ICON])
+
+
+def _menu_labels(tools: Sequence[Any], *, lane: int | None = None) -> list[Text]:
     """Every visible tool's menu label — the icon, its column, and the title after it.
 
     The menu's icons are **not all one width**: ``⚙`` draws a single cell where ``📡``
@@ -482,18 +511,68 @@ def _menu_labels(tools: Sequence[Any]) -> list[Text]:
 
     Args:
         tools: The menu's visible tools, in the order they are drawn.
+        lane: The icon column's width, when the caller has already measured it for the
+            whole list (see :func:`_menu_items`). ``None`` measures it here, over the same
+            icons — the tools' marks and the Quit row's — so either way the answer is the
+            one :func:`_menu_lane` gives.
 
     Returns:
         One label per tool, in that same order — fresh :class:`~rich.text.Text` the
         caller is free to append its description to.
     """
-    lane = icon_lane([tool.icon for tool in tools])
+    width = _menu_lane(tools) if lane is None else lane
     labels: list[Text] = []
     for tool in tools:
-        label = icon_mark(tool.icon, "", lane)
+        label = icon_mark(tool.icon, "", width)
         label.append(tool.title or tool.name)
         labels.append(label)
     return labels
+
+
+def _menu_items(tools: Sequence[Any]) -> list:
+    """The main menu's rows: the tools under their section headings, then Quit.
+
+    Separated from :func:`_menu_loop` so the list can be built and checked without a
+    session. It is a pure function of the tools, which is also why the loop builds it
+    once and keeps it for the whole session.
+
+    The rows have two columns, the tool's name and then its muted description, and no
+    header line. They are commands rather than table data, so the alignment is enough.
+    The Quit row is marked from the **same measured icon column** as the tool rows (see
+    :func:`_menu_lane`), so its word starts in the same cell as every title above it.
+    The platform decides the column's width. Where the platform draws no icon lane,
+    :func:`~meshterm.ui.menus.icon_mark` returns nothing, separator included, and the
+    row is the bare word *Quit*, flush with titles that are flush themselves.
+
+    Args:
+        tools: The menu's visible tools, in the order they are drawn (already sorted by
+            category, so each heading opens its section exactly once).
+
+    Returns:
+        The :class:`~meshterm.ui.tui.Choice` and :class:`~meshterm.ui.tui.Separator`
+        rows, ready for the menu's :class:`~meshterm.ui.tui.SelectScreen`.
+    """
+    lane = _menu_lane(tools)
+    labels = _menu_labels(tools, lane=lane)
+    name_w = max((label.cell_len for label in labels), default=0)
+    items: list = []
+    current_category: str | None = None
+    for tool, row in zip(tools, labels, strict=True):
+        if tool.category != current_category:
+            current_category = tool.category
+            items.append(section_heading(current_category))
+        row.append(" " * (name_w - row.cell_len + 2))
+        row.append(tool.help, style="muted")
+        # The tool's name is the row's identity and always fits; only the description
+        # runs long, so ←→ slide it alone under a pinned name (Choice.hscroll_from).
+        items.append(Choice(title=row, value=tool.name, hscroll_from=name_w + 2))
+    items.append(Separator(" "))
+    # Quit carries no description, so it takes no part in name_w; only its mark joins
+    # the tools' column.
+    quit_label = icon_mark(_QUIT_ICON, "", lane)
+    quit_label.append("Quit")
+    items.append(Choice(title=quit_label, value=_QUIT_VALUE))
+    return items
 
 
 async def _menu_loop(ctx: AppContext, session: TuiSession) -> None:
@@ -515,24 +594,8 @@ async def _menu_loop(ctx: AppContext, session: TuiSession) -> None:
         ctx: The shared application context.
         session: The running TUI session.
     """
-    # Two aligned columns — tool name, then its muted description — with no header
-    # line: these are commands, not tabular data, so the alignment alone carries it.
     tools = [tool for tool in all_tools() if tool.menu_visible]
-    labels = _menu_labels(tools)
-    name_w = max((label.cell_len for label in labels), default=0)
-    items: list = []
-    current_category: str | None = None
-    for tool, row in zip(tools, labels, strict=True):
-        if tool.category != current_category:
-            current_category = tool.category
-            items.append(section_heading(current_category))
-        row.append(" " * (name_w - row.cell_len + 2))
-        row.append(tool.help, style="muted")
-        # The tool's name is the row's identity and always fits; only the description
-        # runs long, so ←→ slide it alone under a pinned name (Choice.hscroll_from).
-        items.append(Choice(title=row, value=tool.name, hscroll_from=name_w + 2))
-    items.append(Separator(" "))
-    items.append(Choice(title=command_label("🚪 Quit"), value="__quit__"))
+    items = _menu_items(tools)
 
     # Drive the menu list ourselves (rather than via session.select) so it stays on the
     # stack while the quit dialog floats over it: the confirm is drawn as a centered box
@@ -608,7 +671,7 @@ async def _menu_round(
         # Both picking "quit" and pressing Esc ask to leave; confirm on a dialog floating
         # over the (still-pushed) menu so a stray key doesn't drop the user out. Cancel
         # (Esc) sits left of Quit (Enter); Quit starts highlighted so Enter commits it.
-        if selection in (None, "__quit__"):
+        if selection in (None, _QUIT_VALUE):
             # Offer to drop the OS pairing on the way out, but only when there is a live
             # Bluetooth bond to drop — never on serial, an open (PIN-less) companion, or a
             # platform we can't unpair. The extra button sits between Cancel and Quit and is

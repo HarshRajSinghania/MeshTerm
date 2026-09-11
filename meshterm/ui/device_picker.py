@@ -45,7 +45,7 @@ from ..core.discovery import (
 )
 from ..platforms import get_platform
 from .logo import load_logo
-from .menus import Lane, column_header, fit_cells
+from .menus import Lane, align_icons, column_header, fit_cells
 from .tui import Choice, DeleteRequest, KeyRequest, Separator
 
 if TYPE_CHECKING:
@@ -849,12 +849,14 @@ def _action_rows() -> list:
 
     A network (TCP) companion doesn't advertise and isn't attached, so it can't be scanned
     for — the "add a network device" row opens a host:port prompt to name one. The Quit row
-    mirrors the main menu. The leading spaces line both up under the device-name column.
+    mirrors the main menu. The leading spaces line both up under the device-name column, and
+    the icons share one measured column (:func:`~meshterm.ui.menus.align_icons`): ``🌐`` and
+    ``🚪`` happen to be the same width today, and the words stay aligned if one changes. Where
+    the platform draws no icon lane the icons go, padding and all, like every command row's.
     """
-    add_row = Text()
-    add_row.append(f"  {_TCP_ICON} Add a network device…")
+    add_label, quit_label = align_icons([f"{_TCP_ICON} Add a network device…", "🚪 Quit"])
     return [
         Separator(" "),
-        Choice(title=add_row, value=_ADD_TCP),
-        Choice(title="  🚪 Quit", value=_QUIT),
+        Choice(title=Text.assemble("  ", add_label), value=_ADD_TCP),
+        Choice(title=Text.assemble("  ", quit_label), value=_QUIT),
     ]

@@ -11,7 +11,10 @@ construction:
   an err-tinted ``✗ Back — discard staged changes``, and *nothing at all* when clean.
 * :func:`menu_rows` — label + muted description :class:`Choice` rows in two aligned
   lanes, padded in display cells so double-width emoji can't skew the description
-  column (the Device actions presentation).
+  column (the Device actions presentation), its icons lined up by :func:`align_icons`.
+* :func:`align_icons` — THE icon column for labels that carry their icon inside the string:
+  a one-cell ``⌨`` and a two-cell ``📡`` start their words in the same cell. A list that
+  builds its :class:`Choice` rows by hand runs its labels through it.
 * :func:`lane_row` — one SETTING / VALUE / DESCRIPTION row for the editor-style lists.
 * :func:`column_header` / :class:`Lane` — the header line over a lane-aligned list, which
   abbreviates its labels to fit a narrow terminal instead of wrapping or losing one, and
@@ -180,13 +183,74 @@ def command_label(label: LabelT) -> LabelT:
     if get_platform().menu_icons:
         return label
     plain = label.plain if isinstance(label, Text) else label
-    head, sep, rest = plain.partition(" ")
-    if not sep or not head or head[0].isalnum() or not rest.strip():
+    head = _icon_head(plain)
+    if not head:
         return label
     # Take the gap with the icon: a row that padded a one-cell mark out to the width of
     # its two-cell siblings ("↕  Reorder channels") must not leave the padding behind.
-    cut = len(plain) - len(rest.lstrip(" "))
-    return label[cut:]
+    return label[_words_start(plain, head) :]
+
+
+def _icon_head(plain: str) -> int:
+    """How many characters of ``plain`` are its leading icon — ``0`` when it has none.
+
+    The one definition of "this label leads with an icon", shared by :func:`command_label`
+    (which drops the head) and :func:`align_icons` (which pads it): everything before the
+    first space, when that head starts with a non-alphanumeric character and words follow.
+    """
+    head, sep, rest = plain.partition(" ")
+    if not sep or not head or head[0].isalnum() or not rest.strip():
+        return 0
+    return len(head)
+
+
+def _words_start(plain: str, head: int) -> int:
+    """The character index where the words after an ``head``-long icon begin."""
+    return len(plain) - len(plain[head:].lstrip(" "))
+
+
+def align_icons(labels: Iterable[LabelT]) -> list[LabelT]:
+    """``labels`` with every leading icon padded out so the words all start in one cell.
+
+    THE icon column for a list whose icons ride *inside* its label strings. The terminal
+    draws ``↻ ⌨ 🗑 ✎ ⚙`` in one cell and ``📡 💾 🔐`` in two, so rows written ``icon + " "``
+    start their words a column apart — the fault that kept reappearing screen by screen
+    (the node page, the main menu, the repeater admin) until the column was measured here,
+    once, for every list. :func:`menu_rows` runs its labels through it, so a screen built on
+    that never has to think about it; a list that builds its :class:`Choice` rows by hand
+    passes its labels through this instead.
+
+    Each label first passes :func:`command_label`, so where the platform draws no icon lane
+    the icons are already gone and nothing is padded. A label with no icon head is returned
+    as it came, and so is a lone icon row's spacing when every head is the same width.
+    Re-aligning a list that was already aligned (by :func:`marked_label` with a ``lane``, or
+    by an earlier pass) changes nothing: the existing gap is replaced, never added to.
+
+    Args:
+        labels: The list's labels in order, icons included — plain strings or styled
+            :class:`~rich.text.Text` (whose spans and base style survive, the base style
+            carried as a span).
+
+    Returns:
+        The labels, a padded :class:`~rich.text.Text` for every one that leads with an
+        icon and the original object for every one that doesn't.
+    """
+    stripped = [command_label(label) for label in labels]
+    plains = [label.plain if isinstance(label, Text) else label for label in stripped]
+    heads = [_icon_head(plain) for plain in plains]
+    lane = max(
+        (cell_len(plain[:head]) for plain, head in zip(plains, heads, strict=True) if head),
+        default=0,
+    )
+    aligned: list[LabelT] = []
+    for label, plain, head in zip(stripped, plains, heads, strict=True):
+        if not head:
+            aligned.append(label)
+            continue
+        text = label if isinstance(label, Text) else Text(label)
+        pad = " " * (lane - cell_len(plain[:head]) + 1)
+        aligned.append(Text.assemble(text[:head], pad, text[_words_start(plain, head) :]))
+    return aligned
 
 
 def exit_rows(staged: int, *, apply_value: Any, back_value: Any) -> list:
@@ -233,11 +297,14 @@ def menu_rows(rows: Iterable[tuple[str | Text, str, Any]]) -> list:
     description column starting two cells past the widest label, padding computed in
     display cells so a double-width emoji can't skew it.
 
-    Each label passes through :func:`command_label` first, so a platform that draws no
-    icon lane loses it *before* the lane is measured — the description column moves left
-    with the labels rather than going ragged behind them. Each row also pins that column
-    as its :attr:`~meshterm.ui.tui.select.Choice.hscroll_from`, so on an ``hscroll`` list
-    ←→ slide the description under a label that stays put.
+    The labels pass through :func:`align_icons` first, which is two guarantees at once: a
+    platform that draws no icon lane loses the icons *before* the lane is measured (so the
+    description column moves left with the labels rather than going ragged behind them),
+    and where icons are drawn, a one-cell ``⌨`` and a two-cell ``📡`` start their words in
+    the same cell — no caller has to measure an icon column for a list built here. Each row
+    also pins the description column as its
+    :attr:`~meshterm.ui.tui.select.Choice.hscroll_from`, so on an ``hscroll`` list ←→ slide
+    the description under a label that stays put.
 
     Args:
         rows: ``(label, description, value)`` triples. A :class:`Text` label keeps its
@@ -246,11 +313,11 @@ def menu_rows(rows: Iterable[tuple[str | Text, str, Any]]) -> list:
     Returns:
         One :class:`Choice` per row, lanes aligned across them all.
     """
+    rows = list(rows)
+    labels = align_icons(label for label, _, _ in rows)
     prepared = [
         (Text(label) if isinstance(label, str) else label.copy(), help_text, value)
-        for label, help_text, value in (
-            (command_label(label), help_text, value) for label, help_text, value in rows
-        )
+        for label, (_, help_text, value) in zip(labels, rows, strict=True)
     ]
     width = max((cell_len(label.plain) for label, _, _ in prepared), default=0)
     items: list = []

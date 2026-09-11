@@ -211,6 +211,35 @@ def test_record_dialog_down_moves_to_delete() -> None:
     assert dialog._actions[dialog._index] == "delete"
 
 
+def test_record_dialog_actions_start_both_labels_in_the_same_cell() -> None:
+    """*Trace this path* and *Delete record…* share one icon column, on both platforms.
+
+    ``👣`` is two cells and ``🗑`` one, so each mark measured on its own left the delete
+    row's words a column left of the trace row's. Measured in cells, not characters, since
+    it is the cell the words land in that the eye compares. Where the platform draws no icon
+    lane the marks go, and so must their padding: both labels open right after the pointer.
+    """
+    from meshterm.platforms import PICOCALC, set_platform
+
+    def starts() -> set[int]:
+        lines = _plain(_dialog(_record()).render_body(60)).splitlines()
+        rows = [
+            line[: line.index(word)]
+            for word in ("Trace this path", "Delete record…")
+            for line in lines
+            if word in line
+        ]
+        assert len(rows) == 2, lines
+        return {cell_len(head) for head in rows}
+
+    regular = starts()
+    assert len(regular) == 1  # one column for both words…
+    assert regular == {2 + 2 + 1}  # …after the pointer, the two-cell lane, and its space
+
+    set_platform(PICOCALC)
+    assert starts() == {2}  # no lane, no leftover padding: the words follow the pointer
+
+
 def test_record_dialog_names_the_far_point() -> None:
     """The reached node's name rides beside the far-point distance."""
     body = _plain(_dialog(_record(), far_label="Far").render_body(60))

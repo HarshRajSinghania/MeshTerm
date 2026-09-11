@@ -48,7 +48,7 @@ from ..persistence.repository import DiscoveredPath
 from ..services import trace_runner
 from ..services.records import CATEGORIES, CATEGORY_BY_ID, Category, _local_xy
 from .mapcanvas import RGB, MapCanvas
-from .menus import fit_cells, marked_label, section_heading
+from .menus import fit_cells, icon_lane, marked_label, section_heading
 from .pathgraph import PathLayer, render_path_graph
 from .pathline import path_line
 from .theme import glyph, name_style, snr_style
@@ -505,15 +505,21 @@ class RecordDialog(Screen):
 
         lines.append("")
         self._cursor = None
+        # One measured icon column for both action rows: 🗑 is one cell where 👣 is two, so
+        # each mark measured on its own started "Delete record…" a column left of "Trace this
+        # path". Empty where the platform draws no icons, and the labels take the cells back.
+        lane = icon_lane(("👣", "🗑"))
         for i, key in enumerate(self._actions):
             selected = i == self._index
             row = Text("❯ " if selected else "  ", style="cursor" if selected else "")
             if key == "trace":
                 row.append_text(
-                    marked_label("👣", "Trace this path — reopen in Trace path", "accent")
+                    marked_label(
+                        "👣", "Trace this path — reopen in Trace path", "accent", lane=lane
+                    )
                 )
             else:
-                row.append_text(marked_label("🗑", "Delete record…", "err"))
+                row.append_text(marked_label("🗑", "Delete record…", "err", lane=lane))
             if selected:
                 row.style = "cursor"
                 self._cursor = len(lines)

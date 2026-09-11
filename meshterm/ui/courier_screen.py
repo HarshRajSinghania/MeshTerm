@@ -25,13 +25,13 @@ import re
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
+from rich.cells import cell_len
 from rich.text import Text
 
 from ..core.courier_store import DELIVERED, QUEUED, QueuedMessage
 from ..core.models import Contact, is_direct_messageable, utcnow
 from .contactlist import SORT_COLUMNS, SORT_OPENS_ASCENDING, ContactListScreen, ContactRow
-from .menus import command_label, marked_label, run_steps, section_heading
-from .theme import glyph
+from .menus import icon_lane, marked_label, run_steps, section_heading
 from .tui import CANCEL, DM_BYTE_LIMIT, Choice, SelectScreen, Separator
 from .watchtower_screen import contact_watch_key
 from .widgets import ContactsSort, _age_seconds, _contact_pkts, format_ago
@@ -42,6 +42,18 @@ if TYPE_CHECKING:
 # Menu action sentinels (tuples so they never collide with entry ids).
 _QUEUE = ("queue",)
 _CLEAR = ("clear",)
+
+#: The status marks an outbox entry leads with: waiting, delivered, gave up. They are the
+#: row's outcome rather than decoration, so unlike a command row's icon they are drawn on
+#: every platform — and measured raw, since the PicoCalc's render fold pads a folded mark
+#: back out to the width the emoji measured.
+_ENTRY_MARKS = ("⏳", "✓", "✗")
+
+#: The widest entry mark in cells: the part of the outbox's icon column no platform drops.
+_MARK_LANE = max(cell_len(mark) for mark in _ENTRY_MARKS)
+
+#: The outbox's decorative command icons — queue a message, clear the finished history.
+_COMMAND_ICONS = ("📨", "🗑")
 
 #: Seconds between the open outbox's refresh ticks (shape check + repaint).
 _REFRESH_S = 1.0
@@ -229,28 +241,55 @@ def _menu_items(ctx: AppContext, entries: list[QueuedMessage]) -> list:
     waiting = [m for m in entries if m.status == QUEUED]
     done = [m for m in entries if m.status != QUEUED]
 
+    # One icon column for the whole list, across both sections. The terminal draws ⏳ and
+    # 📨 in two cells but ✓ ✗ 🗑 in one, so rows written ``mark + " "`` started a finished
+    # entry's recipient a column left of a waiting one's, and *Clear finished* a column left
+    # of *Queue a message…*. The entry marks always keep their share of the column; the
+    # command icons go where the platform draws no icon lane, and marked_label leaves those
+    # two labels bare rather than padded out to a mark that isn't there.
+    lane = max(icon_lane(_COMMAND_ICONS), _MARK_LANE)
+
     items: list = [section_heading("Outbox")]
     if not waiting:
         items.append(Separator("  empty — queued messages wait here for their moment"))
     for message in waiting:
-        items.append(Choice(lambda m=message: _waiting_row(ctx, m), ("msg", message.ident)))
+        items.append(Choice(lambda m=message: _waiting_row(ctx, m, lane), ("msg", message.ident)))
     items.append(Separator(" "))  # space the action off the outbox rows above it
-    items.append(Choice(f"{glyph('📨')} Queue a message…", _QUEUE))
+    items.append(Choice(marked_label("📨", "Queue a message…", "", lane=lane), _QUEUE))
 
     if done:
         items.append(Separator(" "))
         items.append(section_heading("Finished"))
         for message in done[:15]:
-            items.append(Choice(lambda m=message: _done_row(m), ("msg", message.ident)))
-        items.append(Choice(f"{glyph('🗑')} Clear finished", _CLEAR))
+            items.append(Choice(lambda m=message: _done_row(m, lane), ("msg", message.ident)))
+        items.append(Choice(marked_label("🗑", "Clear finished", "", lane=lane), _CLEAR))
 
     return items
 
 
-def _waiting_row(ctx: AppContext, message: QueuedMessage) -> Text:
+def _entry_mark(mark: str, style: str, lane: int) -> Text:
+    """An entry's status mark, tinted and padded out to the outbox's icon column.
+
+    The entry-row twin of :func:`~meshterm.ui.menus.icon_mark`, which cannot serve here:
+    that one drops its icon where the platform draws no icon lane, and an entry's mark is
+    its outcome (waiting, delivered, gave up), which every platform must still show.
+
+    Args:
+        mark: One of :data:`_ENTRY_MARKS`.
+        style: The theme style the mark is drawn in.
+        lane: The list's icon column in cells (see :func:`_menu_items`).
+
+    Returns:
+        The mark followed by enough spaces to start the words in the column after it.
+    """
+    text = Text(mark, style=style)
+    text.append(" " * (lane - cell_len(mark) + 1))
+    return text
+
+
+def _waiting_row(ctx: AppContext, message: QueuedMessage, lane: int = _MARK_LANE) -> Text:
     """One waiting entry: recipient, body, and what it is waiting for."""
-    row = Text()
-    row.append("⏳ ", style="warn")
+    row = _entry_mark("⏳", "warn", lane)
     row.append(message.node_name)
     row.append(f"  “{_shorten(message.text)}”", style="muted")
     row.append("  ·  ", style="muted")
@@ -273,13 +312,12 @@ def _waiting_row(ctx: AppContext, message: QueuedMessage) -> Text:
     return row
 
 
-def _done_row(message: QueuedMessage) -> Text:
+def _done_row(message: QueuedMessage, lane: int = _MARK_LANE) -> Text:
     """One finished entry: outcome marker, recipient, body, and when it settled."""
-    row = Text()
     if message.status == DELIVERED:
-        row.append("✓ ", style="ok")
+        row = _entry_mark("✓", "ok", lane)
     else:
-        row.append("✗ ", style="err")
+        row = _entry_mark("✗", "err", lane)
     row.append(message.node_name, style="muted")
     row.append(f"  “{_shorten(message.text)}”", style="muted")
     when = message.finished or message.created
@@ -513,9 +551,13 @@ async def _entry_actions(ctx: AppContext, ident: int) -> None:
         )
         await session.message_dialog(body, title=message.node_name)
         return
+    # One measured column for both rows: 📤 draws two cells and ✗ one, and the Cancel row
+    # measuring only its own mark started its words a column left of Send now's. Where the
+    # platform draws no icon lane both go bare, Cancel's err tint moving onto its words.
+    lane = icon_lane(("📤", "✗"))
     items = [
-        Choice(command_label("📤 Send now — one forced attempt"), "send"),
-        Choice(marked_label("✗", "Cancel this message", "err"), "cancel"),
+        Choice(marked_label("📤", "Send now — one forced attempt", "", lane=lane), "send"),
+        Choice(marked_label("✗", "Cancel this message", "err", lane=lane), "cancel"),
     ]
     picked = await session.select(
         f"{message.node_name} — “{_shorten(message.text, 28)}”",

@@ -313,3 +313,78 @@ def test_alert_rows_pin_their_lanes_and_scroll_only_the_message() -> None:
     assert row.label.plain.startswith(lanes.plain)
     assert lanes.plain.endswith(" — ")  # the lead-in stays with the head it introduces
     assert row.label.plain[row.hscroll_from :] == alert.message  # …and the run is the message
+
+
+def _word_starts(items: list, words: dict) -> dict:
+    """The display cell each row's first word starts in, by row value.
+
+    Cells, not characters: a two-cell ``⭐`` and a one-cell ``✓`` are both one character, so
+    counting characters is exactly what hid a label starting a column early.
+    """
+    from rich.cells import cell_len
+
+    from meshterm.ui.tui import Choice
+
+    starts = {}
+    for item in items:
+        if isinstance(item, Choice) and item.value in words:
+            plain = item.label.plain
+            starts[item.value] = cell_len(plain[: plain.index(words[item.value])])
+    assert starts.keys() == words.keys(), "every row the test names is on the screen"
+    return starts
+
+
+def test_watchtower_actions_start_every_label_in_the_same_cell() -> None:
+    """The action rows share one icon column, across the list's section headings.
+
+    ``✓`` and ``🗑`` draw one cell and ``⭐`` and ``🔔`` two, so the bulk actions started
+    their words a column left of *Watch a node…* and the new-node toggle. On the PicoCalc
+    the icons go and must take their padding with them.
+    """
+    from rich.cells import cell_len
+
+    from meshterm.core.watch_store import Alert
+    from meshterm.platforms import PICOCALC, REGULAR, set_platform
+    from meshterm.ui.watchtower_screen import _ACK_ALL, _CLEAR, _TOGGLE_NEW, _WATCH, _menu_items
+
+    assert {cell_len("✓"), cell_len("⭐")} == {1, 2}, "a list of one icon width proves nothing"
+    alerts = [
+        Alert(ident=1, when=utcnow(), kind="silence", label="Roof", message="quiet"),
+        Alert(ident=2, when=utcnow(), kind="snr", label="Roof", message="sag", acked=True),
+    ]
+    words = {
+        _ACK_ALL: "Acknowledge",
+        _CLEAR: "Clear",
+        _WATCH: "Watch",
+        _TOGGLE_NEW: "New-node",
+    }
+    assert set(_word_starts(_menu_items(alerts, {}, True), words).values()) == {3}
+    try:
+        set_platform(PICOCALC)
+        assert set(_word_starts(_menu_items(alerts, {}, True), words).values()) == {0}
+    finally:
+        set_platform(REGULAR)
+
+
+def test_node_rules_start_every_label_and_value_in_the_same_cell() -> None:
+    """The rule popover's words share one column, and its values another, on both platforms.
+
+    ``🕒`` and ``📶`` draw two cells and ``✗`` one, so *Stop watching this node* started a
+    column early. The values used to be lined up with hand-typed spaces, so they are pinned
+    here too: whatever the icon column measures, the values stay in one column.
+    """
+    from meshterm.core.watch_store import WatchedNode
+    from meshterm.platforms import PICOCALC, REGULAR, set_platform
+    from meshterm.ui.watchtower_screen import _rule_items
+
+    entry = WatchedNode(key="a1" * 6, name="Roof", silence_hours=12, snr_watch=True)
+    words = {"silence": "Silence", "snr": "SNR", "unwatch": "Stop"}
+    values = {"silence": "after 12 h", "snr": "on"}
+    try:
+        for platform, start in ((REGULAR, 3), (PICOCALC, 0)):
+            set_platform(platform)
+            items = _rule_items(entry)
+            assert set(_word_starts(items, words).values()) == {start}
+            assert len(set(_word_starts(items, values).values())) == 1
+    finally:
+        set_platform(REGULAR)

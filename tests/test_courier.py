@@ -7,11 +7,14 @@ The service is driven synchronously (eligibility) and through stubbed chat sends
 from __future__ import annotations
 
 import logging
+import re
 from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from rich.cells import cell_len
+from rich.text import Text
 
 from meshterm.core import exitcodes
 from meshterm.core.courier_store import DONE_CAP, QUEUED, CourierStore
@@ -21,6 +24,7 @@ from meshterm.services.courier import FRESH_S, MAX_ATTEMPTS, CourierService
 from meshterm.ui.courier_screen import (
     CANCEL_SCHEDULE,
     WHEN_HEARD,
+    _entry_actions,
     _pick_schedule,
     parse_clock,
 )
@@ -442,7 +446,7 @@ def test_outbox_refresh_moves_a_delivered_entry_without_a_keypress(tmp_path: Pat
     ctx.courier_store.mark_delivered(entry.ident)
     screen.refresh()
     after = _outbox_plain(screen)
-    assert "Finished" in after and "✓ Hub" in after and "⏳" not in after
+    assert "Finished" in after and re.search(r"✓ +Hub", after) and "⏳" not in after
 
 
 def test_outbox_refresh_keeps_the_highlight_on_its_entry(tmp_path: Path) -> None:
@@ -485,6 +489,94 @@ def test_outbox_rows_recompute_live_state_per_repaint(tmp_path: Path) -> None:
     # no refresh() needed, the callable title re-reads the entry on repaint.
     ctx.courier_store.note_attempt(entry.ident)
     assert "try 1" in _outbox_plain(screen)
+
+
+def _title_plain(choice) -> str:
+    """A row's label as plain text, resolving a live (callable) title the way a paint does."""
+    title = choice.title() if callable(choice.title) else choice.title
+    return title.plain if isinstance(title, Text) else title
+
+
+def _outbox_titles(tmp_path: Path) -> list[str]:
+    """Every row of an outbox holding one waiting, one delivered and one given-up entry."""
+    from meshterm.ui.courier_screen import CourierOutboxScreen
+
+    ctx = _outbox_ctx(tmp_path)
+    ctx.courier_store.queue(NODE, "Waiting", "hold this")
+    landed = ctx.courier_store.queue(NODE, "Landed", "got it")
+    ctx.courier_store.mark_delivered(landed.ident)
+    lost = ctx.courier_store.queue(NODE, "Lost", "never")
+    ctx.courier_store.mark_gave_up(lost.ident)
+    return [_title_plain(choice) for choice in CourierOutboxScreen(ctx)._choices()]
+
+
+async def _entry_action_titles(tmp_path: Path) -> list[str]:
+    """The labels a waiting entry's action menu offers (the menu is dismissed unanswered)."""
+    offered: list = []
+
+    class _Session:
+        async def select(self, title, items, **kwargs):
+            offered.extend(items)
+            return None
+
+    store = CourierStore(tmp_path / "courier.json")
+    entry = store.queue(NODE, "Hub", "hello")
+    ctx = SimpleNamespace(ui=SimpleNamespace(session=_Session()), courier_store=store)
+    await _entry_actions(ctx, entry.ident)
+    return [_title_plain(choice) for choice in offered]
+
+
+def _word_starts(rows: list[str], leads: dict[str, str]) -> set[int]:
+    """The display cell each row's first word starts in, checking the mark it leads with."""
+    starts = set()
+    for word, mark in leads.items():
+        row = next(row for row in rows if word in row)
+        assert row.startswith(mark), f"{word!r} lost its mark: {row!r}"
+        starts.add(cell_len(row[: row.index(word)]))
+    return starts
+
+
+async def test_courier_rows_start_every_label_in_the_same_cell(tmp_path: Path) -> None:
+    """Both of the courier's lists share one icon column, whatever each mark's width.
+
+    The outbox mixes two-cell marks (⏳ a waiting entry, 📨 the queue row) with one-cell ones
+    (✓ ✗ a finished entry, 🗑 the clear row), and wrote each as ``mark + " "`` — so a finished
+    recipient sat a column left of a waiting one and *Clear finished* a column left of
+    *Queue a message…*. An entry's actions did the same with 📤 over ✗. Cells, not
+    characters, are the measure: that is what the terminal lines up.
+    """
+    outbox = {"Waiting": "⏳", "Queue": "📨", "Landed": "✓", "Lost": "✗", "Clear": "🗑"}
+    actions = {"Send": "📤", "Cancel": "✗"}
+    assert {cell_len(mark) for mark in outbox.values()} == {1, 2}, "a mixed list, or no proof"
+    assert {cell_len(mark) for mark in actions.values()} == {1, 2}
+
+    assert len(_word_starts(_outbox_titles(tmp_path), outbox)) == 1
+    assert len(_word_starts(await _entry_action_titles(tmp_path), actions)) == 1
+
+
+async def test_courier_command_rows_go_bare_where_the_platform_draws_no_icons(
+    tmp_path: Path,
+) -> None:
+    """No icon lane: the command icons go with no padding left, and the entry marks stay.
+
+    An entry's ✓/✗/⏳ is its outcome, not decoration, so the PicoCalc keeps it — and keeps
+    those rows aligned with one another — while the queue, clear, send and cancel rows lose
+    their icons exactly as every other command row does there.
+    """
+    from meshterm.platforms import PICOCALC, REGULAR, set_platform
+
+    set_platform(PICOCALC)
+    try:
+        rows = _outbox_titles(tmp_path / "outbox")
+        assert "Queue a message…" in rows and "Clear finished" in rows
+        marks = {"Waiting": "⏳", "Landed": "✓", "Lost": "✗"}
+        assert len(_word_starts(rows, marks)) == 1
+        assert await _entry_action_titles(tmp_path / "actions") == [
+            "Send now — one forced attempt",
+            "Cancel this message",
+        ]
+    finally:
+        set_platform(REGULAR)
 
 
 # --- the recipient picker ----------------------------------------------------------------

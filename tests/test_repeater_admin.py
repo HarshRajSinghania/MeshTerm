@@ -677,3 +677,27 @@ def test_admin_menu_header_abbreviates_rather_than_wrapping() -> None:
     assert full.endswith("DESCRIPTION")
     narrow = header.text(cell_len(full) - 2)
     assert narrow.endswith("DESC") and "\n" not in narrow
+
+
+def test_admin_actions_start_every_label_in_the_same_cell() -> None:
+    """``↻`` and ``⌨`` are one cell among two-cell siblings; the icon column absorbs it.
+
+    The Actions rows used to write ``icon + " "``, which started *Read settings* and
+    *Command line…* a column left of *Send advert…* below them.
+    """
+    from rich.cells import cell_len
+
+    from meshterm.ui.tui import Choice
+
+    _title, items = repeater_admin._menu_items(NODE, {}, {})
+    labels = ("Read settings", "Command line…", "Send advert…", "Sync clock…", "Reboot node…")
+    starts = {}
+    for item in items:
+        if not isinstance(item, Choice) or not hasattr(item.title, "plain"):
+            continue
+        plain = item.title.plain
+        for label in labels:
+            if label in plain:
+                starts[label] = cell_len(plain[: plain.index(label)])
+    assert set(starts) == set(labels)
+    assert len(set(starts.values())) == 1, f"a label starts a column early: {starts}"

@@ -3102,6 +3102,34 @@ def test_the_splash_says_so_when_it_is_empty_only_because_of_hiding() -> None:
     assert not any("hidden" in line for line in rows)
 
 
+def test_the_splash_action_rows_share_one_icon_column() -> None:
+    """Add-a-network-device and Quit start their words in one cell, measured, on both platforms.
+
+    They used to be literal ``"  🌐 Add…"`` / ``"  🚪 Quit"`` strings that lined up only because
+    the two emoji happen to be the same width, and that kept their icons on the PicoCalc, where
+    every other command row drops its icon lane.
+    """
+    from rich.cells import cell_len
+
+    from meshterm.platforms import PICOCALC, REGULAR, set_platform
+    from meshterm.ui.device_picker import _ADD_TCP, _QUIT, _action_rows
+    from meshterm.ui.tui import Choice
+
+    def starts() -> dict:
+        rows = {it.value: it.title.plain for it in _action_rows() if isinstance(it, Choice)}
+        words = {_ADD_TCP: "Add a network device…", _QUIT: "Quit"}
+        return {
+            value: cell_len(rows[value][: rows[value].index(word)]) for value, word in words.items()
+        }
+
+    assert len(set(starts().values())) == 1
+    set_platform(PICOCALC)
+    try:
+        assert set(starts().values()) == {2}, "the icons go, and no padding stays behind"
+    finally:
+        set_platform(REGULAR)
+
+
 def test_hiding_a_device_leaves_the_highlight_where_the_row_was() -> None:
     """The next device down, or the one above at the end — so a run of adapters clears in a run."""
     from meshterm.core.discovery import serial_device

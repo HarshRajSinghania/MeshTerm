@@ -462,6 +462,58 @@ async def test_trace_screen_action_labels_share_one_column() -> None:
     assert len(columns) == 1, columns
 
 
+def _words_start(row: str) -> int:
+    """The display cell an action row's words begin in — past its pointer and its mark.
+
+    Measured in *cells* over the text before the first letter or digit, never as a
+    character index: ``⚡`` is one character drawn in two cells, so a character count
+    would call a misaligned row aligned (and ``#``, the sample-count mark, is no letter).
+    """
+    return cell_len(row[: next(i for i, ch in enumerate(row) if ch.isalnum())])
+
+
+@pytest.mark.parametrize("platform_name", ["regular", "picocalc"])
+def test_every_action_row_starts_its_words_in_one_cell_in_both_modes(platform_name: str) -> None:
+    """Every action the screen can draw, in either mode, lit or not, shares one word column.
+
+    The rendered test above reads target mode only, and only the rows it names — so the
+    path walk's ``⇄ Reverse path`` row, which exists nowhere else, was never measured. This
+    asks the screen for its own action list instead, which also pins the other half of the
+    contract: the one column holds *across* modes. ``_ACTION_ICONS`` declares ``⚡`` even in
+    path mode, where no row draws it, so toggling a walk into a target (or back) never nudges
+    the labels sideways under the reader.
+
+    The column is measured from the marks the rows actually draw, and every one of those
+    must be in ``_ACTION_ICONS`` — a new action with a mark the tuple doesn't know about is
+    how a two-cell icon lands in a one-cell column. On the PicoCalc the lane is dropped
+    whole, so every word starts straight after the pointer.
+    """
+    from meshterm.platforms import PICOCALC, REGULAR, set_platform
+    from meshterm.ui.trace_screen import _ACTION_ICONS
+
+    platform = {"regular": REGULAR, "picocalc": PICOCALC}[platform_name]
+    set_platform(platform)
+    starts: set[int] = set()
+    marks: set[str] = set()
+    for mode in ("target", "path"):
+        screen, _ = _trace_screen(mode=mode)
+        for key in screen._actions:
+            for selected in (False, True):
+                row = screen._action_text(key, selected).plain
+                starts.add(_words_start(row))
+                if platform is REGULAR:  # the mark sits between the pointer and its gap
+                    marks.add(row[2:].split(" ", 1)[0])
+    pointer = cell_len("❯ ")
+    if platform is REGULAR:
+        # Declared-ness first: an undeclared wide mark eats its own gap ("⚡Explore"), and
+        # that is the diagnosis to read — not the width premise it would also break.
+        assert marks == set(_ACTION_ICONS), "every drawn mark is declared, and nothing else"
+        assert {cell_len(mark) for mark in marks} == {1, 2}, "a list of one width proves nothing"
+        assert starts == {pointer + 2 + 1}, starts  # the widest mark, then its space
+    else:
+        assert starts == {pointer}, starts  # no icon lane, no padding left behind
+
+
 async def test_trace_screen_action_cursor_commits_the_selected_row() -> None:
     """↑↓ move over the action rows; Enter commits the one under the cursor.
 
