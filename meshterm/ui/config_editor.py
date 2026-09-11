@@ -63,6 +63,8 @@ from ..platforms import Platform, on_platform
 from .device_info_screen import REVEAL_KEY
 from .marks import MASK_MARK
 from .menus import (
+    PICK_LOCATION_HELP,
+    PICK_LOCATION_LABEL,
     confirm_discard,
     exit_rows,
     icon_lane,
@@ -100,8 +102,7 @@ _CANCEL = "__cancel__"
 # Sentinel for the "enter a value myself" option on non-strict enum prompts.
 _OTHER = "__other__"
 
-#: The setting keys folded into the single "Location" row (they stay individually
-#: addressable from the CLI; only the editor presents them as one place-on-earth value).
+#: The setting keys the map pick sets together (each also has its own row, for a typed value).
 _COORD_KEYS = ("adv_lat", "adv_lon")
 
 #: How long the reboot flow waits to *observe* the link actually dropping before handing
@@ -474,27 +475,6 @@ def _setting_value(
     return value
 
 
-def _format_coords(lat: Any, lon: Any) -> str:
-    """Render a coordinate pair for display (``"not set"`` for the 0,0 no-fix value)."""
-    try:
-        lat_f, lon_f = float(lat or 0.0), float(lon or 0.0)
-    except (TypeError, ValueError):
-        return "?"
-    if abs(lat_f) < 1e-6 and abs(lon_f) < 1e-6:
-        return "not set"
-    return f"{lat_f:.5f}, {lon_f:.5f}"
-
-
-def _location_value(snapshot: dict, pending: dict) -> Text:
-    """The Location row's VALUE lane, standing in for the ``adv_lat``/``adv_lon`` pair."""
-    value = Text(_format_coords(snapshot.get("adv_lat"), snapshot.get("adv_lon")))
-    if any(k in pending for k in _COORD_KEYS):
-        lat = pending.get("adv_lat", snapshot.get("adv_lat"))
-        lon = pending.get("adv_lon", snapshot.get("adv_lon"))
-        value.append(f" → {_format_coords(lat, lon)}", style="warn")
-    return value
-
-
 class _ConfigMenu(SelectScreen):
     """The editor's list, with the pairing PIN's row concealed until ``^S`` uncovers it.
 
@@ -623,19 +603,10 @@ def _menu_items(
     for category, specs in settings_by_category():
         rows: list[tuple[str, Text, str, Any]] = []
         for spec in specs:
-            if spec.key in _COORD_KEYS:
-                # Latitude/longitude collapse into one Location row (inserted in
-                # adv_lat's slot so it sits where the coordinates used to).
-                if spec.key == "adv_lat":
-                    rows.append(
-                        (
-                            "Location",
-                            _location_value(snapshot, pending),
-                            "Advertised position; pick it on the map",
-                            _LOCATION,
-                        )
-                    )
-                continue
+            if spec.key == "adv_lat":
+                # The map pick sets both coordinates at once, so it heads the pair it fills —
+                # the same row, in the same place, as on the repeater admin page.
+                rows.append((PICK_LOCATION_LABEL, Text(), PICK_LOCATION_HELP, _LOCATION))
             rows.append(
                 (
                     spec.label,
@@ -887,78 +858,26 @@ async def _stage_advert_cadence(
 
 
 async def _stage_location(ctx: AppContext, snapshot: dict, pending: dict[str, Any]) -> None:
-    """Set the advertised location: on the map, typed as a pair, or cleared.
+    """Pick the advertised location on the map and stage both coordinates it sets.
 
-    Staged like any other setting — the coordinates only reach the device on Apply.
+    The map opens on the position as staged (or as the device holds it), and on the mesh
+    where there is none. Each coordinate keeps its own row for a typed value — ``0`` in both
+    is MeshCore's "no fix", and the node stops advertising a position. Staged like any other
+    setting: the coordinates only reach the device on Apply.
     """
+    from .map_screen import coords_or_none, pick_location
+
     lat = pending.get("adv_lat", snapshot.get("adv_lat"))
     lon = pending.get("adv_lon", snapshot.get("adv_lon"))
-    choice = await ctx.ui.dialog(
-        f"Advertised location: {_format_coords(lat, lon)}",
-        [("Pick on map", "map"), ("Type coordinates", "type"), ("Clear", "clear")],
-        title="Location",
-    )
-    if choice is None:
+    picked = await pick_location(ctx, initial=coords_or_none(lat, lon))
+    if picked is None:
         return
-
-    if choice == "map":
-        from .map_screen import pick_location
-
-        initial = None
-        try:
-            if abs(float(lat or 0.0)) >= 1e-6 or abs(float(lon or 0.0)) >= 1e-6:
-                initial = (float(lat), float(lon))
-        except (TypeError, ValueError):
-            initial = None
-        picked = await pick_location(ctx, initial=initial)
-        if picked is None:
-            return
-        # Six decimals ≈ 0.1 m — beyond the map's own precision, plenty for an advert.
-        pending["adv_lat"] = round(picked[0], 6)
-        pending["adv_lon"] = round(picked[1], 6)
-    elif choice == "type":
-        raw = await ctx.ui.text(
-            "Set location",
-            prompt="Enter latitude, longitude in decimal degrees",
-            default=f"{lat}, {lon}" if _format_coords(lat, lon) != "not set" else "",
-            validate=_valid_coords,
-            help_text="e.g. 45.50000, -73.60000",
-        )
-        if not raw:
-            return
-        parsed = _parse_coords(raw)
-        pending["adv_lat"], pending["adv_lon"] = parsed
-    elif choice == "clear":
-        # 0, 0 is MeshCore's "no fix" value: the node stops advertising a position.
-        pending["adv_lat"], pending["adv_lon"] = 0.0, 0.0
-
-    # Staging the device's own values back is a no-op; drop them so the row reads clean.
-    for key in _COORD_KEYS:
-        if key in pending and pending[key] == snapshot.get(key):
-            del pending[key]
-
-
-def _parse_coords(text: str) -> tuple[float, float]:
-    """Parse a ``lat, lon`` pair (comma or space separated), range-checked via the specs.
-
-    Raises:
-        DeviceConfigError: If the text is not two in-range decimal degrees.
-    """
-    parts = [p for p in text.replace(",", " ").split() if p]
-    if len(parts) != 2:
-        raise DeviceConfigError("enter two numbers: latitude, longitude")
-    lat = parse_value(get_spec("adv_lat"), parts[0])
-    lon = parse_value(get_spec("adv_lon"), parts[1])
-    return float(lat), float(lon)
-
-
-def _valid_coords(text: str) -> bool | str:
-    """Validate a typed coordinate pair, returning the parse error as the message."""
-    try:
-        _parse_coords(text)
-        return True
-    except DeviceConfigError as exc:
-        return str(exc)
+    # Six decimals ≈ 0.1 m — beyond the map's own precision, plenty for an advert.
+    for key, value in zip(_COORD_KEYS, picked, strict=True):
+        if round(value, 6) == snapshot.get(key):
+            pending.pop(key, None)  # the device's own value — nothing to change
+        else:
+            pending[key] = round(value, 6)
 
 
 async def _stage_preset(ctx: AppContext, snapshot: dict, pending: dict[str, Any]) -> None:

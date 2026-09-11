@@ -591,6 +591,46 @@ def test_admin_editor_ends_long_rows_at_the_edge_like_device_config() -> None:
     assert list(menu.render_body(40)) == before
 
 
+def test_the_map_pick_row_heads_the_coordinates_it_sets() -> None:
+    """``Pick location on map…`` sits directly above Latitude and Longitude, as on Device config."""
+    from meshterm.ui.tui import Choice
+
+    _title, items = repeater_admin._menu_items(NODE, {}, {})
+    rows = [
+        item.title.plain
+        for item in items
+        if isinstance(item, Choice) and hasattr(item.title, "plain")
+    ]
+    at = next(i for i, row in enumerate(rows) if row.startswith("Pick location on map…"))
+    assert rows[at + 1].startswith("Latitude")
+    assert rows[at + 2].startswith("Longitude")
+
+
+async def test_the_map_pick_stages_both_coordinates_as_a_read_would_spell_them(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The map opens where the node says it is; a coordinate it already holds stays unstaged."""
+    opened: list = []
+
+    async def _fake_pick(_ctx, *, initial=None):  # noqa: ANN001
+        opened.append(initial)
+        return (45.51234567, -73.6)
+
+    monkeypatch.setattr("meshterm.ui.map_screen.pick_location", _fake_pick)
+    now = utcnow()
+    cache = {"lat": CachedValue("45.5", now), "lon": CachedValue("-73.6", now)}
+    pending: dict[str, str] = {}
+    await repeater_admin._stage_location(None, cache, pending)
+    assert opened == [(45.5, -73.6)]
+    assert pending == {"lat": "45.512346"}  # the longitude is already where the node has it
+
+    # A node that never reported a position opens the map on the mesh, and takes both.
+    unread: dict[str, str] = {}
+    await repeater_admin._stage_location(None, {}, unread)
+    assert opened[-1] is None
+    assert unread == {"lat": "45.512346", "lon": "-73.6"}
+
+
 # --- the command-line screen -----------------------------------------------------------
 
 

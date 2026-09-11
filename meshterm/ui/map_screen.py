@@ -1210,6 +1210,23 @@ class LocationPickScreen(MapScreen):
         super().handle(action, data)
 
 
+def coords_or_none(lat: object, lon: object) -> tuple[float, float] | None:
+    """A stored coordinate pair as the picker's opening spot, or ``None`` to frame the mesh.
+
+    Takes whatever a caller holds — floats from the companion, strings from a repeater's
+    CLI, ``None`` where nothing was read — and reads MeshCore's ``0, 0`` "no fix" as no
+    location at all, so a node that never had a position opens on the mesh rather than on
+    a point in the Gulf of Guinea.
+    """
+    try:
+        lat_f, lon_f = float(lat), float(lon)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    if abs(lat_f) < 1e-6 and abs(lon_f) < 1e-6:
+        return None
+    return lat_f, lon_f
+
+
 async def pick_location(
     ctx: AppContext, *, initial: tuple[float, float] | None = None
 ) -> tuple[float, float] | None:

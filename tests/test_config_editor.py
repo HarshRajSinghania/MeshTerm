@@ -27,8 +27,6 @@ from meshterm.platforms import PICOCALC, REGULAR, set_platform
 from meshterm.ui.config_editor import (
     _ConfigMenu,
     _menu_items,
-    _parse_coords,
-    _valid_coords,
     config_table,
     contact_share_url,
     edit_config,
@@ -397,24 +395,19 @@ async def test_show_contact_card_pops_the_qr_over_the_link() -> None:
     assert "█" in out  # the QR actually drew its modules
 
 
-# -- coordinate parsing ----------------------------------------------------------
+# -- the map pick's opening spot --------------------------------------------------
 
 
-def test_parse_coords_accepts_comma_and_space_pairs() -> None:
-    """A typed pair parses with a comma, a space, or both."""
-    assert _parse_coords("45.5, -73.6") == (45.5, -73.6)
-    assert _parse_coords("45.5 -73.6") == (45.5, -73.6)
-    assert _parse_coords("  45.5 ,  -73.6 ") == (45.5, -73.6)
+def test_the_map_opens_on_a_stored_position_and_on_the_mesh_without_one() -> None:
+    """Floats or CLI strings open the picker there; no fix (0, 0) or no value frames the mesh."""
+    from meshterm.ui.map_screen import coords_or_none
 
-
-def test_parse_coords_rejects_garbage_and_out_of_range() -> None:
-    """Wrong shape or out-of-range degrees surface as validation messages."""
-    assert _valid_coords("45.5") != True  # noqa: E712 - message, not False
-    assert _valid_coords("45.5, -73.6, 7") != True  # noqa: E712
-    assert _valid_coords("91.0, 0") != True  # noqa: E712 - latitude out of range
-    assert _valid_coords("0, 181") != True  # noqa: E712 - longitude out of range
-    assert _valid_coords("here, there") != True  # noqa: E712
-    assert _valid_coords("45.5, -73.6") is True
+    assert coords_or_none(45.5, -73.6) == (45.5, -73.6)
+    assert coords_or_none("45.5", "-73.6") == (45.5, -73.6)
+    assert coords_or_none(0.0, 0.0) is None
+    assert coords_or_none("0", "0") is None
+    assert coords_or_none(None, -73.6) is None
+    assert coords_or_none("here", "there") is None
 
 
 # -- the typed-confirmation dialog ------------------------------------------------
@@ -869,23 +862,25 @@ async def test_editor_menu_pins_the_column_header_over_the_category(ctx: AppCont
     assert any("Flood advert" in _ANSI.sub("", row) for row in visible)
 
 
-async def test_editor_location_typed_coordinates_stage_both_axes(
+async def test_editor_latitude_and_longitude_are_rows_of_their_own(
     ctx: AppContext, applied_ops: list[tuple]
 ) -> None:
-    """Typing a coordinate pair stages latitude and longitude together."""
+    """Each coordinate is typed on its own row, as on the repeater admin page."""
     _install(
         ctx,
         [
-            ("select", "__location__"),
-            ("dialog", "type"),
-            ("text", "45.5, -73.6"),
+            ("select", "adv_lat"),
+            ("text", "45.5"),
+            ("select", "adv_lon"),
+            ("text", "-73.6"),
             ("select", "__apply__"),
             ("select", None),
         ],
     )
     await edit_config(ctx)
-    assert ("set", "adv_lat", 45.5) in applied_ops
-    assert ("set", "adv_lon", -73.6) in applied_ops
+    assert applied_ops == [("set", "adv_lat", 45.5), ("set", "adv_lon", -73.6)]
+    info = await (await ctx.device()).get_self_info()
+    assert (info["adv_lat"], info["adv_lon"]) == (45.5, -73.6)
 
 
 async def test_editor_location_map_pick_stages_rounded_coordinates(
@@ -901,35 +896,50 @@ async def test_editor_location_map_pick_stages_rounded_coordinates(
     _install(
         ctx,
         [
-            ("select", "__location__"),
-            ("dialog", "map"),
+            ("select", "__location__"),  # straight onto the map — no dialog in between
             ("select", "__apply__"),
             ("select", None),
         ],
     )
     await edit_config(ctx)
-    assert ("set", "adv_lat", 45.512346) in applied_ops
-    assert ("set", "adv_lon", -73.654321) in applied_ops
+    assert applied_ops == [("set", "adv_lat", 45.512346), ("set", "adv_lon", -73.654321)]
 
 
-async def test_editor_location_clear_stages_the_no_fix_pair(
-    ctx: AppContext, applied_ops: list[tuple]
+async def test_editor_map_pick_opens_on_the_staged_position_and_can_be_backed_out_of(
+    ctx: AppContext, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Clear stages 0, 0 — MeshCore's "no fix" value — for both axes."""
-    device = await ctx.device()
-    await device.set_coords(45.5, -73.6)  # give the device a position to clear
+    """The map opens where the typed coordinates put the node; Esc on the map stages nothing."""
+    opened: list = []
+
+    async def _fake_pick(_ctx: AppContext, *, initial=None):
+        opened.append(initial)
+        return None  # Esc on the map
+
+    monkeypatch.setattr("meshterm.ui.map_screen.pick_location", _fake_pick)
     _install(
         ctx,
         [
+            ("select", "adv_lat"),
+            ("text", "45.5"),
+            ("select", "adv_lon"),
+            ("text", "-73.6"),
             ("select", "__location__"),
-            ("dialog", "clear"),
-            ("select", "__apply__"),
-            ("select", None),
+            ("select", None),  # the typed pair is still staged, so leaving asks
+            ("dialog", "discard"),
         ],
     )
-    await edit_config(ctx)
-    assert ("set", "adv_lat", 0.0) in applied_ops
-    assert ("set", "adv_lon", 0.0) in applied_ops
+    assert await edit_config(ctx) is None
+    assert opened == [(45.5, -73.6)]
+
+
+def test_the_map_pick_row_heads_the_coordinates_it_sets() -> None:
+    """``Pick location on map…`` sits directly above Latitude and Longitude."""
+    _title, items = _menu_items(_SNAPSHOT, {}, 0, AdvertPolicy())
+    rows = _row_texts(items)
+    at = next(i for i, row in enumerate(rows) if row.startswith("Pick location on map…"))
+    assert rows[at + 1].startswith("Latitude")
+    assert rows[at + 2].startswith("Longitude")
+    assert not any(row.startswith("Location") for row in rows)
 
 
 async def test_send_advert_sends_zero_hop_and_flood_immediately(ctx: AppContext) -> None:

@@ -49,6 +49,8 @@ from ..core.remote_config import (
     write_plan,
 )
 from .menus import (
+    PICK_LOCATION_HELP,
+    PICK_LOCATION_LABEL,
     confirm_discard,
     exit_rows,
     icon_lane,
@@ -73,6 +75,7 @@ _REPLY_TIMEOUT_S = 10.0
 
 # Menu action sentinels (distinct from setting keys, which are CLI parameter names).
 _CLI = "__cli__"
+_LOCATION = "__location__"
 _READ = "__read__"
 _ADVERT = "__advert__"
 _CLOCK = "__clock__"
@@ -312,6 +315,8 @@ async def _admin_session(ctx: AppContext, device: Device, node: Contact) -> dict
                 applied += await _apply(ctx, device, node, pending)
             elif choice == _READ:
                 await read_settings(ctx, device, node, REPEATER_SETTINGS)
+            elif choice == _LOCATION:
+                await _stage_location(ctx, cache, pending)
             elif choice == _CLI:
                 await _command_line(ctx, device, node)
             elif choice == _ADVERT:
@@ -375,6 +380,10 @@ def _menu_items(node: Contact, cache: dict, pending: dict[str, str]) -> tuple[st
     for category, specs in settings_by_category():
         rows: list[tuple[str, Text, str, Any]] = []
         for spec in specs:
+            if spec.key == "lat":
+                # The map pick sets both coordinates at once, so it heads the pair it fills —
+                # the same row, in the same place, as on the Device config page.
+                rows.append((PICK_LOCATION_LABEL, Text(), PICK_LOCATION_HELP, _LOCATION))
             rows.append((spec.label, _value_text(spec, cache, pending), spec.help, spec.key))
         sections.append((category, rows))
 
@@ -423,8 +432,8 @@ def _value_text(spec: RemoteSetting, cache: dict, pending: dict[str, str]) -> Te
     """One setting's VALUE lane: what the node last said, and any staged arrow.
 
     Four states, each its own word: the value; ``empty`` for a string the node holds blank;
-    ``n/a`` when the node's firmware answered that it has no such setting; ``?`` when it was
-    never read. No age: the lane is the value, and a stamp beside it only crowded it.
+    ``n/a`` when the node answered with something that can't be this setting's value — its
+    firmware has no such setting; ``?`` when it was never read (or never answered). No age: the lane is the value, and a stamp beside it only crowded it.
     """
     cached = cache.get(spec.key)
     if not spec.readable:
@@ -500,6 +509,37 @@ async def _stage_setting(ctx: AppContext, key: str, cache: dict, pending: dict[s
         pending.pop(key, None)  # back to what the node last said — nothing to send
     else:
         pending[key] = value
+
+
+async def _stage_location(ctx: AppContext, cache: dict, pending: dict[str, str]) -> None:
+    """Pick the node's advertised location on the map and stage both coordinates it sets.
+
+    The Device config page's row, speaking this node's CLI: the map opens on the position
+    as staged (or as the node last said), and on the mesh where there is none. Each picked
+    coordinate is stored the way a read of it would be, so picking the spot the node
+    already holds unstages rather than queueing a no-op ``set``. Nothing is sent until Apply.
+    """
+    from .map_screen import coords_or_none, pick_location
+
+    def known(key: str) -> str | None:
+        cached = cache.get(key)
+        return cached.value if cached is not None and cached.supported else None
+
+    lat = pending.get("lat", known("lat"))
+    lon = pending.get("lon", known("lon"))
+    picked = await pick_location(ctx, initial=coords_or_none(lat, lon))
+    if picked is None:
+        return
+    for key, value in zip(("lat", "lon"), picked, strict=True):
+        spec = get_setting(key)
+        if spec is None:  # pragma: no cover - both keys are in the catalog
+            continue
+        # Six decimals ≈ 0.1 m — beyond the map's own precision, plenty for an advert.
+        text = normalize_value(spec, f"{value:.6f}")
+        if text == known(key):
+            pending.pop(key, None)  # what the node already says — nothing to send
+        else:
+            pending[key] = text
 
 
 def _known_values(ctx: AppContext, node: Contact) -> dict[str, str]:
@@ -615,21 +655,24 @@ async def _apply(ctx: AppContext, device: Device, node: Contact, pending: dict[s
 def remember_reply(ctx: AppContext, node: Contact, fills: list[RemoteSetting], reply: str) -> int:
     """Fold one read's reply into the cache for every setting it answers.
 
-    An error reply is the firmware saying it has no such setting, and is remembered as
-    that (the row reads ``n/a``). A reply that isn't an error but doesn't parse leaves the
-    cache alone: a phrasing we don't understand is not evidence the setting is missing.
+    A reply that can't be the setting's value is the node saying it has no such setting,
+    and is remembered as that (the row reads ``n/a``) — an error (``??: key``, ``Error:
+    unsupported``) and an answer to some other question alike. The second is how older
+    firmware says it: ``get`` matches its keys by *prefix*, so on v1.15 a key it lacks
+    falls into a shorter sibling's branch — ``get radio.fem.rxgain`` answers with
+    ``get radio``'s ``> 910.525,62.5,7,5`` — and ``gps`` on a board whose receiver is
+    absent answers ``Can't find GPS``. Leaving those rows alone left them on ``?``, which
+    says *never asked*; only a read that got no reply at all (not passed here) keeps that.
 
     Returns:
         How many settings got a value.
     """
-    if reply_is_error(reply):
-        for spec in fills:
-            ctx.remote_store.remember_unsupported(node, spec.key)
-        return 0
     got = 0
     for spec in fills:
-        value = parse_reply_value(spec, reply)
-        if value is not None:
+        value = parse_reply_value(spec, reply)  # None for an error reply, too
+        if value is None:
+            ctx.remote_store.remember_unsupported(node, spec.key)
+        else:
             ctx.remote_store.remember_setting(node, spec.key, value)
             got += 1
     return got

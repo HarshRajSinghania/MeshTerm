@@ -432,6 +432,12 @@ def lane_header(label_w: int, value_w: int, width: int) -> str:
     )
 
 
+#: The row both editor pages (Device config, repeater admin) head their coordinates with: it
+#: opens the map picker and stages latitude and longitude together.
+PICK_LOCATION_LABEL = "Pick location on map…"
+PICK_LOCATION_HELP = "Point at the map to set both coordinates"
+
+
 def changes_phrase(count: int) -> str:
     """``"1 staged change"`` / ``"3 staged changes"`` for dialogs and menu rows."""
     return f"{count} staged change{'' if count == 1 else 's'}"
