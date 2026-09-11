@@ -132,6 +132,16 @@ class DeviceState:
             self._spawn(self._refresh_contacts_quietly())
         return self._contacts
 
+    def peek_contacts(self) -> list[Contact] | None:
+        """The contacts already in hand — possibly stale — or ``None``, never a radio read.
+
+        For a surface that only wants them as *context* and must not wait for them: the
+        location picker's surrounding nodes. A companion can refuse the contacts read for a
+        stretch (``ERR_CODE_BAD_STATE``), and :meth:`contacts` then blocks through every retry
+        of it — twenty-odd seconds — before giving up.
+        """
+        return self._contacts
+
     async def _fetch_contacts(self, *, force: bool = False) -> list[Contact]:
         """Read the contacts table from the device and cache it (blocking, deduplicated).
 
@@ -249,6 +259,13 @@ class DeviceState:
                 if self._self_info is None:
                     device = await self._ctx.device()
                     self._self_info = dict(await device.get_self_info())
+        return self._self_info
+
+    def peek_self_info(self) -> dict | None:
+        """The self-info already in hand, or ``None`` — never a radio read.
+
+        The :meth:`peek_contacts` of our own node: context for a surface that must not wait.
+        """
         return self._self_info
 
     async def path_hash_mode(self) -> int:

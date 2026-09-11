@@ -580,6 +580,94 @@ def test_location_picker_without_nodes_or_initial_shows_the_world() -> None:
     assert screen.future.value is None
 
 
+def test_nodes_that_arrive_late_join_the_open_map() -> None:
+    """``set_markers`` replaces the plotted nodes and redraws, without moving the view."""
+    from meshterm.ui.map_render import MapMarker
+
+    screen = _picker(initial=(45.5, -73.6))
+    screen.render_body(80)
+    view = screen._viewport
+    screen.set_markers([MapMarker("Repeater", 45.51, -73.61, is_repeater=True)])
+    screen.render_body(80)
+    assert screen._viewport is view
+    assert screen._frame_key[3] == 2  # redrawn for the new node, crosshair included
+
+
+async def test_markers_without_waiting_never_ask_the_radio(
+    ctx: AppContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The picker's markers come from what is in hand; the radio is never asked for them."""
+    from meshterm.tools.map import gather_markers
+
+    device = await ctx.device()
+
+    async def _refuse(*_args: Any, **_kwargs: Any) -> Any:  # pragma: no cover - must not run
+        raise AssertionError("the radio was asked")
+
+    monkeypatch.setattr(device, "get_contacts", _refuse)
+    monkeypatch.setattr(device, "get_self_info", _refuse)
+    assert await gather_markers(ctx, wait=False) == []  # nothing cached, nothing heard yet
+
+
+async def test_the_picker_opens_while_the_radio_is_still_reading_contacts(
+    ctx: AppContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A contacts read that hasn't answered doesn't hold the map closed; its nodes join later.
+
+    Regression: a companion refusing the contacts read (``ERR_CODE_BAD_STATE``) kept the
+    picker from opening through every retry of it — twenty-odd seconds.
+    """
+    import asyncio
+
+    from meshterm.core.models import Contact
+    from meshterm.ui import map_screen
+
+    device = await ctx.device()
+    answer = asyncio.Event()
+
+    async def _slow_contacts() -> list:
+        await answer.wait()
+        return [
+            Contact(
+                name="Hilltop", public_key="ab" * 32, key_prefix="abababab", lat=45.51, lon=-73.61
+            )
+        ]
+
+    monkeypatch.setattr(device, "get_contacts", _slow_contacts)
+
+    class _Session:
+        def base_body_size(self) -> tuple[int, int]:
+            return (72, 20)
+
+        def invalidate(self) -> None:
+            pass
+
+        def request_full_repaint(self) -> None:
+            pass
+
+        async def run_screen(self, screen: Any) -> Any:
+            self.opened_with = len(screen._markers)  # the map is up; the radio hasn't answered
+            answer.set()
+            for _ in range(200):
+                await asyncio.sleep(0)
+                if len(screen._markers) > self.opened_with:
+                    break
+            self.later = len(screen._markers)
+            return (45.5, -73.6)
+
+    class _Ui:
+        def __init__(self, session: _Session) -> None:
+            self.session = session
+
+    session = _Session()
+    monkeypatch.setattr("meshterm.ui.surface.TuiUi", _Ui)
+    monkeypatch.setattr(map_screen, "basemap_source", lambda _ctx: _StubSource())
+    ctx.ui = _Ui(session)  # type: ignore[assignment]
+    assert await map_screen.pick_location(ctx) == (45.5, -73.6)
+    assert session.opened_with == 0
+    assert session.later == 1
+
+
 # -- the editor's flows against the simulator ---------------------------------------
 
 

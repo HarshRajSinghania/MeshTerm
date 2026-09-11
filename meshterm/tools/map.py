@@ -117,7 +117,7 @@ class MapTool(Tool):
         """
 
 
-async def gather_markers(ctx: AppContext) -> list[MapMarker]:
+async def gather_markers(ctx: AppContext, *, wait: bool = True) -> list[MapMarker]:
     """Collect every located node to plot: the device's contacts, plus our own node.
 
     The companion's **contact list** is the authoritative source for a node's name,
@@ -126,8 +126,16 @@ async def gather_markers(ctx: AppContext) -> list[MapMarker]:
     advert. So contacts drive the markers, and each contact is enriched with signal
     detail from the observations when we've overheard it directly.
 
-    Shared by the ``map`` tool and the config editor's pick-a-location map, so both
-    show the same mesh.
+    Shared by the ``map`` tool, the node page's preview and the editors' pick-a-location
+    map, so all of them show the same mesh.
+
+    Args:
+        ctx: Shared application context.
+        wait: Whether to wait on the radio for contacts and our own position the session
+            has not cached yet. ``False`` builds the markers from what is already in hand —
+            the cache and our own history — and never makes a round trip, for a surface
+            whose nodes are only context (the location picker): a companion refusing the
+            contacts read can otherwise hold it closed for twenty-odd seconds.
     """
     from ..ui.map_render import MapMarker
 
@@ -135,7 +143,8 @@ async def gather_markers(ctx: AppContext) -> list[MapMarker]:
     markers: list[MapMarker] = []
     seen: set[str] = set()
 
-    for contact in await _contacts(ctx):
+    contacts = await _contacts(ctx) if wait else (ctx.devstate.peek_contacts() or [])
+    for contact in contacts:
         if not contact.has_location or not usable_fix(contact.lat, contact.lon):
             continue
         key = contact.key_prefix or (contact.public_key or "")[:12]
@@ -169,7 +178,11 @@ async def gather_markers(ctx: AppContext) -> list[MapMarker]:
             )
         )
 
-    self_marker = await _self_marker(ctx)
+    if wait:
+        self_marker = await _self_marker(ctx)
+    else:
+        info = ctx.devstate.peek_self_info()
+        self_marker = _marker_for_self(info) if info is not None else None
     if self_marker is not None:
         markers.append(self_marker)
     return markers
@@ -185,12 +198,17 @@ async def _contacts(ctx: AppContext) -> list:
 
 async def _self_marker(ctx: AppContext) -> MapMarker | None:
     """Build a marker for our own node from the device, if its location is known."""
-    from ..ui.map_render import MapMarker
-
     try:
         info = await ctx.devstate.self_info()
     except Exception:  # noqa: BLE001 - the map is useful without our own position
         return None
+    return _marker_for_self(info)
+
+
+def _marker_for_self(info: dict) -> MapMarker | None:
+    """Our own node's marker from a self-info payload, or ``None`` where it has no fix."""
+    from ..ui.map_render import MapMarker
+
     lat, lon = _as_float(info.get("adv_lat")), _as_float(info.get("adv_lon"))
     if lat is None or lon is None or not usable_fix(lat, lon):
         return None  # a device with no fix reports 0/0 (or nonsense out-of-range)

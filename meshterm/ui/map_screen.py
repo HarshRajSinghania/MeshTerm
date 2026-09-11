@@ -307,6 +307,17 @@ class MapScreen(Screen):
         self._needs_scrub = False
         return 2  # the panel's right padding cell and its right border cell
 
+    def set_markers(self, markers: list[MapMarker]) -> None:
+        """Replace the plotted nodes on the open map — nodes that arrived after it opened.
+
+        The drawn frame is for the old overlay, so it stops being served; until the new one
+        lands, the nodes are drawn over that frame's ground rather than over black (see
+        :meth:`_ground`). The view stays where it is: the reader may already have moved it.
+        """
+        self._markers = markers
+        self._frame_key = None
+        self._session.invalidate()
+
     def _query_echo(self) -> bool:
         """Whether this paint echoes the find query over the canvas's bottom row.
 
@@ -1232,10 +1243,14 @@ async def pick_location(
 ) -> tuple[float, float] | None:
     """Open the full-screen map as a coordinate picker; return ``(lat, lon)`` or ``None``.
 
-    Gathers the mesh's located nodes for context (best-effort — an unreachable radio just
-    means a barer map), warms the tile source off the event loop, then runs a
-    :class:`LocationPickScreen` until the user commits a spot with Enter or backs out
-    with Esc.
+    Opens on the mesh's located nodes *already in hand* — the session's cached contacts and
+    position, and our own history — and never waits on the radio for them: they are context
+    for the pick, not part of it, and a companion refusing the contacts read (some do, for a
+    stretch) held the picker closed through every retry of it, twenty-odd seconds. Whatever
+    the cache lacked is fetched behind the open map and joins it when the radio answers; the
+    read is never cancelled, so a shared fetch another screen is waiting on survives the
+    picker closing. Then runs a :class:`LocationPickScreen` until the user commits a spot
+    with Enter or backs out with Esc.
 
     Args:
         ctx: Shared application context (must be in the interactive menu).
@@ -1254,16 +1269,32 @@ async def pick_location(
     if not isinstance(ctx.ui, TuiUi):  # pragma: no cover - guarded by the menu-only caller
         raise RuntimeError("the interactive map is only available in the menu")
     session = ctx.ui.session
+    devstate = ctx.devstate
+    in_hand = devstate.peek_contacts() is not None and devstate.peek_self_info() is not None
     try:
-        markers = await gather_markers(ctx)
+        markers = await gather_markers(ctx, wait=False)
     except Exception:  # noqa: BLE001 - context markers are a nicety, never a requirement
         markers = []
     source = basemap_source(ctx)
     max_zoom = await asyncio.to_thread(lambda: source.max_zoom)
     screen = LocationPickScreen(session, markers, source, max_zoom, initial=initial)
+    showing = True
+
+    async def fill_in() -> None:
+        """Add what the cache lacked once the radio answers — or never, at no cost."""
+        try:
+            fuller = await gather_markers(ctx)
+        except Exception:  # noqa: BLE001 - the picker already works without them
+            return
+        if showing and len(fuller) != len(screen._markers):
+            screen.set_markers(fuller)
+
+    if not in_hand:
+        asyncio.ensure_future(fill_in())
     try:
         result = await session.run_screen(screen)
     finally:
+        showing = False
         # Same clean-slate repaint as open_map: the braille may have smeared the terminal.
         session.request_full_repaint()
     return None if result is CANCEL or result is None else result
