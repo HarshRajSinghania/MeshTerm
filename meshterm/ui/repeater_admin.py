@@ -39,8 +39,10 @@ from ..core.remote_config import (
 from .menus import (
     confirm_discard,
     exit_rows,
+    icon_lane,
     lane_header,
     lane_row,
+    marked_label,
     menu_rows,
     section_heading,
 )
@@ -283,17 +285,23 @@ def _menu_items(node: Contact, cache: dict, pending: dict[str, str]) -> tuple[st
                 Choice(title=lane_row(label, value, help_text, label_w, value_w), value=key)
             )
 
+    # ↻ and ⌨ are one cell where 📡 🕒 🔐 🔄 are two, so the column is measured once and
+    # every mark padded out to it — otherwise Read settings and Command line start their
+    # labels a column left of the rows under them.
+    actions = [
+        ("↻", "Read settings", "Fetch every value from the node, one paced get", _READ),
+        ("⌨", "Command line…", "Talk to the node's CLI directly", _CLI),
+        ("📡", "Send advert…", "Have the node announce itself now", _ADVERT),
+        ("🕒", "Sync clock…", "Set the node's clock over the mesh", _CLOCK),
+        ("🔐", "Admin password…", "Change the node's admin password", _PASSWORD),
+        ("🔄", "Reboot node…", "Restart it remotely", _REBOOT),
+    ]
+    lane = icon_lane(icon for icon, _, _, _ in actions)
     items.append(section_heading("Actions"))
     items.extend(
         menu_rows(
-            [
-                ("↻ Read settings", "Fetch every value from the node, one paced get", _READ),
-                ("⌨ Command line…", "Talk to the node's CLI directly", _CLI),
-                ("📡 Send advert…", "Have the node announce itself now", _ADVERT),
-                ("🕒 Sync clock…", "Set the node's clock over the mesh", _CLOCK),
-                ("🔐 Admin password…", "Change the node's admin password", _PASSWORD),
-                ("🔄 Reboot node…", "Restart it remotely", _REBOOT),
-            ]
+            (marked_label(icon, label, "", lane=lane), help_text, value)
+            for icon, label, help_text, value in actions
         )
     )
 

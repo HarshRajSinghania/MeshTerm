@@ -366,6 +366,34 @@ def test_admin_menu_pins_the_column_header_over_the_category() -> None:
     assert above is True
 
 
+def test_admin_actions_start_every_label_in_the_same_cell() -> None:
+    """``↻`` and ``⌨`` are one cell among two-cell siblings; the icon column absorbs it.
+
+    The Actions rows used to write ``icon + " "``, which started *Read settings* and
+    *Command line…* a column left of *Send advert…* below them.
+    """
+    from rich.cells import cell_len
+
+    from meshterm.ui.repeater_admin import _menu_items
+    from meshterm.ui.tui import Choice
+
+    _title, items = _menu_items(NODE, {}, {})
+    labels = ("Read settings", "Command line…", "Send advert…", "Sync clock…", "Reboot node…")
+    rows = [
+        item.title.plain
+        for item in items
+        if isinstance(item, Choice)
+        and hasattr(item.title, "plain")
+        and any(label in item.title.plain for label in labels)
+    ]
+    assert len(rows) == len(labels)
+    starts = set()
+    for row in rows:
+        label = next(label for label in labels if label in row)
+        starts.add(cell_len(row[: row.index(label)]))
+    assert len(starts) == 1, "a label starts a column early"
+
+
 def test_admin_menu_header_abbreviates_rather_than_wrapping() -> None:
     """Too narrow for the whole line, the last label shortens — the header stays one row."""
     from rich.cells import cell_len
