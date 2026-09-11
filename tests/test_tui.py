@@ -2672,6 +2672,26 @@ def test_select_scrolls_for_a_row_that_pins_a_head_without_being_told() -> None:
     assert _row_plains(plain, 40)[0] == before
 
 
+def test_a_list_that_says_no_hscroll_is_not_overruled_by_its_rows() -> None:
+    """``hscroll=False`` holds against rows that pin a head, through a row swap too.
+
+    The editor pages end their lanes at the edge; their Actions rows pin heads, and the
+    rows' say-so used to turn the whole page's ←→ scrolling on regardless.
+    """
+    from meshterm.ui.tui.select import Choice, SelectScreen
+
+    lanes = "Send advert  "
+    row = Choice(lanes + "Announce this node " + "and then some " * 6, 1, hscroll_from=len(lanes))
+    screen = SelectScreen("editor", [row], hscroll=False)
+    before = _row_plains(screen, 40)[0]
+    screen.handle("right")
+    assert _row_plains(screen, 40)[0] == before
+    assert "←→" not in screen.footer_hint
+    screen.replace_items([row])  # a refresh must not turn it back on
+    screen.handle("right")
+    assert _row_plains(screen, 40)[0] == before
+
+
 def test_menu_rows_pin_their_label_lane_so_only_the_description_slides() -> None:
     """The shared label+description builder hands each row its own head block."""
     from meshterm.ui.menus import menu_rows

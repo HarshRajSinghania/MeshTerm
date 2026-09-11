@@ -317,7 +317,7 @@ class SelectScreen(Screen):
         footer_hint: str | None = None,
         delete_hint: str = "",
         filterable: bool = True,
-        hscroll: bool = False,
+        hscroll: bool | None = None,
         hscroll_hint: str = "←→ scroll",
         keys: Mapping[str, Any] | None = None,
         key_hint: Callable[[Any], str] | None = None,
@@ -339,8 +339,13 @@ class SelectScreen(Screen):
             filterable: Whether typing narrows the list. Off for short, fixed lists (e.g.
                 the startup device picker) where type-to-filter would only get in the way.
             hscroll: Whether ←/→ horizontally scroll the *highlighted* row so an over-long
-                line can be read to its end (the Watchtower's alert log). Off by default —
-                rows simply ellipsize at the right edge and ←/→ stay inert. Only a row that
+                line can be read to its end (the Watchtower's alert log). ``None`` (the
+                default) lets the rows decide: one that pins a head block
+                (:attr:`Choice.hscroll_from`) turns scrolling on, and without one the rows
+                simply ellipsize at the right edge and ←/→ stay inert. ``False`` keeps it off
+                whatever the rows declare — the editor pages (Device config, repeater admin),
+                whose Actions rows pin heads but whose lanes are meant to end at the edge
+                rather than slide. Only a row that
                 actually overflows the width scrolls; a short row (and every separator or
                 column header) stays put, and the shift resets to the start whenever the
                 highlight moves to another row or the filter is edited — each row scrolls
@@ -376,8 +381,12 @@ class SelectScreen(Screen):
         # one turns the list's scrolling on without the builder having to reach the screen
         # it will be shown in. That is what makes every label+description list
         # (:func:`~meshterm.ui.menus.menu_rows`, the main menu) scroll its description
-        # wherever it is opened, ``ctx.ui.select`` included.
-        self._hscroll = hscroll or any(getattr(item, "hscroll_from", 0) > 0 for item in items)
+        # wherever it is opened, ``ctx.ui.select`` included — unless the list itself has
+        # said ``hscroll=False``, which the rows cannot overrule.
+        self._hscroll_auto = hscroll is None
+        self._hscroll = bool(hscroll) or (
+            self._hscroll_auto and any(getattr(item, "hscroll_from", 0) > 0 for item in items)
+        )
         self._hscroll_hint = hscroll_hint
         # Shortcuts are the non-filterable list's compensation for having no filter: the
         # letters are free, so a list may spend them (see the ``keys`` argument).
@@ -435,7 +444,10 @@ class SelectScreen(Screen):
         was = current.value if current is not None else None
         position = self._index
         self._items = items
-        self._hscroll = self._hscroll or any(getattr(item, "hscroll_from", 0) > 0 for item in items)
+        if self._hscroll_auto:
+            self._hscroll = self._hscroll or any(
+                getattr(item, "hscroll_from", 0) > 0 for item in items
+            )
         if title is not None:
             self.title = title
         if prompt is not None:

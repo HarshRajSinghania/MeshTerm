@@ -1,22 +1,23 @@
-"""Interactive device-configuration screens, rendered in the full-screen session.
+"""The Device config page: every setting of the companion, and the operations on the box.
 
-Two sibling screens live here, deliberately kept distinct:
+Behind the ``config`` tool (:func:`edit_config`), and shaped deliberately like the
+repeater-admin page (:mod:`meshterm.ui.repeater_admin`) — the same full-screen list, the
+same setting / value / description lanes under category headings, staged ``current → new``
+values, Apply in place, and an **Actions** section closing the list — so configuring the
+radio in your hand reads exactly like configuring one over the mesh.
 
-* **Device config** (:func:`edit_config`, behind the ``config`` tool) — one grouped,
-  column-aligned list of every setting under its category heading, each row showing its
-  current value, any staged change, and a one-line explanation. Editing a row *stages* the
-  new value (shown as ``current → new``) and nothing touches the radio until *Apply*;
-  backing out with staged changes asks before discarding them. The editor returns the
-  staged operations for :class:`~meshterm.tools.config.ConfigTool` to execute and log.
-* **Device actions** (:func:`device_actions`, behind the ``device-actions`` tool) — the
-  operations that act on the box itself rather than a value: backup/restore, the
-  identity key, clock sync, reboot, and factory reset. These *run immediately* (after
-  their own confirmation dialog — destructive ones gate behind typing a confirmation
-  word); they have no meaningful "preview", so their result is shown at once. They share
-  the settings snapshot and :func:`~meshterm.tools.config.apply_ops` executor with the
-  editor, which is why both screens live in this module. The everyday advert action
-  lives in its own main-menu entry instead (the ``advert`` tool, via
-  :func:`send_advert`), one keystroke away as a popup over the menu.
+* **Settings** — every value the companion firmware lets an app read and write (see
+  :data:`~meshterm.core.device_config.DEVICE_SETTINGS`), each custom variable the device
+  reports, and MeshTerm's own background-advert cadences. Editing a row *stages* the new
+  value and nothing touches the radio until *Apply*, which sends the staged values one at a
+  time and stays on the page: one the device refuses stays staged with its reason, as on
+  the remote page. Backing out with changes staged asks before discarding them.
+* **Actions** — the operations on the box itself rather than on a value: re-read, clock
+  sync, backup/restore, the identity key, reboot, and factory reset. These *run
+  immediately*, each behind its own confirmation (destructive ones behind typing a word),
+  and share the snapshot and the :func:`~meshterm.tools.config.apply_ops` executor with
+  Apply. The everyday advert lives in its own main-menu entry instead (the ``advert`` tool,
+  via :func:`send_advert`), one keystroke away as a popup over the menu.
 
 Multiple-choice values are picked in dialogs (booleans as an On/Off button pair, enums as
 a floating select), the node's location can be set by pointing at the full-screen map (see
@@ -36,6 +37,7 @@ from urllib.parse import quote
 
 from rich import box
 from rich.cells import cell_len
+from rich.markup import escape
 from rich.table import Table
 from rich.text import Text
 
@@ -47,6 +49,7 @@ from ..core.advert_store import (
     cadence_label,
 )
 from ..core.device_config import (
+    DEVICE_SETTINGS,
     DeviceConfigError,
     SettingSpec,
     build_snapshot,
@@ -62,8 +65,10 @@ from .marks import MASK_MARK
 from .menus import (
     confirm_discard,
     exit_rows,
+    icon_lane,
     lane_header,
     lane_row,
+    marked_label,
     menu_rows,
     run_steps,
     section_heading,
@@ -79,8 +84,11 @@ if TYPE_CHECKING:
 _LOCATION = "__location__"
 _PRESETS = "__presets__"
 _CUSTOM = "__custom__"
+#: Prefix of a custom variable's row value; the variable's name follows it.
+_CUSTOM_VAR = "__custom_var__:"
 _ADVERT_DIRECT = "__advert_direct__"
 _ADVERT_FLOOD = "__advert_flood__"
+_READ = "__read__"
 _SYNC_CLOCK = "__sync_clock__"
 _REBOOT = "__reboot__"
 _BACKUP = "__backup__"
@@ -125,15 +133,23 @@ async def cached_snapshot(ctx: AppContext, device: Device) -> dict:
     return await build_snapshot(device, self_info=self_info, path_hash_mode=path_hash_mode)
 
 
-async def edit_config(ctx: AppContext) -> list[tuple] | None:
-    """Run the interactive editor and return the staged operations to perform.
+async def edit_config(ctx: AppContext) -> dict[str, Any] | None:
+    """Run the Device config page until the reader leaves it.
+
+    One screen for the whole visit, its rows refreshed in place after every round: they
+    carry the staged ``current → new`` values and the title counts them, so the content
+    moves under a highlight — and a typed filter — that stay where the reader put them.
+    Every sub-prompt floats over the page. Apply sends what is staged and stays (see
+    :func:`_apply`); each action runs where it is picked; Esc leaves, asking first while
+    anything is still staged; and a reboot closes the page and hands off to the session's
+    reconnect dialog.
 
     Args:
         ctx: Shared application context (provides the connected device and UI surface).
 
     Returns:
-        A list of operation tuples for the tool to execute, or ``None`` if the user
-        cancelled without anything staged to apply.
+        ``{"applied": n}`` when staged values reached the device during the visit, or
+        ``None`` when none did.
     """
     from .tui import CANCEL
 
@@ -142,61 +158,95 @@ async def edit_config(ctx: AppContext) -> list[tuple] | None:
     custom = await device.get_custom_vars()
     # The background-advert cadences are app-side settings (MeshTerm sends the adverts,
     # not the firmware), but they're staged and applied exactly like device values so
-    # the editor stays one coherent surface.
+    # the page stays one coherent surface.
     policy = ctx.advert_store.load(str(snapshot.get("public_key") or ""))
 
-    # The editor is menu-only, so a full-screen session is always present. Keep the main
-    # menu *pushed on the stack* for the whole session (rather than popping it between
-    # prompts): every sub-prompt then floats over it as a modal popup with its own border
-    # — the quit-dialog pattern — instead of replacing the screen. See _menu_loop.
     session = getattr(ctx.ui, "session", None)
     if session is None:  # pragma: no cover - guarded by the menu-only caller
         raise RuntimeError("the config editor is only available in the menu")
-    pending: dict[str, Any] = {}  # setting key -> staged new value
-    extra_ops: list[tuple] = []  # staged custom-variable ops, in order
+    pending: dict[str, Any] = {}  # setting key (or cadence sentinel) -> staged new value
+    custom_pending: dict[str, str] = {}  # custom variable name -> staged new value
+    applied = 0
 
-    # The editor's rows *are* its data — each carries its staged ``current → new`` value and
-    # the title counts what is staged — so they are refreshed in place after every round
-    # (``replace_items``) rather than rebuilt as a new screen. One screen for the whole
-    # session means the typed filter survives editing a setting, not just the cursor.
+    def staged() -> int:
+        return len(pending) + len(custom_pending)
+
+    def summary() -> dict[str, Any] | None:
+        return {"applied": applied} if applied else None
+
+    # The rows read ``snapshot``, ``custom`` and ``policy`` through this closure, so a
+    # re-read that rebinds them is exactly what the next refresh draws.
     menu = _ConfigMenu(
         session,
         lambda reveal: _menu_items(
-            snapshot, pending, len(pending) + len(extra_ops), policy, reveal
+            snapshot,
+            pending,
+            staged(),
+            policy,
+            reveal,
+            custom=custom,
+            custom_pending=custom_pending,
         ),
         conceals=has_pin(snapshot),
         footer_hint="↑↓ move · type to filter · Enter select · Esc back",
     )
     async with session.stay(menu) as visit:
         while True:
-            staged = len(pending) + len(extra_ops)
             choice = await visit.result()
-            if choice is CANCEL:  # Esc at the menu
+            if choice is CANCEL:  # Esc at the page
                 choice = _CANCEL
 
             if choice in (None, _CANCEL):
-                if staged and not await confirm_discard(ctx, staged, verb="applying"):
-                    continue  # keep editing — the same menu, the same place in it
-                return None
+                if staged() and not await confirm_discard(ctx, staged(), verb="applying"):
+                    continue  # keep editing — the same page, the same place in it
+                return summary()
             if choice == _APPLY:
-                ops: list[tuple] = []
-                for k, v in pending.items():
-                    if k in (_ADVERT_DIRECT, _ADVERT_FLOOD):
-                        ops.append(("advert_cadence", k == _ADVERT_FLOOD, v))
-                    else:
-                        ops.append(("set", k, v))
-                ops.extend(extra_ops)
-                return ops or None
-            if choice in (_ADVERT_DIRECT, _ADVERT_FLOOD):
+                applied += await _apply(ctx, device, snapshot, pending, custom_pending)
+                snapshot, custom = await _reread(ctx, device)
+                policy = ctx.advert_store.load(str(snapshot.get("public_key") or ""))
+            elif choice == _READ:
+                snapshot, custom = await _reread(ctx, device)
+                _unstage_held(snapshot, custom, pending, custom_pending)
+            elif choice == _SYNC_CLOCK:
+                await _sync_clock(ctx, device, snapshot)
+            elif choice == _BACKUP:
+                await _backup_now(ctx, device, snapshot)
+            elif choice == _RESTORE:
+                if await _restore_now(ctx, device, snapshot):
+                    snapshot, custom = await _reread(ctx, device)
+                    _unstage_held(snapshot, custom, pending, custom_pending)
+            elif choice == _IDENTITY_KEY:
+                if await _identity_key_menu(ctx, device, snapshot):
+                    snapshot, custom = await _reread(ctx, device)
+            elif choice == _REBOOT:
+                # A reboot ends the visit and would take anything staged with it, so ask
+                # first — and a discard agreed to is a discard, whatever the reboot does.
+                if staged():
+                    if not await confirm_discard(ctx, staged(), verb="applying"):
+                        continue
+                    pending.clear()
+                    custom_pending.clear()
+                if await _reboot(ctx, device, snapshot):
+                    return summary()  # the link is dropping; the reconnect dialog takes over
+            elif choice == _RESET:
+                if await _factory_reset(ctx, device, snapshot):
+                    # Everything staged was staged against a device that no longer exists.
+                    pending.clear()
+                    custom_pending.clear()
+                    snapshot, custom = await _reread(ctx, device)
+            elif choice in (_ADVERT_DIRECT, _ADVERT_FLOOD):
                 await _stage_advert_cadence(ctx, choice == _ADVERT_FLOOD, policy, pending)
             elif choice == _LOCATION:
                 await _stage_location(ctx, snapshot, pending)
             elif choice == _PRESETS:
                 await _stage_preset(ctx, snapshot, pending)
             elif choice == _CUSTOM:
-                await _stage_custom_var(ctx, custom, extra_ops)
+                await _stage_custom_var(ctx, custom, custom_pending)
+            elif isinstance(choice, str) and choice.startswith(_CUSTOM_VAR):
+                await _stage_var(ctx, choice.removeprefix(_CUSTOM_VAR), custom, custom_pending)
             else:  # a setting key
                 await _stage_setting(ctx, choice, snapshot, pending)
+            menu.conceal_pin(has_pin(snapshot))
             menu.refresh()
 
 
@@ -403,11 +453,24 @@ def _setting_value(
     session's staging.
     """
     hide = spec.key == PIN_KEY and not reveal_pin
-    shown = format_value(spec, spec.getter(snapshot))
-    value = Text(conceal(shown) if hide else shown)
+    current = spec.getter(snapshot)
+    # The repeater page's words for the two non-values: ``?`` never reported, ``empty`` a
+    # string the device holds blank — muted, and never parenthesized.
+    if current is None:
+        value = Text("?", style="muted")
+    elif spec.value_type == "str" and current == "":
+        value = Text("empty", style="muted")
+    else:
+        shown = format_value(spec, current)
+        value = Text(conceal(shown) if hide else shown)
     if spec.key in pending:
-        staged = format_value(spec, pending[spec.key])
-        value.append(f" → {conceal(staged) if hide else staged}", style="warn")
+        new = pending[spec.key]
+        if spec.value_type == "str" and new == "":
+            staged = "empty"
+        else:
+            staged = format_value(spec, new)
+            staged = conceal(staged) if hide else staged
+        value.append(f" → {staged}", style="warn")
     return value
 
 
@@ -445,7 +508,13 @@ class _ConfigMenu(SelectScreen):
     them in place through :meth:`~meshterm.ui.tui.select.SelectScreen.replace_items` —
     which follows the highlighted row by value and keeps the typed filter — rather than
     rebuilding the screen under a reader who was part-way down it.
+
+    It is a full-screen page, not a floating popup — the same as the repeater-admin page it
+    mirrors: a device's whole configuration, with its actions, is a place the reader works
+    in for a while, and the value prompts, confirms and results float over it.
     """
+
+    floating = False
 
     def __init__(
         self,
@@ -466,11 +535,21 @@ class _ConfigMenu(SelectScreen):
             **kwargs: Passed to :class:`~meshterm.ui.tui.select.SelectScreen`.
         """
         title, items = build(False)
+        # The lanes end at the edge rather than slide. The Actions rows pin a head block
+        # (menus.menu_rows), which on its own turns ←→ scrolling on for the whole list — and
+        # a setting row, pinning nothing, would then slide its label out with its description.
+        kwargs.setdefault("hscroll", False)
         super().__init__(title, items, **kwargs)
         self._session = session
         self._build = build
         self._conceals = conceals
         self._revealed = False
+
+    def conceal_pin(self, conceals: bool) -> None:
+        """Say whether the device reports a PIN now — a reset or a restore can change it."""
+        self._conceals = conceals
+        if not conceals:
+            self._revealed = False
 
     def refresh(self) -> None:
         """Re-read the rows for what is staged now, keeping the reveal, cursor and filter."""
@@ -520,17 +599,24 @@ def _menu_items(
     staged: int,
     policy: AdvertPolicy,
     reveal_pin: bool = False,
+    *,
+    custom: dict[str, str] | None = None,
+    custom_pending: dict[str, str] | None = None,
 ) -> tuple[str, list]:
-    """Build the editor menu's title and rows for the current snapshot + staged state.
+    """Build the page's title and rows for the current snapshot + staged state.
 
-    Returns the ``(title, items)`` the caller pushes as a persistent backdrop screen (so
-    sub-prompts float over it). The rows sit in three aligned columns — setting, current
-    value (and any staged new value), description — under one header line, so the list
-    reads like the full-configuration table it stages changes for.
+    The settings sit in three aligned lanes — setting, current value (and any staged new
+    value), description — under one header line, grouped by category; the device's custom
+    variables and MeshTerm's own advert cadences follow in the same lanes; and the
+    **Actions** close the list. The same shape as the repeater-admin page (see
+    :func:`meshterm.ui.repeater_admin._menu_items`), so the two read as one editor.
 
     ``reveal_pin`` is :class:`_ConfigMenu`'s toggle, passed straight through to the PIN's
-    value lane.
+    value lane. ``custom`` holds the variables the device reports and ``custom_pending``
+    the values staged for them.
     """
+    custom = custom or {}
+    custom_pending = custom_pending or {}
     # First pass: collect every row's lanes per category, so the columns can be sized to
     # their content (including any staged ``→ new`` arrows) before a single row is built.
     sections: list[tuple[str, list[tuple[str, Text, str, Any]]]] = []
@@ -567,16 +653,18 @@ def _menu_items(
                     _PRESETS,
                 )
             )
-        elif category == "Experimental":
-            rows.append(
-                (
-                    "Custom variables…",
-                    Text(),
-                    "Set a raw firmware variable by name",
-                    _CUSTOM,
-                )
-            )
         sections.append((category, rows))
+
+    # Custom variables: each one the firmware or this board's sensors report, staged like a
+    # setting (the firmware's own, GPS, carry a name and a type — see _KNOWN_VARS), plus
+    # any new name staged by hand and the row to stage one.
+    var_rows: list[tuple[str, Text, str, Any]] = []
+    for name in sorted(set(custom) | set(custom_pending)):
+        label, help_text, _kind = _KNOWN_VARS.get(name, (name, "A firmware variable", "str"))
+        value = _custom_value(name, custom, custom_pending)
+        var_rows.append((label, value, help_text, _CUSTOM_VAR + name))
+    var_rows.append(("Set by name…", Text(), "Set a raw firmware variable by name", _CUSTOM))
+    sections.append(("Custom variables", var_rows))
 
     # App-side rows: the background-advert cadences MeshTerm itself runs (see the
     # advert scheduler). They stage and apply like device settings, so they sit in the
@@ -617,12 +705,41 @@ def _menu_items(
                 Choice(title=lane_row(label, value, help_text, label_w, value_w), value=key)
             )
 
-    # Nothing at all while the editor is clean — Esc leaves, and a row saying so was
+    # The operations on the box itself, run the moment they are confirmed — the local
+    # counterpart of the repeater page's own Actions, built the same way. ↻ and ⚠ are one
+    # cell where 🕒 💾 📂 🔐 🔄 are two, so the column is measured once and every mark padded
+    # out to it. The one irreversible row is tinted, on its mark (or its words, iconless).
+    actions = [
+        ("↻", "Read settings", "Re-read every value from the device", _READ),
+        ("🕒", "Sync clock…", "Set the device clock from this computer", _SYNC_CLOCK),
+        ("💾", "Back up config…", "Write every setting to a TOML file", _BACKUP),
+        ("📂", "Restore config…", "Preview or apply a saved TOML backup", _RESTORE),
+        ("🔐", "Identity key…", "Export or import the node's private key", _IDENTITY_KEY),
+        ("🔄", "Reboot device…", "Restart the companion and reconnect", _REBOOT),
+        ("⚠", "Factory reset…", "Erase everything (typed confirmation)", _RESET),
+    ]
+    lane = icon_lane(icon for icon, _, _, _ in actions)
+    items.append(section_heading("Actions"))
+    items.extend(
+        menu_rows(
+            (
+                marked_label(icon, label, "err" if value == _RESET else "", lane=lane),
+                help_text,
+                value,
+            )
+            for icon, label, help_text, value in actions
+        )
+    )
+
+    # Nothing at all while the page is clean — Esc leaves, and a row saying so was
     # retired app-wide. With changes staged the pair appears below one blank line: Apply
     # has no key of its own, and Back spells out what leaving costs (see menus.exit_rows).
     items.extend(exit_rows(staged, apply_value=_APPLY, back_value=_CANCEL))
 
-    title = "Device config" + (f" — {staged} staged" if staged else "")
+    name = str(snapshot.get("name") or "")
+    title = "Device config" + (f" — {name}" if name else "")
+    if staged:
+        title += f" · {staged} staged"
     return title, items
 
 
@@ -646,6 +763,13 @@ async def _stage_setting(
     current = pending.get(key, spec.getter(snapshot))
     value = await _prompt_value(ctx, spec, current, snapshot)
     if value is None:
+        return
+    # A typed value was checked as it was typed; a picked one (relaying on or off) is
+    # checked here — against the radio as staged, not only as the device still holds it.
+    complaint = spec.validate(value, {**snapshot, **pending}) if spec.validate else None
+    if complaint:
+        ctx.ui.note(f"[err]✗[/err] {escape(complaint)}")
+        await ctx.ui.present(title=spec.label)
         return
     if value == spec.getter(snapshot):
         pending.pop(key, None)  # set back to the device's value — nothing to change
@@ -864,9 +988,9 @@ async def _stage_preset(ctx: AppContext, snapshot: dict, pending: dict[str, Any]
 
 
 async def _stage_custom_var(
-    ctx: AppContext, custom: dict[str, str], extra_ops: list[tuple]
+    ctx: AppContext, custom: dict[str, str], custom_pending: dict[str, str]
 ) -> None:
-    """Prompt for a custom/experimental variable and stage a set operation.
+    """Prompt for a custom/experimental variable by name and stage a value for it.
 
     Known variable names are offered as suggestions so an existing one can be recalled
     without retyping it; any new name is accepted as free text.
@@ -887,7 +1011,10 @@ async def _stage_custom_var(
     if answers is None:
         return
     key, value = answers
-    extra_ops.append(("set_custom", key, value))
+    if value == custom.get(key):
+        custom_pending.pop(key, None)  # what the device already holds — nothing to send
+    else:
+        custom_pending[key] = value
 
 
 async def _ask_custom_name(
@@ -913,80 +1040,183 @@ async def _ask_custom_name(
     return typed.strip() if typed and typed.strip() else None
 
 
-# --- device actions (run immediately) -----------------------------------------
+#: Custom variables the companion firmware itself defines (``CMD_SET_CUSTOM_VAR`` in
+#: MeshCore's ``examples/companion_radio/MyMesh.cpp``): ``(label, description, kind)``, so
+#: their rows read like settings. Anything else a board's sensors report is listed under its
+#: own name and edited as text.
+_KNOWN_VARS: dict[str, tuple[str, str, str]] = {
+    "gps": ("GPS", "Run the GPS receiver (boards with one)", "bool"),
+    "gps_interval": ("GPS interval (s)", "Seconds between GPS position reads", "int"),
+}
+
+#: The firmware's ceiling on ``gps_interval`` (``constrain(…, 0, 86400)``): one day.
+_GPS_INTERVAL_MAX = 86400
 
 
-async def device_actions(ctx: AppContext) -> None:
-    """Run the Device actions screen: immediate operations on the companion itself.
+def _custom_value(name: str, custom: dict[str, str], custom_pending: dict[str, str]) -> Text:
+    """One custom variable's VALUE lane: ``current [→ staged]``, in the settings' words."""
 
-    The action counterpart of :func:`edit_config`, behind the ``device-actions`` tool.
-    Nothing here is staged — each action runs as soon as its own confirmation is given
-    (destructive ones gate behind typing a confirmation word) and presents its result at
-    once. The menu stays open between actions so several can be run in a row; Esc (or
-    Back) returns to the main menu, and a reboot closes the screen and hands off to the
-    session's reconnect dialog.
+    def shown(raw: str) -> str:
+        if _KNOWN_VARS.get(name, ("", "", "str"))[2] == "bool" and raw in ("0", "1"):
+            return "on" if raw == "1" else "off"
+        return raw if raw != "" else "empty"
 
-    Args:
-        ctx: Shared application context (provides the connected device and UI surface).
+    if name not in custom:
+        value = Text("?", style="muted")  # staged by name; the device never reported it
+    elif custom[name] == "":
+        value = Text("empty", style="muted")
+    else:
+        value = Text(shown(custom[name]))
+    if name in custom_pending:
+        value.append(f" → {shown(custom_pending[name])}", style="warn")
+    return value
+
+
+async def _stage_var(
+    ctx: AppContext, name: str, custom: dict[str, str], custom_pending: dict[str, str]
+) -> None:
+    """Prompt for one listed custom variable's new value and stage it."""
+    label, help_text, kind = _KNOWN_VARS.get(name, (name, "A firmware variable", "str"))
+    current = custom_pending.get(name, custom.get(name, ""))
+    if kind == "bool":
+        picked = await ctx.ui.dialog(
+            help_text,
+            [("Off", "0"), ("On", "1")],
+            title=label,
+            default=1 if current == "1" else 0,
+            keys={"0": "0", "1": "1", "n": "0", "y": "1"},
+        )
+        if picked is None:
+            return
+        value = str(picked)
+    else:
+        extra: dict[str, Any] = {}
+        if kind == "int":
+            extra = {
+                "validate": _valid_interval,
+                "help_text": f"Allowed: 0 – {_GPS_INTERVAL_MAX}",
+            }
+        raw = await ctx.ui.text(label, prompt=f"Value for {name}:", default=current, **extra)
+        if raw is None:
+            return
+        value = raw.strip()
+    if value == custom.get(name):
+        custom_pending.pop(name, None)  # back to what the device holds — nothing to send
+    else:
+        custom_pending[name] = value
+
+
+def _valid_interval(text: str) -> bool | str:
+    """Validate a whole number of seconds within the firmware's GPS-interval bound."""
+    try:
+        seconds = int(text.strip())
+    except ValueError:
+        return "Enter a whole number of seconds."
+    return True if 0 <= seconds <= _GPS_INTERVAL_MAX else f"Must be 0 – {_GPS_INTERVAL_MAX}."
+
+
+# --- applying, and re-reading ---------------------------------------------------
+
+
+def _staged_ops(pending: dict[str, Any], custom_pending: dict[str, str]) -> list[tuple[str, tuple]]:
+    """The staged values as ``(stage key, op)`` pairs, in the order they should be sent.
+
+    Settings go in the registry's order rather than the order they were staged in, so a
+    retuned frequency lands before relaying is switched on for it; the advert cadences and
+    the custom variables follow.
     """
-    from .tui import CANCEL, SelectScreen
-
-    device = await ctx.device()
-    snapshot = await cached_snapshot(ctx, device)
-
-    # Same persistent-backdrop pattern as the editor: the menu stays pushed while each
-    # action's prompts float over it as modal popups (see edit_config).
-    session = getattr(ctx.ui, "session", None)
-    if session is None:  # pragma: no cover - guarded by the menu-only caller
-        raise RuntimeError("device actions are only available in the menu")
-    # One screen for the whole visit: the action rows are fixed, so nothing here needs
-    # rebuilding — and the cursor and any typed filter simply stay where the reader left them
-    # while each action's prompts float over the list.
-    menu = SelectScreen("Device actions", _action_items())
-    async with session.stay(menu) as visit:
-        while True:
-            choice = await visit.result()
-            if choice is CANCEL or choice is None:  # Esc
-                return
-            if choice == _SYNC_CLOCK:
-                await _sync_clock(ctx, device, snapshot)
-            elif choice == _BACKUP:
-                await _backup_now(ctx, device, snapshot)
-            elif choice == _RESTORE:
-                if await _restore_now(ctx, device, snapshot):
-                    snapshot = await build_snapshot(device)
-            elif choice == _IDENTITY_KEY:
-                if await _identity_key_menu(ctx, device, snapshot):
-                    snapshot = await build_snapshot(device)
-            elif choice == _REBOOT:
-                if await _reboot(ctx, device, snapshot):
-                    return  # the link is dropping; the reconnect dialog takes over
-            elif choice == _RESET:
-                if await _factory_reset(ctx, device, snapshot):
-                    snapshot = await build_snapshot(device)
+    order = {spec.key: i for i, spec in enumerate(DEVICE_SETTINGS)}
+    ops = [
+        (key, ("set", key, pending[key]))
+        for key in sorted((k for k in pending if k in order), key=order.__getitem__)
+    ]
+    ops += [
+        (key, ("advert_cadence", key == _ADVERT_FLOOD, pending[key]))
+        for key in (_ADVERT_DIRECT, _ADVERT_FLOOD)
+        if key in pending
+    ]
+    ops += [(name, ("set_custom", name, value)) for name, value in custom_pending.items()]
+    return ops
 
 
-def _action_items() -> list:
-    """Build the Device actions rows: label and description in two aligned columns.
+#: What the result window calls a staged value whose stage key is a sentinel.
+_STAGE_NAMES = {_ADVERT_DIRECT: "direct advert", _ADVERT_FLOOD: "flood advert"}
 
-    The shared menu-row presentation (see :func:`~meshterm.ui.menus.menu_rows`).
-    Factory reset keeps its err-tinted label so the one irreversible row reads as such.
+
+async def _apply(
+    ctx: AppContext,
+    device: Device,
+    snapshot: dict,
+    pending: dict[str, Any],
+    custom_pending: dict[str, str],
+) -> int:
+    """Send every staged value, one at a time, and show what the device made of each.
+
+    The local twin of the repeater page's Apply. Each value goes through
+    :func:`~meshterm.tools.config.apply_ops` — the executor ``config set`` runs too — in
+    :func:`_staged_ops`'s order. One the device takes leaves the stage; one it refuses
+    *stays* staged with the reason beside it, to be corrected or unstaged, never silently
+    dropped. A lost link is not a refusal: it is re-raised for the app's disconnect
+    handling. One ``runs`` row records the batch, naming settings and never their values —
+    one of them may be the pairing PIN.
+
+    Returns:
+        How many staged values the device accepted.
     """
-    items = menu_rows(
-        [
-            ("🕒 Sync clock…", "Set the device clock from this computer", _SYNC_CLOCK),
-            ("💾 Back up config to a file…", "Write every setting to TOML", _BACKUP),
-            ("📂 Restore config from a backup…", "Preview or apply a saved TOML", _RESTORE),
-            ("🔐 Identity key…", "Export or import the node's private key", _IDENTITY_KEY),
-            ("🔄 Reboot device…", "Restart the companion and reconnect", _REBOOT),
-            (
-                Text("⚠ Factory reset…", style="err"),
-                "Erase everything (typed confirmation)",
-                _RESET,
-            ),
-        ]
+    from ..core.connection import is_connection_lost
+    from ..tools.config import apply_ops
+
+    batch = _staged_ops(pending, custom_pending)
+    names = [_STAGE_NAMES.get(key, key) for key, _op in batch]
+    run_id = ctx.repo.start_run("config", {"mode": "apply", "settings": names}, ctx.profile_name)
+    accepted = 0
+    for (key, op), name in zip(batch, names, strict=True):
+        try:
+            await apply_ops(ctx, device, snapshot, [op])
+        except Exception as exc:  # noqa: BLE001 - a refusal is shown, and stays staged
+            if is_connection_lost(exc):
+                ctx.repo.finish_run(run_id, "error", {"applied": accepted, "error": str(exc)})
+                raise
+            ctx.ui.note(
+                f"[err]✗[/err] [brand]{escape(name)}[/brand] — {escape(str(exc))} (still staged)"
+            )
+            continue
+        accepted += 1
+        (custom_pending if op[0] == "set_custom" else pending).pop(key, None)
+    left = len(batch) - accepted
+    ctx.repo.finish_run(
+        run_id, "error" if left else "ok", {"applied": accepted, "staged_left": left}
     )
-    return items
+    ctx.ui.note(
+        f"[brand]{accepted}[/brand] of {len(batch)} staged changes applied"
+        + ("  [warn](the rest stay staged)[/warn]" if left else "")
+    )
+    await ctx.ui.present(title="Apply")
+    return accepted
+
+
+async def _reread(ctx: AppContext, device: Device) -> tuple[dict, dict[str, str]]:
+    """Read the whole device again, after an apply or an action changed it under the page.
+
+    Raw rather than through the session cache, which is exactly what just went stale — and
+    the cache is dropped on the way, so the next screen that trusts it reads the truth too.
+    """
+    ctx.devstate.invalidate_config()
+    async with ctx.ui.busy_overlay():
+        snapshot = await build_snapshot(device)
+        custom = await device.get_custom_vars()
+    return snapshot, custom
+
+
+def _unstage_held(
+    snapshot: dict, custom: dict[str, str], pending: dict[str, Any], custom_pending: dict[str, str]
+) -> None:
+    """Unstage every value the device turns out to hold already — a re-read can settle one."""
+    for key in [k for k in pending if k not in _STAGE_NAMES]:
+        if get_spec(key).getter(snapshot) == pending[key]:
+            del pending[key]
+    for name in [n for n, value in custom_pending.items() if custom.get(n) == value]:
+        del custom_pending[name]
 
 
 async def _run_now(

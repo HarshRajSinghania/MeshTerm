@@ -42,7 +42,7 @@ class RepeaterAdminTool(Tool):
     async def prompt_params(self, ctx: AppContext) -> dict[str, Any] | None:
         """Run the interactive flow; there are never parameters to collect.
 
-        The flow presents everything itself (the same pattern as ``device-actions``),
+        The flow presents everything itself (the same pattern as ``config``),
         so returning ``None`` tells the menu the invocation is complete.
 
         Args:

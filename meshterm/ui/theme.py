@@ -687,7 +687,6 @@ _GLYPH_MAP: dict[str, str] = {
     "🔆": "°",   # brightest sighting
     "📶": "≥",   # TX power sweep — the power ramp
     "🔧": "⚙",   # config (parameter concept)
-    "🔨": "!",   # device actions (probe family)
     "📋": "i",   # info
     "📰": "…",   # live feed — a stream of items
     "🎧": "≈",   # monitor — listening to the waveform

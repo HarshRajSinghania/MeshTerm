@@ -17,7 +17,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
-from .connection import Device
+from .connection import Device, repeat_freq_allowed
 
 # Display categories, in the order the editor and `config show` present them.
 CATEGORIES = ("Identity", "Radio", "Tuning", "Behavior", "Experimental")
@@ -53,6 +53,9 @@ class SettingSpec:
             the connected hardware actually supports.
         max_length: For ``str`` values, the longest accepted string (protocol field
             widths, e.g. the flood scope's 31-byte name slot).
+        validate: A last rule for a typed, in-range value, given the snapshot when there
+            is one: it returns the complaint, or ``None``. For what a bound can't state —
+            the PIN's "zero or six digits", relaying only on an allowed frequency.
         getter: Extracts the current value from a snapshot dict.
         apply: Coroutine applying a parsed value to a device, given the snapshot.
     """
@@ -70,6 +73,7 @@ class SettingSpec:
     strict_choices: bool = True
     max_key: str | None = None
     max_length: int | None = None
+    validate: Callable[[Any, dict | None], str | None] | None = None
 
 
 # --- value parsing / formatting ----------------------------------------------
@@ -92,8 +96,19 @@ def parse_value(spec: SettingSpec, raw: Any, snapshot: dict | None = None) -> An
         The typed, range-checked value ready for :meth:`SettingSpec.apply`.
 
     Raises:
-        DeviceConfigError: If the value is the wrong type or out of range.
+        DeviceConfigError: If the value is the wrong type, out of range, or breaks the
+            setting's own :attr:`~SettingSpec.validate` rule.
     """
+    value = _parse_typed(spec, raw, snapshot)
+    if spec.validate is not None:
+        complaint = spec.validate(value, snapshot)
+        if complaint:
+            raise DeviceConfigError(f"{spec.key}: {complaint}")
+    return value
+
+
+def _parse_typed(spec: SettingSpec, raw: Any, snapshot: dict | None) -> Any:
+    """:func:`parse_value` short of the setting's own rule: the type, bounds and choices."""
     text = str(raw).strip()
     if spec.value_type == "str":
         # `config show` prints an empty string as the two characters `""`, because a key
@@ -212,7 +227,9 @@ async def build_snapshot(
 
     Returns:
         A dict keyed like ``SELF_INFO`` plus ``rx_delay``, ``airtime_factor``,
-        ``path_hash_mode``, ``autoadd_config`` and ``flood_scope``.
+        ``path_hash_mode``, ``autoadd_config``, ``autoadd_max_hops`` and ``flood_scope``,
+        with the device-query frame's facts (``ble_pin``, ``model``, client ``repeat``)
+        underneath and, where the firmware relays at all, its ``repeat_freqs``.
     """
     snapshot = dict(self_info if self_info is not None else await device.get_self_info())
     try:
@@ -231,6 +248,12 @@ async def build_snapshot(
     except Exception:  # noqa: BLE001 - optional read; absence is acceptable
         pass
     try:
+        hops = await device.get_autoadd_max_hops()
+    except Exception:  # noqa: BLE001 - optional read; absence is acceptable
+        hops = None
+    if hops is not None:
+        snapshot["autoadd_max_hops"] = hops
+    try:
         snapshot["flood_scope"] = await device.get_default_flood_scope()
     except Exception:  # noqa: BLE001 - optional read; absence is acceptable
         pass
@@ -244,6 +267,15 @@ async def build_snapshot(
         snapshot = {**await device.get_device_info(), **snapshot}
     except Exception:  # noqa: BLE001 - optional read; absence is acceptable
         pass
+    # Client repeat (firmware v9+) may only be switched on where the firmware allows. The
+    # ranges are one more round trip, so they are asked only of firmware that can relay.
+    if "repeat" in snapshot:
+        try:
+            freqs = await device.get_allowed_repeat_freqs()
+        except Exception:  # noqa: BLE001 - optional read; absence is acceptable
+            freqs = []
+        if freqs:
+            snapshot["repeat_freqs"] = [tuple(pair) for pair in freqs]
     return snapshot
 
 
@@ -273,7 +305,15 @@ def _radio_apply(field_name: str) -> Callable[[Device, Any, dict], Awaitable[Non
             "cr": snapshot.get("radio_cr"),
         }
         params[field_name] = value
-        await device.set_radio(params["freq"], params["bw"], params["sf"], params["cr"])
+        # Client repeat rides the same command, and the firmware reads its absence as off:
+        # restate it, or retuning the radio quietly stops the node relaying.
+        await device.set_radio(
+            params["freq"],
+            params["bw"],
+            params["sf"],
+            params["cr"],
+            repeat=snapshot.get("repeat"),
+        )
         snapshot[f"radio_{field_name}"] = value
 
     return apply
@@ -317,23 +357,66 @@ def _telemetry_apply(field_name: str) -> Callable[[Device, Any, dict], Awaitable
     return apply
 
 
+async def _client_repeat_apply(device: Device, value: Any, snapshot: dict) -> None:
+    """Switch client repeat, restating the four radio fields it travels with."""
+    radio = [snapshot.get(key) for key in ("radio_freq", "radio_bw", "radio_sf", "radio_cr")]
+    if any(field is None for field in radio):
+        raise DeviceConfigError(
+            "client_repeat: the radio settings were never read, so they can't be restated"
+        )
+    await device.set_radio(*radio, repeat=bool(value))
+    snapshot["repeat"] = bool(value)
+
+
+async def _autoadd_hops_apply(device: Device, value: Any, snapshot: dict) -> None:
+    """Set the auto-add hop limit, restating the bitmask it travels behind."""
+    flags = snapshot.get("autoadd_config")
+    if flags is None:
+        raise DeviceConfigError(
+            "autoadd_max_hops: the auto-add bitmask was never read, so it can't be restated"
+        )
+    await device.set_autoadd_config(int(flags), max_hops=int(value))
+    snapshot["autoadd_max_hops"] = value
+
+
+def _pin_rule(value: Any, snapshot: dict | None) -> str | None:
+    """The firmware takes a pairing PIN of zero (none) or exactly six digits, nothing else."""
+    if value == 0 or 100000 <= value <= 999999:
+        return None
+    return f"must be 0 (no PIN) or six digits, got {value}"
+
+
+def _repeat_rule(value: Any, snapshot: dict | None) -> str | None:
+    """Relaying goes on only at a frequency the firmware allows it (when both are known)."""
+    if not value or not snapshot:
+        return None
+    ranges, freq = snapshot.get("repeat_freqs"), snapshot.get("radio_freq")
+    if not ranges or freq is None or repeat_freq_allowed(freq, ranges):
+        return None
+    allowed = ", ".join(f"{low:g}" if low == high else f"{low:g}–{high:g}" for low, high in ranges)
+    return f"this firmware relays only on {allowed} MHz, not {float(freq):g}"
+
+
 def _get(key: str) -> Callable[[dict], Any]:
     """Build a getter that reads ``key`` from a snapshot."""
     return lambda snapshot: snapshot.get(key)
 
 
-_TELEMETRY_CHOICES = {0: "off", 1: "always", 2: "device-only", 3: "all"}
+# The firmware's TELEM_MODE_DENY / TELEM_MODE_ALLOW_FLAGS / TELEM_MODE_ALLOW_ALL: nobody, the
+# contacts whose telemetry permission flag is set, or anyone who asks. There is no mode 3.
+# The labels stay short because the widest value sizes the editor's value lane for every row.
+_TELEMETRY_CHOICES = {0: "deny", 1: "by contact", 2: "allow all"}
 
 # adv_loc_policy / multi_acks are single firmware bytes; we list the values seen in the
 # wild but keep them non-strict so an unfamiliar value is still accepted.
 _ADV_LOC_CHOICES = {0: "off", 1: "on"}
 _MULTI_ACKS_CHOICES = {0: "off", 1: "on"}
-# path_hash_mode is a 2-bit field; the hash size carried per hop is mode + 1 bytes.
+# path_hash_mode is a 2-bit field; the hash size carried per hop is mode + 1 bytes. The field
+# has room for a mode 3, but CMD_SET_PATH_HASH_MODE refuses it (``cmd_frame[2] >= 3``).
 _PATH_HASH_CHOICES = {
     0: "1-byte hashes (default)",
     1: "2-byte hashes",
     2: "3-byte hashes",
-    3: "4-byte hashes",
 }
 
 
@@ -347,7 +430,7 @@ def _telemetry_spec(key: str, label: str) -> SettingSpec:
         value_type="enum",
         choices=_TELEMETRY_CHOICES,
         minimum=0,
-        maximum=3,
+        maximum=2,
         getter=_get(key),
         apply=_telemetry_apply(key),
     )
@@ -473,6 +556,7 @@ DEVICE_SETTINGS: list[SettingSpec] = [
         "The name other nodes see",
         "Identity",
         "str",
+        max_length=31,  # the firmware's 32-byte name field, its terminator included
         getter=_get("name"),
         apply=lambda d, v, s: d.set_name(v),
     ),
@@ -512,6 +596,7 @@ DEVICE_SETTINGS: list[SettingSpec] = [
         "int",
         minimum=0,
         maximum=999999,
+        validate=_pin_rule,
         getter=lambda snapshot: snapshot.get("ble_pin", snapshot.get("device_pin")),
         apply=lambda d, v, s: d.set_device_pin(v),
     ),
@@ -522,8 +607,9 @@ DEVICE_SETTINGS: list[SettingSpec] = [
         "Must match every other node on your mesh",
         "Radio",
         "float",
-        minimum=100.0,
-        maximum=1000.0,
+        # The bounds CMD_SET_RADIO_PARAMS itself enforces (150–2500 MHz, 7–500 kHz below).
+        minimum=150.0,
+        maximum=2500.0,
         getter=_get("radio_freq"),
         apply=_radio_apply("freq"),
     ),
@@ -533,8 +619,8 @@ DEVICE_SETTINGS: list[SettingSpec] = [
         "Wider is faster, narrower reaches further",
         "Radio",
         "float",
-        minimum=1.0,
-        maximum=1000.0,
+        minimum=7.0,
+        maximum=500.0,
         getter=_get("radio_bw"),
         apply=_radio_apply("bw"),
     ),
@@ -566,11 +652,25 @@ DEVICE_SETTINGS: list[SettingSpec] = [
         "How loud this radio transmits",
         "Radio",
         "int",
-        minimum=1,
+        minimum=-9,  # CMD_SET_RADIO_TX_POWER's floor; the ceiling is the board's own
         maximum=30,
         max_key="max_tx_power",
         getter=_get("tx_power"),
         apply=lambda d, v, s: d.set_tx_power(v),
+    ),
+    SettingSpec(
+        # Client repeat (firmware v9+): the companion relays mesh traffic like a repeater.
+        # Reported in the device-query frame as ``repeat`` and written as the optional last
+        # byte of the radio command, so it restates the radio and every radio change
+        # restates it (see _radio_apply). The firmware allows it only on a few frequencies.
+        "client_repeat",
+        "Repeat",
+        "Relay mesh traffic; allowed frequencies only",
+        "Radio",
+        "bool",
+        getter=_get("repeat"),
+        apply=_client_repeat_apply,
+        validate=_repeat_rule,
     ),
     # Tuning. Both are firmware floats moved over the wire ×1000; the ranges are the
     # firmware's own constrain() bounds. (The repeater-side TX delay factors are *not*
@@ -619,6 +719,19 @@ DEVICE_SETTINGS: list[SettingSpec] = [
         apply=lambda d, v, s: d.set_autoadd_config(v),
     ),
     SettingSpec(
+        # The firmware compares it with an advert's path hash count: 0 is no limit, 1 is
+        # direct neighbours only, N admits up to N-1 hops. Capped at 64.
+        "autoadd_max_hops",
+        "Auto-add max hops",
+        "Only auto-add nodes this near; 1 = direct, 0 = any",
+        "Behavior",
+        "int",
+        minimum=0,
+        maximum=64,
+        getter=_get("autoadd_max_hops"),
+        apply=_autoadd_hops_apply,
+    ),
+    SettingSpec(
         "flood_scope",
         "Flood scope",
         "Keep traffic to one group; empty reaches everyone",
@@ -664,7 +777,7 @@ DEVICE_SETTINGS: list[SettingSpec] = [
         "enum",
         choices=_PATH_HASH_CHOICES,
         minimum=0,
-        maximum=3,
+        maximum=2,
         getter=_get("path_hash_mode"),
         apply=lambda d, v, s: d.set_path_hash_mode(v),
     ),

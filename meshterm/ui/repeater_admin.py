@@ -117,6 +117,19 @@ class AdminMenu(SelectScreen):
 
     floating = False
 
+    def __init__(self, title: str, items: list, **kwargs: Any) -> None:
+        """Build the page's list, its rows ending at the edge rather than sliding under ←→.
+
+        The Device config page's handling, kept here on purpose. The Actions rows pin a head
+        block (:func:`~meshterm.ui.menus.menu_rows`), which on its own turns ←→ scrolling on
+        for the whole list — and a setting row, pinning nothing, then slid its label out of
+        view along with its description, under a footer that grew a ``←→ scroll`` atom.
+        ``hscroll=False`` keeps every row whole and cut with the ellipsis, as every other
+        editor lane is.
+        """
+        kwargs.setdefault("hscroll", False)
+        super().__init__(title, items, **kwargs)
+
     def _readable_key(self) -> str | None:
         """The highlighted row's setting key, when it is a setting the node can be asked."""
         current = self._current_choice()

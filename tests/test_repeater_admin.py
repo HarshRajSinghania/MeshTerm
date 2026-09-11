@@ -577,6 +577,20 @@ def test_admin_editor_is_a_full_screen_page() -> None:
     assert AdminMenu(title, items).floating is False
 
 
+def test_admin_editor_ends_long_rows_at_the_edge_like_device_config() -> None:
+    """A long row is cut with the ellipsis and ←→ stay inert — the Device config handling.
+
+    The Actions rows pin a head block, which alone used to turn ←→ scrolling on for the
+    whole page: the footer grew a ``←→ scroll`` atom and a setting's label slid out of view.
+    """
+    title, items = repeater_admin._menu_items(NODE, {}, {})
+    menu = AdminMenu(title, items, footer_hint="↑↓ move · type to filter · Enter select · Esc back")
+    before = list(menu.render_body(40))  # narrow enough that the highlighted row overflows
+    assert "←→" not in menu.footer_hint
+    menu.handle("right")
+    assert list(menu.render_body(40)) == before
+
+
 # --- the command-line screen -----------------------------------------------------------
 
 

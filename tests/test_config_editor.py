@@ -31,7 +31,6 @@ from meshterm.ui.config_editor import (
     _valid_coords,
     config_table,
     contact_share_url,
-    device_actions,
     edit_config,
     has_pin,
     send_advert,
@@ -700,6 +699,10 @@ class _ScriptedUi:
     def discard(self) -> None:
         pass
 
+    @asynccontextmanager
+    async def busy_overlay(self) -> Any:
+        yield
+
 
 @pytest.fixture()
 def ctx(tmp_path: Path) -> AppContext:
@@ -724,18 +727,39 @@ def _install(ctx: AppContext, script: list[tuple[str, Any]]) -> _ScriptedUi:
     return ui
 
 
-async def test_editor_stages_a_setting_and_returns_ops_on_apply(ctx: AppContext) -> None:
-    """Editing a value stages it; Apply returns the set operations for the tool to run."""
-    _install(
+@pytest.fixture
+def applied_ops(monkeypatch: pytest.MonkeyPatch) -> list[tuple]:
+    """Every op the page's Apply hands the executor, recorded on its way to the device."""
+    from meshterm.tools import config as config_tool
+
+    recorded: list[tuple] = []
+    real = config_tool.apply_ops
+
+    async def _recording(ctx, device, snapshot, ops):  # noqa: ANN001
+        recorded.extend(ops)
+        return await real(ctx, device, snapshot, ops)
+
+    monkeypatch.setattr(config_tool, "apply_ops", _recording)
+    return recorded
+
+
+async def test_editor_stages_a_setting_and_applies_it_in_place(
+    ctx: AppContext, applied_ops: list[tuple]
+) -> None:
+    """Editing a value stages it; Apply sends it, and the page stays up for the next round."""
+    ui = _install(
         ctx,
         [
             ("select", "name"),
             ("text", "NewName"),
             ("select", "__apply__"),
+            ("select", None),  # still on the page after Apply; nothing staged, so Esc leaves
         ],
     )
-    ops = await edit_config(ctx)
-    assert ops == [("set", "name", "NewName")]
+    assert await edit_config(ctx) == {"applied": 1}
+    assert applied_ops == [("set", "name", "NewName")]
+    assert (await (await ctx.device()).get_self_info())["name"] == "NewName"
+    assert ui.presented == ["Apply"]
 
 
 async def test_editor_restaging_the_current_value_clears_the_stage(ctx: AppContext) -> None:
@@ -755,7 +779,9 @@ async def test_editor_restaging_the_current_value_clears_the_stage(ctx: AppConte
     assert await edit_config(ctx) is None
 
 
-async def test_editor_stages_background_advert_cadence(ctx: AppContext) -> None:
+async def test_editor_stages_background_advert_cadence(
+    ctx: AppContext, applied_ops: list[tuple]
+) -> None:
     """Picking a cadence stages it under its sentinel; Apply maps it to its own op."""
     _install(
         ctx,
@@ -763,10 +789,11 @@ async def test_editor_stages_background_advert_cadence(ctx: AppContext) -> None:
             ("select", "__advert_flood__"),
             ("select", 48),  # every 48 h
             ("select", "__apply__"),
+            ("select", None),
         ],
     )
-    ops = await edit_config(ctx)
-    assert ops == [("advert_cadence", True, 48)]
+    await edit_config(ctx)
+    assert applied_ops == [("advert_cadence", True, 48)]
 
 
 async def test_editor_repicking_the_cadence_in_force_clears_the_stage(ctx: AppContext) -> None:
@@ -784,8 +811,10 @@ async def test_editor_repicking_the_cadence_in_force_clears_the_stage(ctx: AppCo
     assert await edit_config(ctx) is None
 
 
-async def test_editor_asks_before_discarding_staged_changes(ctx: AppContext) -> None:
-    """Cancelling with staged changes confirms; Keep editing returns to the menu."""
+async def test_editor_asks_before_discarding_staged_changes(
+    ctx: AppContext, applied_ops: list[tuple]
+) -> None:
+    """Cancelling with staged changes confirms; Keep editing returns to the page."""
     _install(
         ctx,
         [
@@ -794,10 +823,11 @@ async def test_editor_asks_before_discarding_staged_changes(ctx: AppContext) -> 
             ("select", "__cancel__"),
             ("dialog", "keep"),  # changed my mind — keep editing
             ("select", "__apply__"),
+            ("select", None),
         ],
     )
-    ops = await edit_config(ctx)
-    assert ops == [("set", "name", "NewName")]
+    await edit_config(ctx)
+    assert applied_ops == [("set", "name", "NewName")]
 
 
 async def test_editor_discards_staged_changes_when_confirmed(ctx: AppContext) -> None:
@@ -839,7 +869,9 @@ async def test_editor_menu_pins_the_column_header_over_the_category(ctx: AppCont
     assert any("Flood advert" in _ANSI.sub("", row) for row in visible)
 
 
-async def test_editor_location_typed_coordinates_stage_both_axes(ctx: AppContext) -> None:
+async def test_editor_location_typed_coordinates_stage_both_axes(
+    ctx: AppContext, applied_ops: list[tuple]
+) -> None:
     """Typing a coordinate pair stages latitude and longitude together."""
     _install(
         ctx,
@@ -848,15 +880,16 @@ async def test_editor_location_typed_coordinates_stage_both_axes(ctx: AppContext
             ("dialog", "type"),
             ("text", "45.5, -73.6"),
             ("select", "__apply__"),
+            ("select", None),
         ],
     )
-    ops = await edit_config(ctx)
-    assert ("set", "adv_lat", 45.5) in ops
-    assert ("set", "adv_lon", -73.6) in ops
+    await edit_config(ctx)
+    assert ("set", "adv_lat", 45.5) in applied_ops
+    assert ("set", "adv_lon", -73.6) in applied_ops
 
 
 async def test_editor_location_map_pick_stages_rounded_coordinates(
-    ctx: AppContext, monkeypatch: pytest.MonkeyPatch
+    ctx: AppContext, monkeypatch: pytest.MonkeyPatch, applied_ops: list[tuple]
 ) -> None:
     """Picking on the map stages the chosen point, rounded to advert precision."""
 
@@ -871,14 +904,17 @@ async def test_editor_location_map_pick_stages_rounded_coordinates(
             ("select", "__location__"),
             ("dialog", "map"),
             ("select", "__apply__"),
+            ("select", None),
         ],
     )
-    ops = await edit_config(ctx)
-    assert ("set", "adv_lat", 45.512346) in ops
-    assert ("set", "adv_lon", -73.654321) in ops
+    await edit_config(ctx)
+    assert ("set", "adv_lat", 45.512346) in applied_ops
+    assert ("set", "adv_lon", -73.654321) in applied_ops
 
 
-async def test_editor_location_clear_stages_the_no_fix_pair(ctx: AppContext) -> None:
+async def test_editor_location_clear_stages_the_no_fix_pair(
+    ctx: AppContext, applied_ops: list[tuple]
+) -> None:
     """Clear stages 0, 0 — MeshCore's "no fix" value — for both axes."""
     device = await ctx.device()
     await device.set_coords(45.5, -73.6)  # give the device a position to clear
@@ -888,11 +924,12 @@ async def test_editor_location_clear_stages_the_no_fix_pair(ctx: AppContext) -> 
             ("select", "__location__"),
             ("dialog", "clear"),
             ("select", "__apply__"),
+            ("select", None),
         ],
     )
-    ops = await edit_config(ctx)
-    assert ("set", "adv_lat", 0.0) in ops
-    assert ("set", "adv_lon", 0.0) in ops
+    await edit_config(ctx)
+    assert ("set", "adv_lat", 0.0) in applied_ops
+    assert ("set", "adv_lon", 0.0) in applied_ops
 
 
 async def test_send_advert_sends_zero_hop_and_flood_immediately(ctx: AppContext) -> None:
@@ -912,12 +949,10 @@ async def test_send_advert_sends_zero_hop_and_flood_immediately(ctx: AppContext)
     assert any("flood" in n for n in ui.notes)
 
 
-async def test_device_actions_no_longer_lists_the_advert_row(ctx: AppContext) -> None:
-    """The advert action lives only in the main menu now — the actions screen dropped it."""
-    from meshterm.ui.config_editor import _action_items
-
-    labels = [str(getattr(item, "title", "")) for item in _action_items()]
-    assert not any("advert" in label.lower() for label in labels)
+def test_the_page_leaves_sending_an_advert_to_its_own_menu_entry() -> None:
+    """The box's actions moved onto the page; sending an advert stayed a main-menu popup."""
+    _title, items = _menu_items(_SNAPSHOT, {}, 0, AdvertPolicy())
+    assert not any("Send advert" in row for row in _row_texts(items))
 
 
 async def test_send_advert_standalone_shares_the_contact_card(ctx: AppContext) -> None:
@@ -953,7 +988,7 @@ async def test_actions_factory_reset_gates_on_typed_confirmation(ctx: AppContext
             ("select", None),
         ],
     )
-    await device_actions(ctx)
+    await edit_config(ctx)
     assert await device.get_custom_vars() == {"mode": "test"}
 
     # Confirmed: the reset runs and the device comes back empty.
@@ -965,7 +1000,7 @@ async def test_actions_factory_reset_gates_on_typed_confirmation(ctx: AppContext
             ("select", None),
         ],
     )
-    await device_actions(ctx)
+    await edit_config(ctx)
     assert await device.get_custom_vars() == {}
 
 
@@ -983,7 +1018,7 @@ async def test_actions_import_key_gates_on_typed_confirmation(ctx: AppContext) -
             ("select", None),
         ],
     )
-    await device_actions(ctx)
+    await edit_config(ctx)
     assert await device.export_private_key() == new_key
 
 
@@ -997,7 +1032,7 @@ async def test_actions_reboot_on_simulator_stays_on_the_screen(ctx: AppContext) 
             ("select", None),
         ],
     )
-    await device_actions(ctx)
+    await edit_config(ctx)
     assert ctx.reboot_in_progress is False
     assert any("rebooting" in n for n in ui.notes)
 
@@ -1016,7 +1051,7 @@ async def test_actions_sync_clock_corrects_the_device_time(ctx: AppContext) -> N
             ("select", None),
         ],
     )
-    await device_actions(ctx)
+    await edit_config(ctx)
     assert abs((await device.get_time()) - int(time.time())) <= 2
     assert any("clock set to" in n for n in ui.notes)
 
@@ -1033,29 +1068,29 @@ async def test_actions_sync_clock_cancel_leaves_the_clock_alone(ctx: AppContext)
             ("select", None),
         ],
     )
-    await device_actions(ctx)
+    await edit_config(ctx)
     assert abs((await device.get_time()) - before) <= 2  # still ticking on the old drift
 
 
-async def test_editor_stages_flood_scope(ctx: AppContext) -> None:
-    """The flood scope is a first-class staged setting, hashtag-normalized on apply."""
-    from meshterm.core.device_config import build_snapshot
-    from meshterm.tools.config import apply_ops
+async def test_editor_stages_flood_scope(ctx: AppContext, applied_ops: list[tuple]) -> None:
+    """The flood scope is a first-class staged setting, hashtag-normalized on apply.
 
+    The device reads it back as ``#alpha``, not the ``alpha`` that was staged — and the row
+    must still leave the stage, because the device *took* it: what unstages a value is its
+    acceptance, never a string comparison.
+    """
     _install(
         ctx,
         [
             ("select", "flood_scope"),
             ("text", "alpha"),
             ("select", "__apply__"),
+            ("select", None),  # nothing left staged: Esc leaves without a discard dialog
         ],
     )
-    ops = await edit_config(ctx)
-    assert ops == [("set", "flood_scope", "alpha")]
-
-    device = await ctx.device()
-    await apply_ops(ctx, device, await build_snapshot(device), ops)
-    assert await device.get_default_flood_scope() == "#alpha"
+    await edit_config(ctx)
+    assert applied_ops == [("set", "flood_scope", "alpha")]
+    assert await (await ctx.device()).get_default_flood_scope() == "#alpha"
 
 
 async def test_actions_backup_writes_immediately(ctx: AppContext, tmp_path: Path) -> None:
@@ -1069,12 +1104,14 @@ async def test_actions_backup_writes_immediately(ctx: AppContext, tmp_path: Path
             ("select", None),
         ],
     )
-    await device_actions(ctx)
+    await edit_config(ctx)
     assert target.exists()
     assert any("wrote" in n for n in ui.notes)
 
 
-async def test_editor_bool_prompt_uses_the_button_dialog(ctx: AppContext) -> None:
+async def test_editor_bool_prompt_uses_the_button_dialog(
+    ctx: AppContext, applied_ops: list[tuple]
+) -> None:
     """A boolean setting is toggled through the On/Off dialog and staged."""
     _install(
         ctx,
@@ -1082,13 +1119,16 @@ async def test_editor_bool_prompt_uses_the_button_dialog(ctx: AppContext) -> Non
             ("select", "manual_add_contacts"),
             ("dialog", True),
             ("select", "__apply__"),
+            ("select", None),
         ],
     )
-    ops = await edit_config(ctx)
-    assert ops == [("set", "manual_add_contacts", True)]
+    await edit_config(ctx)
+    assert applied_ops == [("set", "manual_add_contacts", True)]
 
 
-async def test_editor_custom_var_suggests_known_names(ctx: AppContext) -> None:
+async def test_editor_custom_var_suggests_known_names(
+    ctx: AppContext, applied_ops: list[tuple]
+) -> None:
     """With existing custom vars the name prompt offers them as suggestions."""
     device = await ctx.device()
     await device.set_custom_var("existing", "1")
@@ -1099,7 +1139,170 @@ async def test_editor_custom_var_suggests_known_names(ctx: AppContext) -> None:
             ("autocomplete", "existing"),
             ("text", "2"),
             ("select", "__apply__"),
+            ("select", None),
         ],
     )
-    ops = await edit_config(ctx)
-    assert ops == [("set_custom", "existing", "2")]
+    await edit_config(ctx)
+    assert applied_ops == [("set_custom", "existing", "2")]
+    assert (await device.get_custom_vars())["existing"] == "2"
+
+
+# -- the page's shape: the repeater-admin page's, for the radio in your hand --------------
+
+
+def _row_texts(items: list) -> list[str]:
+    """The plain text of every selectable row on the page."""
+    from meshterm.ui.tui import Choice
+
+    return [
+        getattr(item.title, "plain", str(item.title)) for item in items if isinstance(item, Choice)
+    ]
+
+
+def test_the_page_is_full_screen_like_repeater_admin() -> None:
+    """The page fills the frame; only its prompts, confirms and results float over it."""
+    assert _editor(_SNAPSHOT).floating is False
+
+
+def test_the_page_ends_long_rows_at_the_edge_despite_its_actions() -> None:
+    """Rows are cut with the ellipsis and ←→ stay inert, Actions rows and all.
+
+    Those rows pin a head block, which on its own turns a list's ←→ scrolling on; the
+    page keeps the handling it always had, and the repeater page now shares it.
+    """
+    menu = _editor(_SNAPSHOT)
+    before = list(menu.render_body(40))
+    assert "←→" not in menu.footer_hint
+    menu.handle("right")
+    assert list(menu.render_body(40)) == before
+
+
+def test_the_title_names_the_device_and_counts_what_is_staged() -> None:
+    """``Feature — subject · status``: the node's name, then the staged count as an atom."""
+    assert _menu_items(_SNAPSHOT, {}, 0, AdvertPolicy())[0] == "Device config — Homestead-Hub"
+    staged_title, _items = _menu_items(_SNAPSHOT, {"tx_power": 14}, 1, AdvertPolicy())
+    assert staged_title == "Device config — Homestead-Hub · 1 staged"
+
+
+def test_the_actions_close_the_page_every_label_in_the_same_cell() -> None:
+    """The box's operations sit last, one icon column wide, as on the repeater page.
+
+    ``↻`` and ``⚠`` are one cell among two-cell siblings; a row that wrote ``icon + " "``
+    would start those two labels a column early.
+    """
+    from rich.cells import cell_len
+
+    _title, items = _menu_items(_SNAPSHOT, {}, 0, AdvertPolicy())
+    rows = _row_texts(items)
+    labels = (
+        "Read settings",
+        "Sync clock…",
+        "Back up config…",
+        "Restore config…",
+        "Identity key…",
+        "Reboot device…",
+        "Factory reset…",
+    )
+    starts = {
+        label: cell_len(row[: row.index(label)]) for row in rows for label in labels if label in row
+    }
+    assert set(starts) == set(labels)
+    assert len(set(starts.values())) == 1, f"a label starts a column early: {starts}"
+    assert "Factory reset…" in rows[-1]  # nothing staged: the last verb ends the list
+
+
+def test_custom_variables_are_rows_of_their_own() -> None:
+    """Each reported variable is a row like a setting; the firmware's own read in words."""
+    _title, items = _menu_items(
+        _SNAPSHOT,
+        {},
+        1,
+        AdvertPolicy(),
+        custom={"gps": "1", "probe": ""},
+        custom_pending={"gps": "0"},
+    )
+    rows = _row_texts(items)
+    assert "on → off" in next(row for row in rows if row.startswith("GPS "))
+    assert "empty" in next(row for row in rows if row.startswith("probe"))
+    assert any(row.startswith("Set by name…") for row in rows)
+
+
+async def test_a_listed_custom_variable_stages_and_applies(
+    ctx: AppContext, applied_ops: list[tuple]
+) -> None:
+    """The firmware's GPS switch is an On/Off pick, applied like any other staged value."""
+    device = await ctx.device()
+    await device.set_custom_var("gps", "1")
+    _install(
+        ctx,
+        [
+            ("select", "__custom_var__:gps"),
+            ("dialog", "0"),
+            ("select", "__apply__"),
+            ("select", None),
+        ],
+    )
+    await edit_config(ctx)
+    assert applied_ops == [("set_custom", "gps", "0")]
+    assert (await device.get_custom_vars())["gps"] == "0"
+
+
+async def test_a_refused_value_stays_staged_while_the_rest_apply(
+    ctx: AppContext, applied_ops: list[tuple]
+) -> None:
+    """The repeater page's rule: a refusal is shown and kept staged, never silently dropped."""
+    device = await ctx.device()
+
+    async def _refuse(name: str) -> None:
+        raise RuntimeError("device rejected the command: illegal argument")
+
+    device.set_name = _refuse  # type: ignore[method-assign]
+    ui = _install(
+        ctx,
+        [
+            ("select", "name"),
+            ("text", "Refused"),
+            ("select", "flood_scope"),
+            ("text", "alpha"),
+            ("select", "__apply__"),
+            ("select", None),  # the refused name is still staged, so leaving asks first
+            ("dialog", "discard"),
+        ],
+    )
+    assert await edit_config(ctx) == {"applied": 1}
+    assert [op[1] for op in applied_ops] == ["name", "flood_scope"]
+    assert await device.get_default_flood_scope() == "#alpha"
+    assert any("still staged" in note for note in ui.notes)
+    assert any("1[/brand] of 2" in note for note in ui.notes)
+
+
+async def test_repeat_is_refused_off_the_frequencies_the_firmware_allows(ctx: AppContext) -> None:
+    """Switching relaying on at a frequency the firmware refuses says so, and stages nothing."""
+    ui = _install(ctx, [("select", "client_repeat"), ("dialog", True), ("select", None)])
+    assert await edit_config(ctx) is None
+    assert any("relays only on" in note for note in ui.notes)
+    assert ui.presented == ["Repeat"]
+
+
+async def test_repeat_goes_on_with_the_frequency_staged_beside_it(
+    ctx: AppContext, applied_ops: list[tuple]
+) -> None:
+    """Checked against the radio as staged, and sent after it whatever the staging order."""
+    _install(
+        ctx,
+        [
+            ("select", "client_repeat"),
+            ("dialog", True),  # refused: the device still sits on 869.618
+            ("select", "radio_freq"),
+            ("text", "869.495"),
+            ("select", "client_repeat"),
+            ("dialog", True),  # allowed now: checked against the staged frequency
+            ("select", "__apply__"),
+            ("select", None),
+        ],
+    )
+    await edit_config(ctx)
+    assert [op[1] for op in applied_ops] == ["radio_freq", "client_repeat"]
+    device = await ctx.device()
+    assert (await device.get_device_info())["repeat"] is True
+    assert (await device.get_self_info())["radio_freq"] == 869.495

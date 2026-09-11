@@ -18,7 +18,7 @@ import logging
 import random
 import sys
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
@@ -209,6 +209,41 @@ class DeviceAuthenticationError(DeviceCommandError):
 
 #: ``ERR_CODE_NOT_FOUND`` — the companion has no entry matching what a command addressed.
 _ERR_NOT_FOUND = 2
+
+#: ``CMD_SET_AUTOADD_CONFIG`` — the auto-add bitmask, and (as an optional second byte, which
+#: the ``meshcore`` library never sends) the hop limit.
+_CMD_SET_AUTOADD_CONFIG = 58
+
+#: ``RESP_CODE_AUTOADD_CONFIG`` — the reply to a read of the auto-add configuration. Its
+#: second payload byte is the hop limit, which the library's parser drops (it keeps only the
+#: bitmask), so :meth:`MeshCoreDevice.get_autoadd_config` recognises the raw frame by this.
+_RESP_AUTOADD_CONFIG = 25
+
+#: Sentinel: no hop limit has been read alongside the last auto-add bitmask.
+_UNREAD = object()
+
+#: The client-repeat frequencies (MHz) the companion firmware allows when a board defines
+#: none of its own (``repeat_freq_ranges`` in MeshCore's ``examples/companion_radio/MyMesh.cpp``).
+_DEFAULT_REPEAT_FREQS: tuple[tuple[float, float], ...] = (
+    (433.0, 433.0),
+    (869.495, 869.495),
+    (918.0, 918.0),
+)
+
+#: How far a radio frequency may sit from an allowed repeat range and still be inside it
+#: (MHz). Frequencies travel in kHz, so half of one is the whole rounding error.
+_REPEAT_FREQ_TOLERANCE_MHZ = 0.0005
+
+
+def repeat_freq_allowed(freq: float, ranges: Iterable[tuple[float, float]]) -> bool:
+    """Whether ``freq`` (MHz) lies in one of the firmware's client-repeat ``ranges``.
+
+    The firmware's own ``isValidClientRepeatFreq``, in MHz: it refuses to turn relaying on
+    anywhere else.
+    """
+    tol = _REPEAT_FREQ_TOLERANCE_MHZ
+    return any(low - tol <= float(freq) <= high + tol for low, high in ranges)
+
 
 #: What each companion error code means, in a sentence that finishes "the device …".
 #: The wire carries only the number and the library's ``ERR_CODE_*`` spelling (see
@@ -754,6 +789,24 @@ class Device(ABC):
         advert types the firmware adds to contacts automatically.
         """
 
+    async def get_autoadd_max_hops(self) -> int | None:
+        """Return the auto-add hop limit, or ``None`` where the firmware doesn't report one.
+
+        The second byte of the firmware's auto-add configuration (``autoadd_max_hops``,
+        capped at 64). Not abstract: a device without the field has nothing to say, and the
+        snapshot leaves its row unread rather than failing.
+        """
+        return None
+
+    async def get_allowed_repeat_freqs(self) -> list[tuple[float, float]]:
+        """Return the frequency ranges (MHz, inclusive) client repeat may be enabled on.
+
+        The firmware refuses to relay outside them (``isValidClientRepeatFreq``), so the
+        editor can check before staging instead of after a refusal. Empty where the firmware
+        doesn't say — which means *unknown*, not *nowhere*.
+        """
+        return []
+
     @abstractmethod
     async def get_default_flood_scope(self) -> str | None:
         """Return the persisted default flood scope's name (``""`` when unset).
@@ -858,7 +911,9 @@ class Device(ABC):
         """Set the device's BLE pairing PIN."""
 
     @abstractmethod
-    async def set_radio(self, freq: float, bw: float, sf: int, cr: int) -> None:
+    async def set_radio(
+        self, freq: float, bw: float, sf: int, cr: int, repeat: bool | None = None
+    ) -> None:
         """Set the core radio parameters.
 
         Args:
@@ -866,6 +921,11 @@ class Device(ABC):
             bw: Bandwidth in kHz.
             sf: Spreading factor.
             cr: Coding rate denominator (``5``-``8`` for 4/5-4/8).
+            repeat: Whether the companion relays mesh traffic (client repeat, firmware v9+).
+                The firmware takes it as an optional trailing byte of this same command and
+                reads the byte's *absence* as off — so a caller changing any radio field on
+                firmware that reports it must restate it, or the change quietly stops the
+                relaying. ``None`` omits the byte, for firmware that predates it.
         """
 
     @abstractmethod
@@ -897,8 +957,12 @@ class Device(ABC):
         """Set the three telemetry mode fields together (each ``0``-``3``)."""
 
     @abstractmethod
-    async def set_autoadd_config(self, flags: int) -> None:
-        """Set the contact auto-add bitmask (see :meth:`get_autoadd_config`)."""
+    async def set_autoadd_config(self, flags: int, max_hops: int | None = None) -> None:
+        """Set the contact auto-add bitmask (see :meth:`get_autoadd_config`), and its hop limit.
+
+        The firmware reads the hop limit as an optional second byte and leaves it where it
+        was when that byte is absent, so ``None`` changes the bitmask alone.
+        """
 
     @abstractmethod
     async def set_default_flood_scope(self, scope: str) -> None:
@@ -1704,7 +1768,13 @@ class MeshCoreDevice(Device):
     async def get_self_info(self) -> dict:  # noqa: D102 - inherited docstring
         mc = self._require()
         result = await mc.commands.send_appstart()
-        return dict(getattr(result, "payload", {}) or {})
+        info = dict(getattr(result, "payload", {}) or {})
+        # The firmware sends TX power as a signed byte (it accepts down to -9 dBm) and the
+        # library reads it unsigned, so a negative power would arrive as 247 and up.
+        power = info.get("tx_power")
+        if isinstance(power, int) and power > 127:
+            info["tx_power"] = power - 256
+        return info
 
     async def get_device_info(self) -> dict:  # noqa: D102 - inherited docstring
         mc = self._require()
@@ -1825,7 +1895,9 @@ class MeshCoreDevice(Device):
 
     async def set_tx_power(self, value: int) -> None:  # noqa: D102 - inherited docstring
         mc = self._require()
-        await mc.commands.set_tx_power(value)
+        # The firmware reads a signed byte; the library packs an unsigned int, which refuses a
+        # negative one. Two's complement is the same low byte, so -9 dBm survives the trip.
+        await mc.commands.set_tx_power(int(value) & 0xFFFFFFFF)
 
     @staticmethod
     def _node_pubkey(node: Contact) -> str:
@@ -2474,11 +2546,53 @@ class MeshCoreDevice(Device):
             "airtime_factor": int(payload.get("airtime_factor", 0)) / 1000.0,
         }
 
+    #: The hop limit that arrived in the same frame as the last bitmask, until it is taken.
+    _autoadd_hops: object = _UNREAD
+
     async def get_autoadd_config(self) -> int | None:  # noqa: D102 - inherited docstring
-        event = self._ok(await self._require().commands.get_autoadd_config())
+        mc = self._require()
+        # One reply carries the bitmask *and* the hop limit, but the library's parser keeps
+        # only the first. So the reader is tapped for the length of this one read — every
+        # transport hands frames to ``reader.handle_rx`` by attribute lookup, so an instance
+        # attribute sees them first — and the raw frame's second byte is kept.
+        reader = getattr(mc, "_reader", None)
+        frames: list[bytes] = []
+        tapped = reader is not None and "handle_rx" not in vars(reader)
+        if tapped:
+            original = reader.handle_rx
+
+            async def tap(data: bytearray) -> None:
+                if data and data[0] == _RESP_AUTOADD_CONFIG:
+                    frames.append(bytes(data))
+                await original(data)
+
+            reader.handle_rx = tap
+        try:
+            event = self._ok(await mc.commands.get_autoadd_config())
+        finally:
+            if tapped:
+                del reader.handle_rx
         payload = getattr(event, "payload", {}) or {}
         config = payload.get("config")
+        frame = frames[-1] if frames else b""
+        self._autoadd_hops = frame[2] if len(frame) >= 3 else None
         return None if config is None else int(config)
+
+    async def get_autoadd_max_hops(self) -> int | None:  # noqa: D102 - inherited docstring
+        # build_snapshot asks for the bitmask and then for this. The frame that answered the
+        # first question already carried the second, so it is taken rather than asked again.
+        if self._autoadd_hops is _UNREAD:
+            await self.get_autoadd_config()
+        hops, self._autoadd_hops = self._autoadd_hops, _UNREAD
+        return hops  # type: ignore[return-value]
+
+    async def get_allowed_repeat_freqs(self) -> list[tuple[float, float]]:  # noqa: D102
+        event = self._ok(await self._require().commands.get_allowed_repeat_freq())
+        payload = getattr(event, "payload", {}) or {}
+        # Ranges travel in kHz, like every other frequency on this protocol.
+        return [
+            (int(r["min"]) / 1000.0, int(r["max"]) / 1000.0) for r in payload.get("freqs") or []
+        ]
 
     async def get_default_flood_scope(self) -> str | None:  # noqa: D102
         event = self._ok(await self._require().commands.get_default_flood_scope())
@@ -2575,8 +2689,14 @@ class MeshCoreDevice(Device):
     async def set_device_pin(self, pin: int) -> None:  # noqa: D102 - inherited docstring
         self._ok(await self._require().commands.set_devicepin(pin))
 
-    async def set_radio(self, freq: float, bw: float, sf: int, cr: int) -> None:  # noqa: D102
-        self._ok(await self._require().commands.set_radio(freq, bw, sf, cr))
+    async def set_radio(  # noqa: D102 - inherited docstring
+        self, freq: float, bw: float, sf: int, cr: int, repeat: bool | None = None
+    ) -> None:
+        self._ok(
+            await self._require().commands.set_radio(
+                freq, bw, sf, cr, None if repeat is None else int(bool(repeat))
+            )
+        )
 
     async def set_tuning(self, rx_delay: float, airtime_factor: float) -> None:  # noqa: D102
         # CMD_SET_TUNING_PARAMS carries both floats ×1000; the firmware divides them
@@ -2587,8 +2707,19 @@ class MeshCoreDevice(Device):
             )
         )
 
-    async def set_autoadd_config(self, flags: int) -> None:  # noqa: D102
-        self._ok(await self._require().commands.set_autoadd_config(int(flags)))
+    async def set_autoadd_config(  # noqa: D102 - inherited docstring
+        self, flags: int, max_hops: int | None = None
+    ) -> None:
+        from meshcore import EventType
+
+        mc = self._require()
+        if max_hops is None:
+            self._ok(await mc.commands.set_autoadd_config(int(flags)))
+        else:
+            # The library sends the bitmask alone; the hop limit is the byte after it.
+            frame = bytes([_CMD_SET_AUTOADD_CONFIG, int(flags) & 0xFF, min(int(max_hops), 64)])
+            self._ok(await mc.commands.send(frame, [EventType.OK, EventType.ERROR]))
+        self._autoadd_hops = _UNREAD
 
     async def set_default_flood_scope(self, scope: str) -> None:  # noqa: D102
         # The library treats "", "0", "None" and "*" as "clear the scope"; normalize to
@@ -2777,6 +2908,9 @@ class MockDevice(Device):
         }
         self._tuning: dict = {"rx_delay": 0.0, "airtime_factor": 0.0}
         self._autoadd_config = 0
+        self._autoadd_max_hops = 0
+        # Client repeat (firmware v9+): off, as a freshly flashed companion ships.
+        self._client_repeat = False
         self._flood_scope = ""
         # Simulated clock skew (seconds behind the host), so the sync-clock flow has a
         # visible drift to correct until set_time is called.
@@ -2815,6 +2949,7 @@ class MockDevice(Device):
             "ver": "mock",
             "fw_build": "mock",
             "ble_pin": self._device_pin,
+            "repeat": self._client_repeat,
         }
 
     async def get_contacts(self) -> list[Contact]:  # noqa: D102 - inherited docstring
@@ -3051,6 +3186,12 @@ class MockDevice(Device):
     async def get_autoadd_config(self) -> int | None:  # noqa: D102
         return self._autoadd_config
 
+    async def get_autoadd_max_hops(self) -> int | None:  # noqa: D102 - inherited docstring
+        return self._autoadd_max_hops
+
+    async def get_allowed_repeat_freqs(self) -> list[tuple[float, float]]:  # noqa: D102
+        return list(_DEFAULT_REPEAT_FREQS)
+
     async def get_default_flood_scope(self) -> str | None:  # noqa: D102
         return self._flood_scope
 
@@ -3105,8 +3246,16 @@ class MockDevice(Device):
     async def set_device_pin(self, pin: int) -> None:  # noqa: D102 - inherited docstring
         self._device_pin = pin
 
-    async def set_radio(self, freq: float, bw: float, sf: int, cr: int) -> None:  # noqa: D102
+    async def set_radio(  # noqa: D102 - inherited docstring
+        self, freq: float, bw: float, sf: int, cr: int, repeat: bool | None = None
+    ) -> None:
+        # Modelled on the firmware: relaying is refused off the allowed frequencies, and a
+        # command that leaves the repeat byte off turns relaying *off* — the trap a radio
+        # change has to restate its way around.
+        if repeat and not repeat_freq_allowed(freq, _DEFAULT_REPEAT_FREQS):
+            raise DeviceCommandError("device rejected the command: illegal argument")
         self._info.update(radio_freq=freq, radio_bw=bw, radio_sf=sf, radio_cr=cr)
+        self._client_repeat = bool(repeat)
 
     async def set_tuning(self, rx_delay: float, airtime_factor: float) -> None:  # noqa: D102
         # Round-trip through the wire's ×1000 integer scaling so the simulator loses
@@ -3116,8 +3265,12 @@ class MockDevice(Device):
             "airtime_factor": round(float(airtime_factor) * 1000) / 1000.0,
         }
 
-    async def set_autoadd_config(self, flags: int) -> None:  # noqa: D102
+    async def set_autoadd_config(  # noqa: D102 - inherited docstring
+        self, flags: int, max_hops: int | None = None
+    ) -> None:
         self._autoadd_config = int(flags)
+        if max_hops is not None:  # the firmware leaves the limit alone when it isn't sent
+            self._autoadd_max_hops = min(int(max_hops), 64)
 
     async def set_default_flood_scope(self, scope: str) -> None:  # noqa: D102
         # Mirror the transport layer: empty clears, a bare name gains its leading #.

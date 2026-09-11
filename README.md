@@ -225,8 +225,7 @@ here with its scripted equivalent, where one exists.
 | Feature | What it does | Scripted |
 | --- | --- | --- |
 | **📋 Device info** | The connected companion's identity and full radio configuration at a glance. | `meshterm info` |
-| **🔧 Device config** | View and *stage* changes to every setting (name, radio, behaviour, experimental) for review before applying, with TOML backup/restore. | `meshterm config` / `config set <key> <value>` |
-| **🔨 Device actions** | Immediate operations on the box itself: clock sync, TOML backup/restore, the identity key, reboot, and factory reset — each acting the moment it's confirmed, with destructive ops gated. | `config backup` / `restore` / `reboot` / … |
+| **🔧 Device config** | Every setting the companion firmware exposes — name, radio, client repeat, auto-add, telemetry, custom variables — *staged* for review and applied in place, plus the operations on the box itself: clock sync, TOML backup/restore, the identity key, reboot, and factory reset, each acting the moment it's confirmed, with destructive ops gated. Laid out like Repeater admin, so the radio in your hand and one over the mesh are configured the same way. | `meshterm config` / `config set <key> <value>` / `config backup` / `reboot` / … |
 | **📡 Send advert** | Announce this node to the mesh — a zero-hop or flood advertisement, or share this node's contact card as a QR code. | `meshterm config advert` / `config share` |
 | **🔌 Device discovery** | Enumerate serial *and* Bluetooth LE companions, pick one interactively (or auto-select the only one present), add a network (TCP) companion by host:port, and remember the last good default. A dropped link is detected live and offers to reconnect. | `meshterm devices` |
 

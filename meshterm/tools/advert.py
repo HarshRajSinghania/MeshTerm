@@ -7,7 +7,7 @@ as modal dialogs (the quit-dialog pattern), so the everyday action stays a quick
 in-place popup rather than a screen change.
 
 Menu-only: the scripted equivalents are ``config advert`` and ``config share``, so no
-duplicate subcommand is registered here (the same pattern as ``device-actions``).
+duplicate subcommand is registered here.
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ class SendAdvertTool(Tool):
         The flow presents its own result (the sent-advert note or the contact-card
         view) before returning, so by the time the user backs out there is nothing
         left for :meth:`run` to do — returning ``None`` tells the menu the invocation
-        is complete (the same pattern as the Device actions screen).
+        is complete (the same pattern as the Device config page).
 
         Args:
             ctx: Shared application context.

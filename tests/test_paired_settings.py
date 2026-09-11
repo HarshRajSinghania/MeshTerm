@@ -19,6 +19,7 @@ import pytest
 
 from meshterm.core.device_config import (
     DEVICE_SETTINGS,
+    DeviceConfigError,
     build_snapshot,
     get_spec,
     parse_value,
@@ -33,10 +34,14 @@ class _RecordingDevice:
         self.radio_calls: list[tuple] = []
         self.coord_calls: list[tuple] = []
         self.tuning_calls: list[tuple] = []
+        self.repeat_calls: list = []
 
-    async def set_radio(self, freq, bw, sf, cr) -> None:
+    async def set_radio(self, freq, bw, sf, cr, repeat=None) -> None:
         self.radio_calls.append((freq, bw, sf, cr))
+        self.repeat_calls.append(repeat)
         self.state.update(radio_freq=freq, radio_bw=bw, radio_sf=sf, radio_cr=cr)
+        if repeat is not None:
+            self.state["repeat"] = repeat
 
     async def set_coords(self, lat, lon) -> None:
         self.coord_calls.append((lat, lon))
@@ -242,6 +247,140 @@ def test_every_coupled_setting_is_covered_here() -> None:
         "radio_cr",
         "rx_delay",
         "airtime_factor",
+        "client_repeat",
+        "autoadd_max_hops",
     }
     known = {spec.key for spec in DEVICE_SETTINGS}
     assert coupled <= known, coupled - known
+
+
+# -- client repeat: the byte on the end of the radio command ------------------------------
+
+
+def test_retuning_the_radio_restates_client_repeat() -> None:
+    """THE trap: firmware reads a radio command without its repeat byte as "stop relaying".
+
+    So a companion relaying for its neighbours stopped the moment anyone touched its
+    spreading factor, and nothing said so.
+    """
+    device = _RecordingDevice(
+        radio_freq=869.495, radio_bw=62.5, radio_sf=8, radio_cr=5, repeat=True
+    )
+    snapshot = dict(device.state)
+    asyncio.run(_apply_all(device, snapshot, [("radio_sf", "9")]))
+    assert device.repeat_calls == [True]
+
+
+def test_firmware_without_client_repeat_is_sent_no_repeat_byte() -> None:
+    """Firmware that never reported the setting predates the byte, so none is sent."""
+    device = _RecordingDevice(radio_freq=869.525, radio_bw=250.0, radio_sf=11, radio_cr=5)
+    snapshot = dict(device.state)
+    asyncio.run(_apply_all(device, snapshot, [("radio_sf", "10")]))
+    assert device.repeat_calls == [None]
+
+
+def test_the_simulator_models_the_trap_the_restating_avoids() -> None:
+    """A bare radio command turns the simulator's relaying off; the registry's keeps it on."""
+    from meshterm.core.connection import MockDevice
+
+    async def scenario() -> tuple[bool, bool]:
+        device = MockDevice()
+        await device.connect()
+        await device.set_radio(869.495, 62.5, 8, 5, repeat=True)
+        await device.set_radio(869.495, 62.5, 9, 5)  # the byte left off
+        dropped = (await device.get_device_info())["repeat"]
+        await device.set_radio(869.495, 62.5, 8, 5, repeat=True)
+        snapshot = await build_snapshot(device)
+        spec = get_spec("radio_sf")
+        await spec.apply(device, parse_value(spec, "9", snapshot), snapshot)
+        return dropped, (await device.get_device_info())["repeat"]
+
+    dropped, kept = asyncio.run(scenario())
+    assert dropped is False
+    assert kept is True
+
+
+def test_client_repeat_restates_the_radio_it_rides_with() -> None:
+    """Switching relaying resends the four radio fields unchanged beside it."""
+    device = _RecordingDevice(
+        radio_freq=869.495,
+        radio_bw=62.5,
+        radio_sf=8,
+        radio_cr=5,
+        repeat=False,
+        repeat_freqs=[(869.495, 869.495)],
+    )
+    snapshot = dict(device.state)
+    asyncio.run(_apply_all(device, snapshot, [("client_repeat", "on")]))
+    assert device.radio_calls == [(869.495, 62.5, 8, 5)]
+    assert device.repeat_calls == [True]
+
+
+def test_client_repeat_is_refused_off_an_allowed_frequency() -> None:
+    """The firmware relays only on its allowed frequencies; turning it off is always fine."""
+    snapshot = {"radio_freq": 869.618, "repeat_freqs": [(433.0, 433.0), (869.495, 869.495)]}
+    with pytest.raises(DeviceConfigError, match="relays only on 433, 869.495 MHz"):
+        parse_value(get_spec("client_repeat"), "on", snapshot)
+    assert parse_value(get_spec("client_repeat"), "off", snapshot) is False
+
+
+# -- the auto-add hop limit: the byte after the bitmask -----------------------------------
+
+
+def test_the_auto_add_hop_limit_restates_the_bitmask() -> None:
+    """The limit travels behind the bitmask, so setting it resends the bitmask unchanged."""
+
+    class _AutoAdd:
+        def __init__(self) -> None:
+            self.calls: list[tuple] = []
+
+        async def set_autoadd_config(self, flags, max_hops=None) -> None:
+            self.calls.append((flags, max_hops))
+
+    device = _AutoAdd()
+    asyncio.run(_apply_all(device, {"autoadd_config": 0x1E}, [("autoadd_max_hops", "3")]))
+    assert device.calls == [(0x1E, 3)]
+
+
+def test_the_hop_limit_is_read_from_the_frame_the_library_half_parses() -> None:
+    """The library keeps the reply's first byte; the second is taken off the raw frame."""
+    from types import SimpleNamespace
+
+    from meshterm.core.connection import MeshCoreDevice
+
+    class _Reader:
+        async def handle_rx(self, data) -> None:
+            self.last = bytes(data)
+
+    reader = _Reader()
+
+    class _Commands:
+        async def get_autoadd_config(self):
+            # What a transport does with a frame: hand it to the reader, by attribute.
+            await reader.handle_rx(bytearray([25, 0x1E, 3]))
+            return SimpleNamespace(payload={"config": 0x1E}, is_error=lambda: False)
+
+    device = object.__new__(MeshCoreDevice)
+    device._mc = SimpleNamespace(_reader=reader, commands=_Commands())
+
+    async def read() -> tuple:
+        return await device.get_autoadd_config(), await device.get_autoadd_max_hops()
+
+    assert asyncio.run(read()) == (0x1E, 3)
+    assert reader.last == bytes([25, 0x1E, 3])  # the library still saw its frame
+    assert "handle_rx" not in vars(reader)  # and the tap came off again
+
+
+def test_a_negative_tx_power_reads_back_signed() -> None:
+    """The firmware takes -9 dBm and reports a signed byte the library reads unsigned."""
+    from types import SimpleNamespace
+
+    from meshterm.core.connection import MeshCoreDevice
+
+    class _Commands:
+        async def send_appstart(self):
+            return SimpleNamespace(payload={"tx_power": 247})
+
+    device = object.__new__(MeshCoreDevice)
+    device._mc = SimpleNamespace(commands=_Commands())
+    assert asyncio.run(device.get_self_info())["tx_power"] == -9

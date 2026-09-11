@@ -1,12 +1,12 @@
-"""The ``config`` tool: view and change every device configuration value.
+"""The ``config`` tool: every device setting, and the operations on the box itself.
 
-Interactively it launches a full editor (see :mod:`meshterm.ui.config_editor`); on the
-CLI it exposes generic key/value subcommands plus backup/restore, channels, custom vars,
-and a ``--yes``-gated set of destructive operations. Everything funnels through
-:func:`apply_ops`: the editor stages value changes for :meth:`ConfigTool.run` to execute
-and log, and the Device actions screen (the sibling ``device-actions`` tool) and the
-standalone ``advert`` tool run their immediate operations (adverts, reboot, key
-management, factory reset) through the same executor.
+Interactively it opens the Device config page (see :mod:`meshterm.ui.config_editor`) —
+settings staged and applied in place, with the clock, backup/restore, the identity key,
+reboot and factory reset as actions below them. On the CLI it exposes generic key/value
+subcommands plus backup/restore, channels, custom vars, and a ``--yes``-gated set of
+destructive operations. Everything funnels through :func:`apply_ops`: the page's Apply and
+its actions, :meth:`ConfigTool.run` for the scripted commands, and the standalone ``advert``
+tool's sends all run through the one executor.
 """
 
 from __future__ import annotations
@@ -41,25 +41,27 @@ class ConfigTool(Tool):
     name = "config"
     title = "Device config"
     icon = "🔧"
-    help = "Device settings — identity, radio, tuning, …"
+    help = "Settings and actions — radio, backup, reboot, …"
     category = "This node"
     order = 20
 
     async def prompt_params(self, ctx: AppContext) -> dict[str, Any] | None:
-        """Launch the interactive editor and collect the operations to perform.
+        """Run the Device config page; there are never parameters to collect.
+
+        The page applies what is staged and runs its actions itself, logging a ``runs`` row
+        for each Apply (the same pattern as ``repeater-admin``), so by the time the reader
+        backs out there is nothing left for :meth:`run` to do.
 
         Args:
             ctx: Shared application context.
 
         Returns:
-            ``{"ops": [...]}`` to execute, or ``None`` if the user cancelled.
+            Always ``None``.
         """
         from ..ui.config_editor import edit_config
 
-        ops = await edit_config(ctx)
-        if not ops:
-            return None
-        return {"ops": ops}
+        await edit_config(ctx)
+        return None
 
     async def run(self, ctx: AppContext, params: dict[str, Any]) -> ToolResult:
         """Execute a list of configuration operations against the device.
@@ -213,10 +215,10 @@ async def apply_ops(
 ) -> tuple[int, list[str], Report]:
     """Execute a list of configuration operation tuples against ``device``.
 
-    This is the single executor for every config operation, used both by
-    :meth:`ConfigTool.run` (for staged, applied changes) and by the interactive editor's
-    device actions (adverts, reboot, backup/restore, key management, factory reset —
-    which run immediately rather than staging).
+    This is the single executor for every config operation, used by :meth:`ConfigTool.run`
+    (the scripted commands) and by the Device config page — its Apply, one staged value at a
+    time, and its actions (reboot, backup/restore, key management, factory reset), which run
+    immediately rather than staging.
 
     Args:
         ctx: Shared application context (for console output).

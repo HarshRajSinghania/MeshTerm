@@ -59,16 +59,31 @@ def test_parse_value_range_and_enum_errors() -> None:
 def test_format_value() -> None:
     """Formatting renders booleans, enums, and unknowns readably."""
     assert format_value(get_spec("manual_add_contacts"), True) == "true"
-    assert format_value(get_spec("telemetry_mode_base"), 1) == "1 (always)"
+    assert format_value(get_spec("telemetry_mode_base"), 1) == "1 (by contact)"
     assert format_value(get_spec("name"), None) == "?"
 
 
 def test_path_hash_mode_is_strict_enum() -> None:
-    """path_hash_mode accepts its four modes and rejects anything else."""
-    assert parse_value(get_spec("path_hash_mode"), "3") == 3
+    """path_hash_mode takes the three modes the firmware accepts; it refuses a mode 3."""
+    assert parse_value(get_spec("path_hash_mode"), "2") == 2
     assert format_value(get_spec("path_hash_mode"), 0) == "0 (1-byte hashes (default))"
     with pytest.raises(DeviceConfigError, match="one of"):
-        parse_value(get_spec("path_hash_mode"), "4")
+        parse_value(get_spec("path_hash_mode"), "3")
+
+
+def test_device_pin_is_zero_or_six_digits() -> None:
+    """The firmware refuses any other PIN, so the value is refused before it is sent."""
+    spec = get_spec("device_pin")
+    assert parse_value(spec, "0") == 0
+    assert parse_value(spec, "123456") == 123456
+    with pytest.raises(DeviceConfigError, match="six digits"):
+        parse_value(spec, "1234")
+
+
+def test_telemetry_modes_stop_at_the_firmware_s_three() -> None:
+    """Deny, by contact, allow all — there is no fourth mode to offer."""
+    with pytest.raises(DeviceConfigError, match="one of"):
+        parse_value(get_spec("telemetry_mode_env"), "3")
 
 
 def test_highlighted_hash_highlights_path_hash_prefix() -> None:

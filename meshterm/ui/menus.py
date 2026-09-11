@@ -11,7 +11,7 @@ construction:
   an err-tinted ``✗ Back — discard staged changes``, and *nothing at all* when clean.
 * :func:`menu_rows` — label + muted description :class:`Choice` rows in two aligned
   lanes, padded in display cells so double-width emoji can't skew the description
-  column (the Device actions presentation), its icons lined up by :func:`align_icons`.
+  column (the editor pages' Actions presentation), its icons lined up by :func:`align_icons`.
 * :func:`align_icons` — THE icon column for labels that carry their icon inside the string:
   a one-cell ``⌨`` and a two-cell ``📡`` start their words in the same cell. A list that
   builds its :class:`Choice` rows by hand runs its labels through it.
@@ -292,8 +292,8 @@ def exit_rows(staged: int, *, apply_value: Any, back_value: Any) -> list:
 def menu_rows(rows: Iterable[tuple[str | Text, str, Any]]) -> list:
     """Label + description :class:`Choice` rows in two aligned lanes.
 
-    The menu-style presentation shared by Device actions, the channel detail, and the
-    repeater actions: no header line (these are commands, not tabular data), the
+    The menu-style presentation shared by the channel detail and the Actions of the Device
+    config and repeater-admin pages: no header line (these are commands, not tabular data), the
     description column starting two cells past the widest label, padding computed in
     display cells so a double-width emoji can't skew it.
 

@@ -833,7 +833,7 @@ def _detail_summary(ctx: AppContext, slot: ChannelSlot, stats: _LiveStats) -> st
 def _detail_items(ctx: AppContext, slot: ChannelSlot) -> list:
     """Build the channel-detail rows: label and description in two aligned lanes.
 
-    The Device actions presentation (menu-style lanes, no header line — these are commands,
+    The Actions presentation (menu-style lanes, no header line — these are commands,
     not tabular data), padded in display cells so the double-width emoji can't skew the
     description column. Open-in-chat carries the channel's live unread badge, the
     notifications row reads as a toggle whose glyph and verb reflect the current mute state
