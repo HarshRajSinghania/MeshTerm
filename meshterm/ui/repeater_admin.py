@@ -433,7 +433,8 @@ def _value_text(spec: RemoteSetting, cache: dict, pending: dict[str, str]) -> Te
 
     Four states, each its own word: the value; ``empty`` for a string the node holds blank;
     ``n/a`` when the node answered with something that can't be this setting's value — its
-    firmware has no such setting; ``?`` when it was never read (or never answered). No age: the lane is the value, and a stamp beside it only crowded it.
+    firmware has no such setting; ``?`` when it was never read (or never answered). No age:
+    the lane is the value, and a stamp beside it only crowded it.
     """
     cached = cache.get(spec.key)
     if not spec.readable:

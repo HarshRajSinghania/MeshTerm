@@ -498,6 +498,24 @@ async def test_read_one_setting_sends_one_read(tui_ctx, admin_device) -> None:
     assert tui_ctx.remote_store.settings(NODE)["cr"].value == "5"  # the same answer filled it
 
 
+def test_a_reply_that_cannot_be_the_value_reads_n_a(tui_ctx) -> None:
+    """A node answering a key it lacks with anything but its value reads ``n/a``, not ``?``.
+
+    Regression: v1.15 matches ``get`` keys by prefix, so ``get radio.fem.rxgain`` came back
+    as the ``get radio`` line. It parsed as nothing, and the row stayed ``?`` — never asked.
+    """
+    replies = {
+        "radio.fem.rxgain": "> 910.525,62.5,7,5",  # a shorter sibling's branch answered
+        "gps": "Can't find GPS",
+        "bridge.delay": "??: bridge.delay",
+    }
+    for key, reply in replies.items():
+        assert repeater_admin.remember_reply(tui_ctx, NODE, [get_setting(key)], reply) == 0
+    cache = tui_ctx.remote_store.settings(NODE)
+    for key in replies:
+        assert repeater_admin._value_text(get_setting(key), cache, {}).plain == "n/a"
+
+
 async def test_apply_reads_the_radio_first_then_sends_one_line(tui_ctx, admin_device) -> None:
     """A radio field staged unread restates its siblings from a fresh read, never a guess."""
     ctx = tui_ctx

@@ -30,8 +30,10 @@ three of its shapes only make sense against that source:
 Replies are parsed *loosely* on purpose: repeater firmware answers tersely and has changed
 its phrasing across versions (``"> 20"``, ``"tx: 20"``, ``"OK - repeat is now ON"``), so
 values are extracted rather than pattern-matched. Firmware without a given key answers
-with an error string (``??: key`` to a ``get``, ``unknown config: …`` to a ``set``), which
-the screen records as *this node doesn't have it* rather than breaking.
+with an error string (``??: key`` to a ``get``, ``unknown config: …`` to a ``set``) — or,
+because ``get`` matches keys by prefix, with a shorter sibling's value (v1.15 answers
+``get radio.fem.rxgain`` with the ``get radio`` line). The screen records either as *this
+node doesn't have it* rather than breaking.
 """
 
 from __future__ import annotations
