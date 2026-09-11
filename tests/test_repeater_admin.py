@@ -1,13 +1,15 @@
 """Tests for repeater admin.
 
-The settings catalog, the per-node store, the simulated remote CLI, and the
-command-line screen's readline behavior.
+The settings catalog (checked against the firmware's own CLI), the per-node store, the
+simulated remote CLI, the editor's read/apply round trips, and the command-line screen's
+readline behavior.
 """
 
 from __future__ import annotations
 
 import asyncio
 import io
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -18,25 +20,77 @@ from meshterm.core.admin_store import AdminStore
 from meshterm.core.config import Settings
 from meshterm.core.connection import MockDevice
 from meshterm.core.device_store import DeviceStore
-from meshterm.core.models import Contact
+from meshterm.core.models import Contact, utcnow
 from meshterm.core.remote_config import (
     REPEATER_SETTINGS,
+    composite_reads,
     get_setting,
     known_commands,
+    normalize_value,
     parse_reply_value,
+    range_hint,
+    read_plan,
+    reply_is_error,
     validate_value,
+    write_plan,
 )
-from meshterm.core.remote_store import HISTORY_CAP, RemoteStore
+from meshterm.core.remote_store import HISTORY_CAP, CachedValue, RemoteStore
 from meshterm.persistence.repository import Repository
+from meshterm.ui import repeater_admin
 from meshterm.ui.remote_cli import RemoteCliScreen
-from meshterm.ui.repeater_admin import open_repeater_admin
+from meshterm.ui.repeater_admin import AdminMenu, ReadOne, open_repeater_admin
 from meshterm.ui.surface import TuiUi
+from meshterm.ui.trace_screen import TracingDialog
 from meshterm.ui.tui.prompt import TextScreen
 from meshterm.ui.tui.screen import CANCEL
 from meshterm.ui.tui.select import SelectScreen
 from meshterm.ui.tui.session import TuiSession
 
 NODE = Contact(name="Yagi-Repeater", public_key="a1" * 32, key_prefix="a1b2c3d4")
+
+#: Every key MeshCore's ``CommonCLI.cpp`` (``handleSetCmd``) lets an admin write over the
+#: mesh — ``radio`` standing for its four fields. ``prv.key`` and ``freq`` are left out: the
+#: firmware takes those from its serial console only. ``extra.sf`` is LR2021-only.
+FIRMWARE_SET_KEYS = {
+    "name",
+    "owner.info",
+    "lat",
+    "lon",
+    "radio",
+    "tx",
+    "radio.rxgain",
+    "radio.fem.rxgain",
+    "radio.fem.txgain",
+    "cad",
+    "int.thresh",
+    "agc.reset.interval",
+    "repeat",
+    "txdelay",
+    "direct.txdelay",
+    "rxdelay",
+    "dutycycle",
+    "af",
+    "loop.detect",
+    "path.hash.mode",
+    "multi.acks",
+    "flood.max",
+    "flood.max.unscoped",
+    "flood.max.advert",
+    "advert.interval",
+    "flood.advert.interval",
+    "guest.password",
+    "allow.read.only",
+    "adc.multiplier",
+    "bridge.enabled",
+    "bridge.source",
+    "bridge.delay",
+    "bridge.baud",
+    "bridge.channel",
+    "bridge.secret",
+}
+
+#: The settings ``handleCommand`` takes as top-level verbs rather than ``set`` keys.
+FIRMWARE_VERB_SETTINGS = {"powersaving", "gps", "gps advert"}
 
 
 class _FakeSession:
@@ -50,31 +104,126 @@ class _FakeSession:
 # --- the catalog ----------------------------------------------------------------------
 
 
+def test_catalog_covers_every_setting_the_firmware_takes_over_the_mesh() -> None:
+    """Each writable firmware key has a row, and nothing is spelled that the firmware lacks.
+
+    Regression: the catalog was written from convention and carried ``get bw``/``sf``/``cr``
+    (keys no firmware answers — the radio is read as one ``get radio``) while missing
+    ``path.hash.mode`` and twenty-odd others.
+    """
+    spelled = {s.composite or s.key for s in REPEATER_SETTINGS if s.writable and not s.verb}
+    assert spelled == FIRMWARE_SET_KEYS
+    assert {s.verb for s in REPEATER_SETTINGS if s.verb} == FIRMWARE_VERB_SETTINGS
+    assert len({s.key for s in REPEATER_SETTINGS}) == len(REPEATER_SETTINGS)
+
+
 def test_catalog_carries_the_repeater_only_knobs() -> None:
     """TX delay and Direct TX delay — the reason this feature exists — are first-class."""
     txdelay = get_setting("txdelay")
     direct = get_setting("direct.txdelay")
-    assert txdelay is not None and txdelay.set_command("5") == "set txdelay 5"
+    assert txdelay is not None and txdelay.set_command("0.50") == "set txdelay 0.50"
     assert direct is not None and direct.get_command == "get direct.txdelay"
     assert any(s.key == "af" for s in REPEATER_SETTINGS)
     assert any(s.key == "advert.interval" for s in REPEATER_SETTINGS)
 
 
+def test_delays_are_floats_rounded_to_two_places() -> None:
+    """TX, Direct TX and RX delay read, validate and send as two-decimal floats.
+
+    Regression: they were typed ``int``, so a firmware ``0.5`` showed as ``0`` and typing
+    ``0.5`` back was refused as "not a whole number".
+    """
+    for key in ("txdelay", "direct.txdelay", "rxdelay"):
+        spec = get_setting(key)
+        assert spec.kind == "float" and spec.decimals == 2
+        assert parse_reply_value(spec, "> 0.5") == "0.50"
+        assert parse_reply_value(spec, "> 1.2345678") == "1.23"
+        assert validate_value(spec, "0.5") is True
+        assert normalize_value(spec, "0.3333") == "0.33"
+    assert "≤ 2" in validate_value(get_setting("txdelay"), "2.5")
+    assert validate_value(get_setting("rxdelay"), "12.5") is True  # RX delay runs to 20
+
+
+def test_path_hash_mode_is_an_enum_the_firmware_accepts() -> None:
+    """Path-hash mode is on the repeater too, offering exactly the modes ``set`` takes."""
+    spec = get_setting("path.hash.mode")
+    assert spec is not None and spec.kind == "enum"
+    assert [o.value for o in spec.options] == ["0", "1", "2"]  # the firmware refuses 3
+    assert parse_reply_value(spec, "> 1") == "1"
+    assert spec.display("1") == "2-byte"
+    assert validate_value(spec, "2") is True
+    assert validate_value(spec, "3") != True  # noqa: E712 - a message, not False
+    assert spec.set_command("2") == "set path.hash.mode 2"
+
+
+def test_radio_fields_travel_as_one_command() -> None:
+    """Frequency, bandwidth, SF and CR are one ``get radio`` and one ``set radio``."""
+    plan = dict(read_plan(REPEATER_SETTINGS))
+    assert [s.key for s in plan["get radio"]] == ["freq", "bw", "sf", "cr"]
+    assert not any(command in plan for command in ("get freq", "get bw", "get sf", "get cr"))
+    assert len(plan) == len(REPEATER_SETTINGS) - 3  # everything else is its own read
+
+    reply = "> 910.525,62.5,7,5"
+    fields = {key: parse_reply_value(get_setting(key), reply) for key in ("freq", "bw", "sf", "cr")}
+    assert fields == {"freq": "910.525", "bw": "62.5", "sf": "7", "cr": "5"}
+
+    (write,) = write_plan({"sf": "9"}, fields)
+    assert write.command == "set radio 910.525,62.5,9,5"
+    assert write.values == {**fields, "sf": "9"}
+
+    (blind,) = write_plan({"sf": "9"}, {})  # siblings never read: nothing to restate
+    assert blind.command == "" and set(blind.missing) == {"freq", "bw", "cr"}
+    assert composite_reads({"sf": "9"}, {}) == ["get radio"]
+    assert composite_reads({"sf": "9"}, fields) == []
+
+
+def test_verb_shaped_and_oddly_spelled_settings() -> None:
+    """Settings the firmware spells its own way read and write the way it spells them."""
+    powersaving = get_setting("powersaving")
+    assert powersaving.get_command == "powersaving"
+    assert powersaving.set_command("on") == "powersaving on"
+    assert parse_reply_value(powersaving, "on - Immediate effect") == "on"
+
+    gps = get_setting("gps")
+    assert parse_reply_value(gps, "on, deactivated, no fix, 0 sats") == "off"
+    assert parse_reply_value(gps, "on, active, fix, 7 sats") == "on"
+    assert get_setting("gps advert").set_command("share") == "gps advert share"
+
+    assert get_setting("multi.acks").set_command("on") == "set multi.acks 1"  # an atoi
+    assert parse_reply_value(get_setting("multi.acks"), "> 1") == "on"
+    assert parse_reply_value(get_setting("bridge.source"), "> logRx") == "rx"
+    assert parse_reply_value(get_setting("dutycycle"), "> 50.0%") == "50.0"
+
+
+def test_advert_intervals_take_zero_as_off() -> None:
+    """0 turns an advert interval off; anything else must sit in the firmware's range."""
+    spec = get_setting("advert.interval")
+    assert validate_value(spec, "0") is True
+    assert validate_value(spec, "120") is True
+    assert validate_value(spec, "30") == "Must be 0, or 60 – 240."
+    assert range_hint(spec) == "Allowed: 0 (off), or 60 – 240  (min)"
+
+
 def test_parse_reply_value_survives_terse_and_verbose_firmware() -> None:
     """Numbers are extracted from any phrasing; errors parse as unknown, not values."""
     tx = get_setting("tx")
-    assert parse_reply_value(tx, "20") == "20"
+    assert parse_reply_value(tx, "> 20") == "20"
     assert parse_reply_value(tx, "tx: 20") == "20"
     assert parse_reply_value(tx, "TX power = 20 dBm") == "20"
     assert parse_reply_value(tx, "ERR: unknown config: tx") is None
+    assert parse_reply_value(tx, "??: tx") is None  # handleGetCmd's own spelling
     assert parse_reply_value(tx, None) is None
 
     name = get_setting("name")
     assert parse_reply_value(name, "> Yagi") == "Yagi"
     assert parse_reply_value(name, "name: Yagi") == "Yagi"
+    # A value echo is a value, even one that reads like a refusal.
+    assert parse_reply_value(name, "> Unknown-Hill") == "Unknown-Hill"
+    assert not reply_is_error("> Unknown-Hill")
+    assert parse_reply_value(get_setting("owner.info"), "> ") == ""  # blank is a value
 
     repeat = get_setting("repeat")
-    assert parse_reply_value(repeat, "on") == "on"
+    assert parse_reply_value(repeat, "> on") == "on"
     assert parse_reply_value(repeat, "repeat is off") == "off"
 
 
@@ -82,7 +231,7 @@ def test_validate_value_enforces_kind_and_bounds() -> None:
     """Prompt validation speaks in the setting's own terms."""
     sf = get_setting("sf")
     assert validate_value(sf, "9") is True
-    assert "≥ 7" in validate_value(sf, "3")
+    assert "≥ 5" in validate_value(sf, "3")
     assert "number" in validate_value(sf, "fast")
     assert validate_value(get_setting("repeat"), "maybe") == "Enter on or off."
     assert validate_value(get_setting("name"), "  ") == "Enter a value."
@@ -93,8 +242,11 @@ def test_known_commands_cover_catalog_and_verbs() -> None:
     commands = known_commands()
     assert "get txdelay" in commands
     assert "set direct.txdelay " in commands
+    assert "get radio" in commands and "set radio " in commands
+    assert "powersaving " in commands and "gps advert" in commands
+    assert "get path.hash.mode" in commands
     assert "reboot" in commands and "ver" in commands
-    assert "get guest.password" not in commands  # write-only stays uncompletable
+    assert "get bw" not in commands and "set freq " not in commands
 
 
 # --- the store ------------------------------------------------------------------------
@@ -103,12 +255,24 @@ def test_known_commands_cover_catalog_and_verbs() -> None:
 def test_remote_store_caches_settings_per_node(tmp_path: Path) -> None:
     """Values round-trip with their read stamps, keyed per node."""
     store = RemoteStore(tmp_path / "remote.json")
-    store.remember_setting(NODE, "txdelay", "5")
+    store.remember_setting(NODE, "txdelay", "0.50")
     cached = store.settings(NODE)
-    assert cached["txdelay"].value == "5"
+    assert cached["txdelay"].value == "0.50"
     assert cached["txdelay"].read_at is not None
     other = Contact(name="Other", public_key="b2" * 32)
     assert store.settings(other) == {}
+
+
+def test_remote_store_tells_unsupported_from_unread(tmp_path: Path) -> None:
+    """A key the firmware refused is remembered as that; forgetting makes it unread again."""
+    store = RemoteStore(tmp_path / "remote.json")
+    store.remember_unsupported(NODE, "bridge.delay")
+    store.remember_setting(NODE, "af", "1.00")
+    cached = store.settings(NODE)
+    assert cached["bridge.delay"].supported is False
+    assert cached["af"].supported is True
+    store.forget_setting(NODE, "af")
+    assert "af" not in store.settings(NODE)
 
 
 def test_remote_store_history_dedupes_and_caps(tmp_path: Path) -> None:
@@ -135,18 +299,24 @@ async def test_mock_remote_cli_requires_login() -> None:
     await device.disconnect()
 
 
-async def test_mock_remote_cli_round_trips_settings() -> None:
-    """get/set work for catalog keys; unknown keys answer with an error string."""
+async def test_mock_remote_cli_answers_like_the_firmware() -> None:
+    """The simulator keeps CommonCLI's spellings and reply shapes, refusals included."""
     device = MockDevice()
     await device.connect()
     assert await device.admin_login(NODE, "admin")
-    assert await device.send_remote_command(NODE, "get txdelay") == "> 0"
-    assert await device.send_remote_command(NODE, "set txdelay 5") == "OK"
-    assert await device.send_remote_command(NODE, "get txdelay") == "> 5"
+    assert await device.send_remote_command(NODE, "get txdelay") == "> 0.5"
+    assert await device.send_remote_command(NODE, "set txdelay 1.25") == "OK"
+    assert await device.send_remote_command(NODE, "get txdelay") == "> 1.25"
     assert await device.send_remote_command(NODE, "set tx 22") == "OK"
     assert await device.get_remote_tx_power(NODE) == 22  # one shared TX state
-    reply = await device.send_remote_command(NODE, "get nonsense")
-    assert reply is not None and "unknown" in reply.lower()
+    assert await device.send_remote_command(NODE, "get tx") == "> 22"
+    assert await device.send_remote_command(NODE, "get radio") == "> 910.525,62.5,7,5"
+    refused = await device.send_remote_command(NODE, "set freq 915")
+    assert refused.startswith("unknown config")  # serial console only
+    reboot = await device.send_remote_command(NODE, "set radio 915,250,10,5")
+    assert reboot == "OK - reboot to apply"
+    assert await device.send_remote_command(NODE, "get radio") == "> 915,250,10,5"
+    assert await device.send_remote_command(NODE, "get nonsense") == "??: nonsense"
     assert "simulator" in (await device.send_remote_command(NODE, "ver"))
     await device.disconnect()
 
@@ -270,6 +440,137 @@ async def test_login_password_floats_over_the_node_picker(tui_ctx) -> None:
     assert result is None  # no node was ever administered
 
 
+# --- reading and applying against the simulator ----------------------------------------
+
+
+@pytest.fixture()
+async def admin_device(monkeypatch):
+    """A simulator logged in to ``NODE``, recording every command, with pacing waived."""
+    real_sleep = asyncio.sleep
+
+    async def no_wait(_delay, result=None):
+        return await real_sleep(0, result)
+
+    monkeypatch.setattr(asyncio, "sleep", no_wait)
+    device = MockDevice()
+    await device.connect()
+    assert await device.admin_login(NODE, "admin")
+    device.sent = []
+    original = device.send_remote_command
+
+    async def recording(node, command, *, timeout=8.0):
+        device.sent.append(command)
+        return await original(node, command, timeout=timeout)
+
+    monkeypatch.setattr(device, "send_remote_command", recording)
+    yield device
+    await device.disconnect()
+
+
+async def test_read_settings_reads_every_setting_asking_each_question_once(
+    tui_ctx, admin_device
+) -> None:
+    """Read settings leaves every row answered — a value, or the node saying it has none.
+
+    The radio's four fields come from one ``get radio``; nothing is asked twice; a board
+    without a front-end module or a bridge reads as unsupported rather than unread.
+    """
+    await repeater_admin.read_settings(tui_ctx, admin_device, NODE, REPEATER_SETTINGS)
+
+    sent = admin_device.sent
+    assert len(sent) == len(set(sent)) == len(read_plan(REPEATER_SETTINGS))
+    cache = tui_ctx.remote_store.settings(NODE)
+    assert set(cache) == {s.key for s in REPEATER_SETTINGS}
+    assert cache["txdelay"].value == "0.50" and cache["direct.txdelay"].value == "0.20"
+    assert (cache["freq"].value, cache["bw"].value, cache["sf"].value) == ("910.525", "62.5", "7")
+    assert cache["path.hash.mode"].value == "0"
+    assert cache["dutycycle"].value == "50.0"
+    assert cache["gps"].value == "off" and cache["gps advert"].value == "none"
+    assert cache["owner.info"].value == "" and cache["owner.info"].supported
+    assert not cache["radio.fem.rxgain"].supported
+    assert not cache["bridge.delay"].supported
+
+
+async def test_read_one_setting_sends_one_read(tui_ctx, admin_device) -> None:
+    """``^R``'s read asks for the highlighted setting alone — or its radio line."""
+    await repeater_admin.read_settings(tui_ctx, admin_device, NODE, [get_setting("sf")])
+    assert admin_device.sent == ["get radio"]
+    assert tui_ctx.remote_store.settings(NODE)["cr"].value == "5"  # the same answer filled it
+
+
+async def test_apply_reads_the_radio_first_then_sends_one_line(tui_ctx, admin_device) -> None:
+    """A radio field staged unread restates its siblings from a fresh read, never a guess."""
+    ctx = tui_ctx
+    session = ctx.ui.session
+    ctx.remote_store.remember_setting(NODE, "af", "1.00")
+    pending = {"sf": "9", "txdelay": "1.25", "dutycycle": "40.0"}
+
+    task = asyncio.ensure_future(repeater_admin._apply(ctx, admin_device, NODE, pending))
+    summary = await _step_until(
+        lambda: (
+            session.top
+            if session.top is not None and not isinstance(session.top, TracingDialog)
+            else None
+        ),
+        limit=5000,
+    )
+    assert summary is not None, "the apply summary never opened"
+    summary.resolve(None)
+    applied = await task
+
+    assert admin_device.sent == [
+        "get radio",
+        "set radio 910.525,62.5,9,5",
+        "set txdelay 1.25",
+        "set dutycycle 40.0",
+    ]
+    assert applied == 3 and pending == {}
+    cache = ctx.remote_store.settings(NODE)
+    assert cache["sf"].value == "9" and cache["txdelay"].value == "1.25"
+    assert "af" not in cache  # the other spelling of the duty cycle is stale now
+
+
+# --- the editor menu -----------------------------------------------------------------
+
+
+def test_value_lane_shows_the_value_without_its_age() -> None:
+    """The value lane is the value: no age stamp, and its own word for each absence."""
+    cache = {
+        "txdelay": CachedValue("0.50", utcnow() - timedelta(hours=3)),
+        "bridge.delay": CachedValue("", utcnow(), supported=False),
+        "guest.password": CachedValue("", utcnow()),
+        "path.hash.mode": CachedValue("1", utcnow()),
+    }
+    lane = repeater_admin._value_text
+    assert lane(get_setting("txdelay"), cache, {}).plain == "0.50"
+    assert lane(get_setting("bridge.delay"), cache, {}).plain == "n/a"
+    assert lane(get_setting("guest.password"), cache, {}).plain == "empty"
+    assert lane(get_setting("rxdelay"), cache, {}).plain == "?"
+    staged = lane(get_setting("path.hash.mode"), cache, {"path.hash.mode": "2"})
+    assert staged.plain == "2-byte → 3-byte"
+
+
+async def test_ctrl_r_reads_only_a_highlighted_setting() -> None:
+    """``^R`` resolves with the highlighted setting, and is named only where it would act."""
+    title, items = repeater_admin._menu_items(NODE, {}, {})
+    menu = AdminMenu(title, items, footer_hint="↑↓ move · type to filter · Enter select · Esc back")
+    loop = asyncio.get_running_loop()
+
+    menu.future = loop.create_future()
+    assert menu._current_choice().value == "name"
+    assert menu.footer_hint.endswith("Enter select · ^R read · Esc back")
+    assert menu.fkey_lane[2].label == "Read" and menu.fkey_lane[2].enabled
+    menu.handle("retry")
+    assert menu.future.result() == ReadOne("name")
+
+    menu.future = loop.create_future()
+    menu.handle("end")  # the last action row: nothing there to read
+    assert "^R" not in menu.footer_hint
+    assert not menu.fkey_lane[2].enabled
+    menu.handle("retry")
+    assert not menu.future.done()
+
+
 # --- the command-line screen -----------------------------------------------------------
 
 
@@ -351,11 +652,10 @@ def test_admin_menu_pins_the_column_header_over_the_category() -> None:
     """Scrolled deep, the lane names stay overhead with the category heading under them."""
     import re
 
-    from meshterm.ui.repeater_admin import _menu_items
     from meshterm.ui.tui import frame
 
     ansi = re.compile(r"\x1b\[[0-9;]*m")
-    title, items = _menu_items(NODE, {}, {})
+    title, items = repeater_admin._menu_items(NODE, {}, {})
     screen = SelectScreen(title, items)
     for _ in range(18):  # down past the first categories
         screen.handle("down")
@@ -366,41 +666,11 @@ def test_admin_menu_pins_the_column_header_over_the_category() -> None:
     assert above is True
 
 
-def test_admin_actions_start_every_label_in_the_same_cell() -> None:
-    """``↻`` and ``⌨`` are one cell among two-cell siblings; the icon column absorbs it.
-
-    The Actions rows used to write ``icon + " "``, which started *Read settings* and
-    *Command line…* a column left of *Send advert…* below them.
-    """
-    from rich.cells import cell_len
-
-    from meshterm.ui.repeater_admin import _menu_items
-    from meshterm.ui.tui import Choice
-
-    _title, items = _menu_items(NODE, {}, {})
-    labels = ("Read settings", "Command line…", "Send advert…", "Sync clock…", "Reboot node…")
-    rows = [
-        item.title.plain
-        for item in items
-        if isinstance(item, Choice)
-        and hasattr(item.title, "plain")
-        and any(label in item.title.plain for label in labels)
-    ]
-    assert len(rows) == len(labels)
-    starts = set()
-    for row in rows:
-        label = next(label for label in labels if label in row)
-        starts.add(cell_len(row[: row.index(label)]))
-    assert len(starts) == 1, "a label starts a column early"
-
-
 def test_admin_menu_header_abbreviates_rather_than_wrapping() -> None:
     """Too narrow for the whole line, the last label shortens — the header stays one row."""
     from rich.cells import cell_len
 
-    from meshterm.ui.repeater_admin import _menu_items
-
-    _title, items = _menu_items(NODE, {}, {})
+    _title, items = repeater_admin._menu_items(NODE, {}, {})
     header = items[0]
     assert header.pinned
     full = header.text(100)

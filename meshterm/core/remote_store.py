@@ -29,12 +29,16 @@ class CachedValue:
     """One remembered remote setting: what the node last said, and when.
 
     Attributes:
-        value: The value as display text.
+        value: The value as stored text (empty when unsupported).
         read_at: When it was read from (or written to) the node.
+        supported: ``False`` when the node answered the read with an error — its firmware
+            has no such setting (a board without a front-end module, a build without a
+            bridge). Kept apart from *never read*, which is no entry at all.
     """
 
     value: str
     read_at: datetime | None
+    supported: bool = True
 
 
 class RemoteStore:
@@ -66,7 +70,10 @@ class RemoteStore:
         if not isinstance(raw, dict):
             return out
         for key, entry in raw.items():
-            if not isinstance(entry, dict) or "value" not in entry:
+            if not isinstance(entry, dict):
+                continue
+            supported = not entry.get("unsupported", False)
+            if supported and "value" not in entry:
                 continue
             read_at: datetime | None = None
             stamp = entry.get("read_at")
@@ -75,15 +82,32 @@ class RemoteStore:
                     read_at = datetime.fromisoformat(stamp)
                 except ValueError:
                     read_at = None
-            out[key] = CachedValue(value=str(entry["value"]), read_at=read_at)
+            out[key] = CachedValue(
+                value=str(entry.get("value", "")), read_at=read_at, supported=supported
+            )
         return out
 
     def remember_setting(self, node: Contact, key: str, value: str) -> None:
         """Cache one setting's value for ``node``, stamped now."""
+        self._put(node, key, {"value": value, "read_at": utcnow().isoformat()})
+
+    def remember_unsupported(self, node: Contact, key: str) -> None:
+        """Record that ``node`` answered a read of ``key`` with an error, stamped now."""
+        self._put(node, key, {"unsupported": True, "read_at": utcnow().isoformat()})
+
+    def forget_setting(self, node: Contact, key: str) -> None:
+        """Drop one cached setting, so the row reads as never read."""
+        records = self._load_all()
+        settings = records.get(admin_key(node), {}).get("settings")
+        if isinstance(settings, dict) and settings.pop(key, None) is not None:
+            self._write(records)
+
+    def _put(self, node: Contact, key: str, entry: dict) -> None:
+        """Store one setting's cache entry for ``node``."""
         records = self._load_all()
         record = records.setdefault(admin_key(node), {})
         settings = record.setdefault("settings", {})
-        settings[key] = {"value": value, "read_at": utcnow().isoformat()}
+        settings[key] = entry
         self._write(records)
 
     # -- the command-line history ---------------------------------------------------

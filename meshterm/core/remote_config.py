@@ -7,23 +7,78 @@ companion protocol the local device-configuration editor drives. This module is 
 data-driven bridge: one :class:`RemoteSetting` per knob the standard MeshCore repeater
 firmware exposes, each carrying its CLI spelling, a one-line explanation, and enough
 typing to prompt and validate sensibly. The repeater-admin screen renders the catalog in
-the local editor's lanes, stages values, and applies them as ``set`` commands; anything
-the catalog doesn't cover is one keystroke away in the raw command line.
+the local editor's lanes, stages values, and applies them; anything the catalog doesn't
+cover is one keystroke away in the raw command line.
 
-Replies are parsed *loosely* on purpose: repeater firmware answers tersely and
-inconsistently across versions (``"tx: 20"``, ``"TX power = 20 dBm"``, ``"> ok"``), so
-values are extracted rather than pattern-matched, and the raw reply is always kept for
-display. Firmware without a given key simply answers with an error string, which shows
-in the value lane instead of breaking the screen.
+The catalog is transcribed from the firmware itself — ``handleGetCmd``/``handleSetCmd``/
+``handleCommand`` in MeshCore's ``src/helpers/CommonCLI.cpp`` — not from convention, and
+three of its shapes only make sense against that source:
+
+* **Some settings are not ``get``/``set`` keys at all.** ``powersaving``, ``gps`` and
+  ``gps advert`` are top-level verbs that answer bare and take their value as an argument
+  (:attr:`RemoteSetting.verb`).
+* **Some settings travel together.** There is no ``get bw``: frequency, bandwidth,
+  spreading factor and coding rate are read as one ``get radio`` reply and written as one
+  ``set radio f,bw,sf,cr`` (``set freq`` alone is refused over the mesh — the firmware
+  honours it only on its serial console). Those four are one
+  :attr:`RemoteSetting.composite`, and :func:`read_plan`/:func:`write_plan` turn a screen's
+  worth of rows into the fewest round trips that carry them.
+* **One firmware value can have two spellings.** ``dutycycle`` (1.15+) and the older
+  ``af`` both read and write ``airtime_factor``, so writing one stales the other
+  (:attr:`RemoteSetting.overlaps`).
+
+Replies are parsed *loosely* on purpose: repeater firmware answers tersely and has changed
+its phrasing across versions (``"> 20"``, ``"tx: 20"``, ``"OK - repeat is now ON"``), so
+values are extracted rather than pattern-matched. Firmware without a given key answers
+with an error string (``??: key`` to a ``get``, ``unknown config: …`` to a ``set``), which
+the screen records as *this node doesn't have it* rather than breaking.
 """
 
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 
-#: Reply text (lowercased) that reads as the firmware refusing/unknowing a command.
-_ERRORISH = ("unknown", "error", "err:", "invalid", "denied", "bad ")
+#: Reply text (lowercased) that reads as the firmware refusing/unknowing a command. ``??:``
+#: is how ``handleGetCmd`` answers a key it doesn't know; ``unknown config:`` is its ``set``
+#: twin.
+_ERRORISH = (
+    "??:",
+    "unknown",
+    "error",
+    "err:",
+    "invalid",
+    "denied",
+    "bad ",
+    "not supported",
+    "unsupported",
+)
+
+#: A ``get`` reply's value echo. Whatever follows it is a value, even one that happens to
+#: contain an error-ish word (a node named ``Unknown-Hill`` is not a refusal).
+_ECHO = re.compile(r"^\s*-?>\s?")
+
+#: The words a boolean reply may use for each state, beyond the setting's own
+#: :attr:`RemoteSetting.words`.
+_ON_WORDS = frozenset({"on", "true", "yes", "1"})
+_OFF_WORDS = frozenset({"off", "false", "no", "0"})
+
+
+@dataclass(frozen=True, slots=True)
+class Option:
+    """One value of an enumerated remote setting.
+
+    Attributes:
+        value: What the firmware takes in a ``set`` and answers to a ``get`` — also what
+            the cache stores.
+        label: What the value lane and the picker show for it.
+        help: An optional one-line explanation for the picker row.
+    """
+
+    value: str
+    label: str
+    help: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,16 +86,35 @@ class RemoteSetting:
     """One remote-CLI setting: its spelling, presentation, and typing.
 
     Attributes:
-        key: The CLI parameter name as the firmware spells it (e.g. ``"txdelay"``).
+        key: The setting's identity: the CLI parameter name as the firmware spells it
+            (``"txdelay"``) for a ``get``/``set`` key, the verb for a verb-shaped one, and
+            the field's own name for a composite member. It is also the cache key.
         label: The display name shown in the editor lane.
         help: One-line explanation (no trailing period), shown beside the value.
         category: Editor section heading the setting sorts under.
-        kind: ``"int"``, ``"float"``, ``"str"``, or ``"bool"`` (on/off).
-        writable: Whether the firmware accepts a ``set`` for this key.
-        readable: Whether the firmware answers a ``get`` (passwords do not).
+        kind: ``"int"``, ``"float"``, ``"str"``, ``"bool"`` (on/off) or ``"enum"``.
+        writable: Whether the firmware accepts a write for this setting.
+        readable: Whether the firmware answers a read for it.
         minimum: Lower bound for numeric prompts, when known.
         maximum: Upper bound for numeric prompts, when known.
         unit: Display unit hint (e.g. ``"dBm"``, ``"min"``), purely cosmetic.
+        decimals: Fixed decimal places a float is shown and sent with; ``None`` shows it
+            as the firmware gave it, trailing zeros trimmed.
+        zero_off: Whether ``0`` is accepted outside ``minimum``–``maximum``, meaning off
+            (the advert intervals: 0, or 60–240 minutes).
+        options: The values an ``enum`` takes, in picker order.
+        words: What a ``bool`` sends for on and off. Most keys take ``on``/``off``;
+            ``multi.acks`` is an ``atoi`` and needs ``1``/``0``.
+        aliases: ``(reply word, value)`` pairs consulted before the kind's own parse, for
+            a reply that names a value in words of its own — ``bridge.source`` answers
+            ``logRx`` to what it is told as ``rx``.
+        verb: For a verb-shaped setting, the command that reads it bare and writes it
+            with the value appended (``"powersaving"``); empty for a ``get``/``set`` key.
+        composite: The CLI key a group of settings is read and written through as one
+            comma-joined value (``"radio"``); empty for a setting that stands alone.
+        part: This setting's position within its composite's comma-joined value.
+        overlaps: Keys that are another spelling of the same firmware value, whose cached
+            reading a write to this one makes stale.
     """
 
     key: str
@@ -53,28 +127,80 @@ class RemoteSetting:
     minimum: float | None = None
     maximum: float | None = None
     unit: str = ""
+    decimals: int | None = None
+    zero_off: bool = False
+    options: tuple[Option, ...] = ()
+    words: tuple[str, str] = ("on", "off")
+    aliases: tuple[tuple[str, str], ...] = ()
+    verb: str = ""
+    composite: str = ""
+    part: int = 0
+    overlaps: tuple[str, ...] = ()
 
     @property
     def get_command(self) -> str:
-        """The CLI command that reads this setting."""
-        return f"get {self.key}"
+        """The CLI command that reads this setting (shared by a composite's members)."""
+        if self.verb:
+            return self.verb
+        return f"get {self.composite or self.key}"
 
     def set_command(self, value: str) -> str:
-        """The CLI command that writes ``value`` to this setting."""
+        """The CLI command that writes ``value`` to this setting.
+
+        Raises:
+            ValueError: For a composite member, which is only ever written together with
+                its siblings — see :func:`write_plan`.
+        """
+        if self.composite:
+            raise ValueError(f"{self.key} is written through 'set {self.composite}'")
+        if self.kind == "bool":
+            value = self.words[0] if value == "on" else self.words[1]
+        if self.verb:
+            return f"{self.verb} {value}"
         return f"set {self.key} {value}"
 
+    def display(self, value: str) -> str:
+        """The value lane's text for a stored ``value`` (an enum shows its label)."""
+        for option in self.options:
+            if option.value == value:
+                return option.label
+        return value
 
-#: Every knob the standard MeshCore repeater/room firmware exposes over its CLI, in the
-#: editor's display order. TX delay and Direct TX delay — absent from the local
-#: companion editor because companions don't repeat — are first-class here.
+
+def _radio(key: str, label: str, help_text: str, part: int, **typing) -> RemoteSetting:
+    """One of the four fields ``get radio`` answers and ``set radio`` takes together."""
+    return RemoteSetting(
+        key=key,
+        label=label,
+        help=help_text,
+        category="Radio",
+        composite="radio",
+        part=part,
+        **typing,
+    )
+
+
+#: Every setting the standard MeshCore repeater/room firmware exposes over the mesh, in the
+#: editor's display order. Board- and build-dependent ones (the front-end module's gains,
+#: GPS, the bridge) are listed like any other: a node built without them answers ``??:``,
+#: and the row says so instead of the catalog guessing which board it is talking to. Left
+#: out on purpose: ``prv.key`` and ``freq`` writes (serial console only), ``extra.sf``
+#: (LR2021 builds only, format board-defined), and the read-only diagnostics
+#: (``public.key``, ``role``, ``bootloader.ver``, ``pwrmgt.*``) — facts, not settings, and
+#: each one a paced round trip on every read. The command line reaches them all.
 REPEATER_SETTINGS: tuple[RemoteSetting, ...] = (
     # -- Identity ---------------------------------------------------------------
     RemoteSetting(
         key="name",
         label="Name",
         category="Identity",
-        kind="str",
         help="The node's advertised name",
+    ),
+    RemoteSetting(
+        key="owner.info",
+        label="Owner info",
+        category="Identity",
+        help="Owner contact details (| starts a new line)",
     ),
     RemoteSetting(
         key="lat",
@@ -95,39 +221,43 @@ REPEATER_SETTINGS: tuple[RemoteSetting, ...] = (
         help="Advertised position, decimal degrees",
     ),
     # -- Radio ------------------------------------------------------------------
-    RemoteSetting(
-        key="freq",
-        label="Frequency",
-        category="Radio",
+    _radio(
+        "freq",
+        "Frequency",
+        "Carrier frequency — every node on the mesh must match; reboot to apply",
+        0,
         kind="float",
         unit="MHz",
-        help="Carrier frequency — every node on the mesh must match",
+        minimum=150,
+        maximum=2500,
     ),
-    RemoteSetting(
-        key="bw",
-        label="Bandwidth",
-        category="Radio",
+    _radio(
+        "bw",
+        "Bandwidth",
+        "Channel bandwidth — must match the mesh; reboot to apply",
+        1,
         kind="float",
         unit="kHz",
-        help="Channel bandwidth — must match the mesh",
-    ),
-    RemoteSetting(
-        key="sf",
-        label="Spreading factor",
-        category="Radio",
-        kind="int",
         minimum=7,
-        maximum=12,
-        help="LoRa spreading factor — must match the mesh",
+        maximum=500,
     ),
-    RemoteSetting(
-        key="cr",
-        label="Coding rate",
-        category="Radio",
+    _radio(
+        "sf",
+        "Spreading factor",
+        "LoRa spreading factor — must match the mesh; reboot to apply",
+        2,
+        kind="int",
+        minimum=5,
+        maximum=12,
+    ),
+    _radio(
+        "cr",
+        "Coding rate",
+        "LoRa coding rate denominator — must match the mesh; reboot to apply",
+        3,
         kind="int",
         minimum=5,
         maximum=8,
-        help="LoRa coding rate denominator — must match the mesh",
     ),
     RemoteSetting(
         key="tx",
@@ -138,6 +268,50 @@ REPEATER_SETTINGS: tuple[RemoteSetting, ...] = (
         minimum=1,
         maximum=30,
         help="Transmit power — the TX optimize tool tunes this by measurement",
+    ),
+    RemoteSetting(
+        key="radio.rxgain",
+        label="Boosted RX gain",
+        category="Radio",
+        kind="bool",
+        help="The receiver's boosted gain mode (firmware 1.14.1+)",
+    ),
+    RemoteSetting(
+        key="radio.fem.rxgain",
+        label="FEM RX gain",
+        category="Radio",
+        kind="bool",
+        help="The front-end module's receive gain (boards with one)",
+    ),
+    RemoteSetting(
+        key="radio.fem.txgain",
+        label="FEM TX gain",
+        category="Radio",
+        kind="bool",
+        help="The front-end module's transmit gain (boards with one)",
+    ),
+    RemoteSetting(
+        key="cad",
+        label="Activity detection",
+        category="Radio",
+        kind="bool",
+        help="Listen for LoRa activity in hardware before transmitting",
+    ),
+    RemoteSetting(
+        key="int.thresh",
+        label="Interference threshold",
+        category="Radio",
+        kind="int",
+        help="Local interference threshold (0 = off)",
+    ),
+    RemoteSetting(
+        key="agc.reset.interval",
+        label="AGC reset interval",
+        category="Radio",
+        kind="int",
+        unit="s",
+        minimum=0,
+        help="Seconds between receiver gain resets, in steps of 4 (0 = off)",
     ),
     # -- Repeating ----------------------------------------------------------------
     RemoteSetting(
@@ -151,40 +325,121 @@ REPEATER_SETTINGS: tuple[RemoteSetting, ...] = (
         key="txdelay",
         label="TX delay",
         category="Repeating",
-        kind="int",
+        kind="float",
+        decimals=2,
         minimum=0,
+        maximum=2,
         help="Delay factor before rebroadcasting a flood packet",
     ),
     RemoteSetting(
         key="direct.txdelay",
         label="Direct TX delay",
         category="Repeating",
-        kind="int",
+        kind="float",
+        decimals=2,
         minimum=0,
+        maximum=2,
         help="Delay factor before forwarding a directed packet",
     ),
     RemoteSetting(
         key="rxdelay",
         label="RX delay",
         category="Repeating",
-        kind="int",
+        kind="float",
+        decimals=2,
         minimum=0,
+        maximum=20,
         help="Base delay before acting on a received packet",
+    ),
+    RemoteSetting(
+        key="dutycycle",
+        label="Duty cycle",
+        category="Repeating",
+        kind="float",
+        decimals=1,
+        unit="%",
+        minimum=1,
+        maximum=100,
+        overlaps=("af",),
+        help="Share of the air the node may transmit in (firmware 1.15+)",
     ),
     RemoteSetting(
         key="af",
         label="Airtime factor",
         category="Repeating",
         kind="float",
+        decimals=2,
         minimum=0,
-        help="Duty-cycle multiplier applied to every transmission",
+        maximum=9,
+        overlaps=("dutycycle",),
+        help="Older firmware's duty-cycle knob: duty cycle = 100 / (af + 1) %",
     ),
     RemoteSetting(
-        key="allow.read.only",
-        label="Allow read-only",
+        key="loop.detect",
+        label="Loop detection",
+        category="Repeating",
+        kind="enum",
+        options=(
+            Option("off", "off"),
+            Option("minimal", "minimal"),
+            Option("moderate", "moderate"),
+            Option("strict", "strict"),
+        ),
+        help="How readily the node drops a packet that loops back through it",
+    ),
+    RemoteSetting(
+        key="path.hash.mode",
+        label="Path-hash mode",
+        category="Repeating",
+        kind="enum",
+        # The firmware refuses 3 here (``mode < 3``), though the field has room for it. The
+        # labels stay short because the widest value sizes the lane for every row: "hashes"
+        # in each one pushed the descriptions off a 72-column screen once one was staged.
+        options=(
+            Option("0", "1-byte", "The default"),
+            Option("1", "2-byte"),
+            Option("2", "3-byte"),
+        ),
+        help="Longer hop ids mix up fewer nodes, but cost space",
+    ),
+    RemoteSetting(
+        key="multi.acks",
+        label="Multi-acks",
         category="Repeating",
         kind="bool",
-        help="Whether guests may log in with the guest password",
+        words=("1", "0"),
+        help="Send extra receipts so replies get through",
+    ),
+    # -- Flooding -----------------------------------------------------------------
+    RemoteSetting(
+        key="flood.max",
+        label="Flood max",
+        category="Flooding",
+        kind="int",
+        unit="hops",
+        minimum=0,
+        maximum=64,
+        help="A flood that already took this many hops isn't rebroadcast",
+    ),
+    RemoteSetting(
+        key="flood.max.unscoped",
+        label="Flood max (unscoped)",
+        category="Flooding",
+        kind="int",
+        unit="hops",
+        minimum=0,
+        maximum=64,
+        help="The same cap, for floods sent without a region scope",
+    ),
+    RemoteSetting(
+        key="flood.max.advert",
+        label="Flood max (adverts)",
+        category="Flooding",
+        kind="int",
+        unit="hops",
+        minimum=0,
+        maximum=64,
+        help="The same cap, for flooded adverts",
     ),
     # -- Adverts -----------------------------------------------------------------
     RemoteSetting(
@@ -193,8 +448,10 @@ REPEATER_SETTINGS: tuple[RemoteSetting, ...] = (
         category="Adverts",
         kind="int",
         unit="min",
-        minimum=0,
-        help="Minutes between the node's own zero-hop adverts (0 = off)",
+        minimum=60,
+        maximum=240,
+        zero_off=True,
+        help="Minutes between the node's own zero-hop adverts, in steps of 2 (0 = off)",
     ),
     RemoteSetting(
         key="flood.advert.interval",
@@ -202,59 +459,199 @@ REPEATER_SETTINGS: tuple[RemoteSetting, ...] = (
         category="Adverts",
         kind="int",
         unit="h",
-        minimum=0,
+        minimum=3,
+        maximum=168,
+        zero_off=True,
         help="Hours between the node's own flood adverts (0 = off)",
-    ),
-    RemoteSetting(
-        key="flood.max",
-        label="Flood max",
-        category="Adverts",
-        kind="int",
-        minimum=0,
-        help="Hop cap the node applies when rebroadcasting floods (0 = no cap)",
     ),
     # -- Access ------------------------------------------------------------------
     RemoteSetting(
         key="guest.password",
         label="Guest password",
         category="Access",
-        kind="str",
-        readable=False,
-        help="Read-only login password (write-only over the CLI)",
+        help="Password for read-only (guest) logins",
+    ),
+    RemoteSetting(
+        key="allow.read.only",
+        label="Allow read-only",
+        category="Access",
+        kind="bool",
+        help="Allow read-only access (room servers)",
+    ),
+    # -- Power -------------------------------------------------------------------
+    RemoteSetting(
+        key="powersaving",
+        label="Power saving",
+        category="Power",
+        kind="bool",
+        verb="powersaving",
+        help="Sleep between transmissions to save battery",
+    ),
+    RemoteSetting(
+        key="adc.multiplier",
+        label="ADC multiplier",
+        category="Power",
+        kind="float",
+        decimals=3,
+        minimum=0,
+        maximum=10,
+        help="Battery voltage calibration (0 = the board's default)",
+    ),
+    # -- GPS ---------------------------------------------------------------------
+    RemoteSetting(
+        key="gps",
+        label="GPS",
+        category="GPS",
+        kind="bool",
+        verb="gps",
+        # A board with a receiver answers "on, active|deactivated, fix, N sats" whether or
+        # not it is enabled; the second word is the one that says.
+        aliases=(("active", "on"), ("deactivated", "off")),
+        help="Run the node's GPS receiver (boards with one)",
+    ),
+    RemoteSetting(
+        key="gps advert",
+        label="Advertised position",
+        category="GPS",
+        kind="enum",
+        verb="gps advert",
+        options=(
+            Option("none", "none", "Advertise no position"),
+            Option("share", "share", "Advertise the live GPS fix"),
+            Option("prefs", "prefs", "Advertise the latitude and longitude set above"),
+        ),
+        help="Which position the node's adverts carry",
+    ),
+    # -- Bridge ------------------------------------------------------------------
+    RemoteSetting(
+        key="bridge.type",
+        label="Bridge type",
+        category="Bridge",
+        writable=False,
+        help="The bridge this firmware was built with: none, rs232 or espnow",
+    ),
+    RemoteSetting(
+        key="bridge.enabled",
+        label="Bridge enabled",
+        category="Bridge",
+        kind="bool",
+        help="Relay packets over the bridge",
+    ),
+    RemoteSetting(
+        key="bridge.source",
+        label="Bridge source",
+        category="Bridge",
+        kind="enum",
+        options=(
+            Option("rx", "received", "Bridge the packets the node receives"),
+            Option("tx", "transmitted", "Bridge the packets the node transmits"),
+        ),
+        aliases=(("logrx", "rx"), ("logtx", "tx")),
+        help="Which packets cross the bridge",
+    ),
+    RemoteSetting(
+        key="bridge.delay",
+        label="Bridge delay",
+        category="Bridge",
+        kind="int",
+        unit="ms",
+        minimum=0,
+        maximum=10000,
+        help="Delay before a packet crosses the bridge",
+    ),
+    RemoteSetting(
+        key="bridge.baud",
+        label="Bridge baud rate",
+        category="Bridge",
+        kind="enum",
+        options=tuple(
+            Option(rate, f"{rate} baud") for rate in ("9600", "19200", "38400", "57600", "115200")
+        ),
+        help="Serial speed (RS-232 bridges)",
+    ),
+    RemoteSetting(
+        key="bridge.channel",
+        label="Bridge channel",
+        category="Bridge",
+        kind="int",
+        minimum=1,
+        maximum=14,
+        help="Wi-Fi channel (ESP-NOW bridges)",
+    ),
+    RemoteSetting(
+        key="bridge.secret",
+        label="Bridge secret",
+        category="Bridge",
+        help="Shared secret, up to 15 characters (ESP-NOW bridges)",
     ),
 )
 
 
-#: Commands the remote CLI screen offers as completions, beyond the catalog's
-#: ``get``/``set`` spellings: the fixed verbs a MeshCore repeater understands.
+#: Commands the remote CLI screen offers as completions, beyond the catalog's own read and
+#: write spellings: the fixed verbs a MeshCore repeater answers over the mesh. The ones its
+#: firmware keeps to the serial console (``erase``, ``log`` dumps, ``stats-*``) are left out,
+#: since completing them would only invite a refusal.
 KNOWN_COMMANDS: tuple[str, ...] = (
     "advert",
+    "advert.zerohop",
+    "board",
+    "clear stats",
+    "clkreboot",
     "clock",
     "clock sync",
+    "discover.neighbors",
     "get ",
+    "get public.key",
+    "get role",
+    "gps setloc",
+    "gps sync",
+    "log erase",
+    "log start",
+    "log stop",
+    "neighbor.remove ",
     "neighbors",
     "password ",
+    "poweroff",
     "reboot",
+    "region",
+    "region allowf ",
+    "region default",
+    "region denyf ",
+    "region get ",
+    "region home",
+    "region put ",
+    "region remove ",
+    "region save",
+    "sensor get ",
+    "sensor list",
+    "sensor set ",
     "set ",
+    "setperm ",
     "start ota",
+    "tempradio ",
     "time ",
     "ver",
 )
 
 
 def known_commands() -> list[str]:
-    """Every completion the remote CLI offers: verbs plus catalog get/set spellings."""
+    """Every completion the remote CLI offers: verbs plus the catalog's read/write spellings."""
     commands = set(KNOWN_COMMANDS)
     for spec in REPEATER_SETTINGS:
         if spec.readable:
             commands.add(spec.get_command)
         if spec.writable:
-            commands.add(f"set {spec.key} ")
+            if spec.composite:
+                commands.add(f"set {spec.composite} ")
+            elif spec.verb:
+                commands.add(f"{spec.verb} ")
+            else:
+                commands.add(f"set {spec.key} ")
     return sorted(commands)
 
 
 def get_setting(key: str) -> RemoteSetting | None:
-    """Look up a catalog setting by its CLI key."""
+    """Look up a catalog setting by its key."""
     return next((s for s in REPEATER_SETTINGS if s.key == key), None)
 
 
@@ -266,48 +663,101 @@ def settings_by_category() -> list[tuple[str, list[RemoteSetting]]]:
     return list(grouped.items())
 
 
+def composite_members(composite: str) -> list[RemoteSetting]:
+    """The settings a composite key carries, in their comma-joined order."""
+    return sorted((s for s in REPEATER_SETTINGS if s.composite == composite), key=lambda s: s.part)
+
+
 def reply_is_error(reply: str) -> bool:
-    """Whether a reply text reads as the firmware refusing the command."""
+    """Whether a reply text reads as the firmware refusing the command.
+
+    A reply that opens with a ``get``'s ``>`` value echo is a value, whatever it says.
+    """
+    if _ECHO.match(reply):
+        return False
     lowered = reply.lower()
     return any(marker in lowered for marker in _ERRORISH)
 
 
 def parse_reply_value(spec: RemoteSetting, reply: str | None) -> str | None:
-    """Extract a display value from a ``get`` reply, or ``None`` when unusable.
+    """Extract a stored value from a read's reply, or ``None`` when unusable.
 
-    Numeric settings pull the first number out of the terse, version-varying reply
-    text (the ``get tx`` convention); strings strip a leading ``key:``/``>`` echo.
-    Error-ish replies parse as ``None`` so a firmware without the key shows unknown
-    rather than adopting the error string as a value.
+    Numbers are pulled out of whatever phrasing the firmware used and formatted the way
+    :func:`normalize_value` formats a typed one, so a value read back compares equal to the
+    same value staged. A composite member takes its own field of the comma-joined reply.
+    Error-ish replies parse as ``None`` so a firmware without the key never adopts the error
+    string as a value.
 
     Args:
         spec: The setting the reply answers.
         reply: The raw reply text, or ``None`` if the node never answered.
 
     Returns:
-        The value as display text, or ``None``.
+        The value as stored text (an enum's :attr:`Option.value`, a bool's ``on``/``off``),
+        ``""`` for a string the node reports as empty, or ``None``.
     """
-    if not reply or reply_is_error(reply):
+    if reply is None or reply_is_error(reply):
         return None
-    text = reply.strip()
+    echoed = bool(_ECHO.match(reply))
+    text = _ECHO.sub("", reply.strip(), count=1).strip()
+    # Some firmware versions echo the key instead of ">": "tx: 20", "name = Yagi".
+    text = re.sub(rf"^{re.escape(spec.key)}\s*[:=]\s*", "", text, flags=re.I)
+    if spec.composite:
+        pieces = text.split(",")
+        if len(pieces) != len(composite_members(spec.composite)):
+            return None
+        text = pieces[spec.part].strip()
+    tokens = re.findall(r"[\w.+-]+", text.lower())
+    for word, value in spec.aliases:
+        if word in tokens:
+            return value
     if spec.kind in ("int", "float"):
         match = re.search(r"-?\d+(?:\.\d+)?", text)
-        if match is None:
-            return None
-        raw = match.group()
-        if spec.kind == "int":
-            return str(int(float(raw)))
-        return f"{float(raw):g}"
+        return None if match is None else _format_number(spec, float(match.group()))
     if spec.kind == "bool":
-        lowered = text.lower()
-        if any(t in lowered for t in ("on", "true", "yes", "1")):
-            return "on"
-        if any(t in lowered for t in ("off", "false", "no", "0")):
-            return "off"
+        on_words = _ON_WORDS | {spec.words[0]}
+        off_words = _OFF_WORDS | {spec.words[1]}
+        for token in tokens:
+            if token in on_words:
+                return "on"
+            if token in off_words:
+                return "off"
         return None
-    # Strings: drop a "key:" or "-> " echo prefix if the firmware included one.
-    text = re.sub(rf"^\s*(?:>|->|{re.escape(spec.key)}\s*[:=])\s*", "", text, flags=re.I)
+    if spec.kind == "enum":
+        by_value = {option.value.lower(): option.value for option in spec.options}
+        return next((by_value[t] for t in tokens if t in by_value), None)
+    if echoed:
+        return text  # "> " with nothing after it is an empty string, which is a value
     return text or None
+
+
+def _format_number(spec: RemoteSetting, value: float) -> str:
+    """One number as the cache stores it: whole, fixed-decimal, or trimmed."""
+    if spec.kind == "int":
+        return str(int(round(value)))
+    if spec.decimals is not None:
+        text = f"{value:.{spec.decimals}f}"
+    else:
+        # The firmware's own ftoa: up to 7 places, trailing zeros trimmed.
+        text = f"{value:.7f}".rstrip("0").rstrip(".")
+    return text.lstrip("-") if float(text) == 0 else text
+
+
+def normalize_value(spec: RemoteSetting, raw: str) -> str:
+    """A validated typed value in the form the cache stores and the firmware is sent.
+
+    TX delay entered as ``0.5`` becomes ``0.50``: rounded to the setting's decimals, and
+    spelled exactly as a read of the same value would be, so staging what the node already
+    holds unstages rather than queueing a no-op ``set``.
+    """
+    text = raw.strip()
+    if spec.kind in ("int", "float"):
+        return _format_number(spec, float(text))
+    if spec.kind == "bool":
+        return text.lower()
+    if spec.kind == "enum":
+        return next((o.value for o in spec.options if o.value.lower() == text.lower()), text)
+    return text
 
 
 def validate_value(spec: RemoteSetting, raw: str) -> bool | str:
@@ -319,15 +769,127 @@ def validate_value(spec: RemoteSetting, raw: str) -> bool | str:
         if text.lower() in ("on", "off"):
             return True
         return "Enter on or off."
+    if spec.kind == "enum":
+        if any(o.value.lower() == text.lower() for o in spec.options):
+            return True
+        return "Enter one of " + ", ".join(o.value for o in spec.options) + "."
     if spec.kind in ("int", "float"):
         try:
             value = float(text)
         except ValueError:
             return "Enter a number."
-        if spec.kind == "int" and not float(text).is_integer():
+        if spec.kind == "int" and not value.is_integer():
             return "Enter a whole number."
-        if spec.minimum is not None and value < spec.minimum:
-            return f"Must be ≥ {spec.minimum:g}."
-        if spec.maximum is not None and value > spec.maximum:
-            return f"Must be ≤ {spec.maximum:g}."
+        if spec.zero_off and value == 0:
+            return True
+        low, high = spec.minimum, spec.maximum
+        if spec.zero_off and low is not None and high is not None and not low <= value <= high:
+            return f"Must be 0, or {low:g} – {high:g}."
+        if low is not None and value < low:
+            return f"Must be ≥ {low:g}."
+        if high is not None and value > high:
+            return f"Must be ≤ {high:g}."
     return True
+
+
+def range_hint(spec: RemoteSetting) -> str:
+    """The prompt's help line: what validation will accept, and in what unit."""
+    low, high = spec.minimum, spec.maximum
+    if low is not None and high is not None:
+        hint = f"Allowed: {low:g} – {high:g}"
+    elif low is not None:
+        hint = f"Allowed: ≥ {low:g}"
+    elif high is not None:
+        hint = f"Allowed: ≤ {high:g}"
+    else:
+        hint = ""
+    if hint and spec.zero_off:
+        hint = hint.replace("Allowed: ", "Allowed: 0 (off), or ", 1)
+    if spec.unit:
+        hint = f"{hint}  ({spec.unit})" if hint else f"In {spec.unit}."
+    return hint
+
+
+def read_plan(specs: Iterable[RemoteSetting]) -> list[tuple[str, list[RemoteSetting]]]:
+    """The read commands that answer ``specs``, each once, with the settings it fills.
+
+    Every command is one paced round trip, so the four radio fields ask ``get radio`` a
+    single time between them — and asking for any one of them fills all four, because the
+    reply carries them anyway and a radio line half-refreshed would disagree with itself.
+    Unreadable settings are skipped.
+    """
+    plan: dict[str, list[RemoteSetting]] = {}
+    for spec in specs:
+        if not spec.readable:
+            continue
+        fills = plan.setdefault(spec.get_command, [])
+        for member in composite_members(spec.composite) if spec.composite else [spec]:
+            if member not in fills:
+                fills.append(member)
+    return list(plan.items())
+
+
+@dataclass(frozen=True, slots=True)
+class Write:
+    """One write command, planned from the staged values.
+
+    Attributes:
+        command: The CLI command to send, or ``""`` when it cannot be built yet.
+        values: Setting key -> the value this command leaves the node holding. For a
+            composite that includes the unstaged siblings it restates.
+        missing: The composite siblings neither staged nor known — the reason
+            ``command`` is empty. Read them first (:func:`composite_reads`).
+    """
+
+    command: str
+    values: dict[str, str]
+    missing: tuple[str, ...] = ()
+
+
+def write_plan(pending: Mapping[str, str], known: Mapping[str, str]) -> list[Write]:
+    """Group staged values into the commands that send them, in catalog order.
+
+    A standalone setting is its own ``set``. A composite member is sent with all its
+    siblings in one command, the unstaged ones restated from what the node last said —
+    ``set radio`` has no way to change one field alone.
+
+    Args:
+        pending: Setting key -> staged value.
+        known: Setting key -> the node's last-read value, for composite siblings.
+
+    Returns:
+        The planned writes.
+    """
+    writes: list[Write] = []
+    planned: set[str] = set()
+    for spec in REPEATER_SETTINGS:
+        if spec.key not in pending or not spec.writable:
+            continue
+        if not spec.composite:
+            value = pending[spec.key]
+            writes.append(Write(spec.set_command(value), {spec.key: value}))
+            continue
+        if spec.composite in planned:
+            continue
+        planned.add(spec.composite)
+        members = composite_members(spec.composite)
+        values = {m.key: pending.get(m.key, known.get(m.key)) for m in members}
+        missing = tuple(key for key, value in values.items() if value is None)
+        if missing:
+            staged = {m.key: pending[m.key] for m in members if m.key in pending}
+            writes.append(Write("", staged, missing))
+        else:
+            joined = ",".join(str(values[m.key]) for m in members)
+            writes.append(Write(f"set {spec.composite} {joined}", dict(values)))  # type: ignore[arg-type]
+    return writes
+
+
+def composite_reads(pending: Mapping[str, str], known: Mapping[str, str]) -> list[str]:
+    """The reads a write needs first: composites staged without all their siblings known."""
+    commands: list[str] = []
+    for write in write_plan(pending, known):
+        if write.missing:
+            spec = get_setting(write.missing[0])
+            if spec is not None and spec.get_command not in commands:
+                commands.append(spec.get_command)
+    return commands

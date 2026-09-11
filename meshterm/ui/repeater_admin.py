@@ -6,14 +6,15 @@ otherwise) opens an editor deliberately shaped like the local device-configurati
 screen — the same setting / value / description lanes, staged ``current → new`` values,
 Apply — but speaking the repeater's text CLI (see :mod:`meshterm.core.remote_config`)
 instead of the companion's binary protocol, which brings the repeater-only knobs the
-local editor never had: TX delay, Direct TX delay, airtime factor, advert intervals.
+local editor never had: TX delay, Direct TX delay, duty cycle, flood caps, the bridge.
 
 Because every read is one paced mesh round trip, the editor never bulk-reads on open:
-values show what the last read (or the last applied set) said, stamped with age, from
-the per-node cache (:class:`~meshterm.core.remote_store.RemoteStore`); the *Read
-settings* action refreshes them all under an abortable progress dialog, one paced
-``get`` at a time. Apply sends the staged ``set`` commands the same way and folds each
-confirmed value straight back into the cache.
+values show what the last read (or the last applied set) said, from the per-node cache
+(:class:`~meshterm.core.remote_store.RemoteStore`). The *Read settings* action refreshes
+every one of them under an abortable progress dialog, one paced read at a time, and
+``^R`` (``Read`` on the F-key lane) re-reads just the highlighted row. A setting the node's
+firmware doesn't have reads as ``n/a`` — kept apart from ``?``, never read. Apply sends the
+staged values the same way and folds each confirmed value straight back into the cache.
 
 Beyond the settings, the action rows cover the box itself — advert, clock sync, change
 admin password, reboot, each behind its own floating confirmation — and the **Command
@@ -24,6 +25,9 @@ the catalog doesn't spell.
 from __future__ import annotations
 
 import asyncio
+import re
+from collections.abc import Iterable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from rich.cells import cell_len
@@ -31,10 +35,18 @@ from rich.text import Text
 
 from ..core.models import Contact
 from ..core.remote_config import (
+    REPEATER_SETTINGS,
     RemoteSetting,
+    composite_reads,
+    get_setting,
+    normalize_value,
     parse_reply_value,
+    range_hint,
+    read_plan,
     reply_is_error,
     settings_by_category,
+    validate_value,
+    write_plan,
 )
 from .menus import (
     confirm_discard,
@@ -48,8 +60,8 @@ from .menus import (
 )
 from .trace_screen import TracingDialog
 from .tui import Choice, Separator
+from .tui.select import SelectScreen, _splice_hint
 from .tui.spinner import Spinner, spinner_interval
-from .widgets import _age_seconds, _format_age
 
 if TYPE_CHECKING:
     from ..context import AppContext
@@ -68,6 +80,72 @@ _PASSWORD = "__password__"
 _REBOOT = "__reboot__"
 _APPLY = "__apply__"
 _CANCEL = "__cancel__"
+
+#: The footer atom naming the chord that re-reads the highlighted setting.
+READ_ONE_HINT = "^R read"
+
+
+@dataclass(frozen=True, slots=True)
+class ReadOne:
+    """What the admin menu resolves with when ``^R`` asks for one setting's value again.
+
+    Attributes:
+        key: The highlighted setting's catalog key.
+    """
+
+    key: str
+
+
+class AdminMenu(SelectScreen):
+    """The admin editor's list, plus a key that re-reads the highlighted setting alone.
+
+    A full read is one paced round trip per setting — minutes, on a node with every
+    section — so checking whether one value took, or refreshing the one row that timed
+    out, must not cost all of them. The key is ``^R``, the chord the app already spends on
+    *retry* (chat re-sends an unacknowledged message with it): here too it asks the mesh
+    the same question again, for the one thing under the cursor. It has to be a chord,
+    because this list filters as you type and every bare letter is spoken for.
+
+    The footer names it, and the F-key lane lights its ``Read`` chip, only on a readable
+    setting row — never on an action row, where there is nothing to read.
+    """
+
+    def _readable_key(self) -> str | None:
+        """The highlighted row's setting key, when it is a setting the node can be asked."""
+        current = self._current_choice()
+        if current is None or not isinstance(current.value, str):
+            return None
+        spec = get_setting(current.value)
+        return spec.key if spec is not None and spec.readable else None
+
+    @property
+    def footer_hint(self) -> str:  # type: ignore[override]
+        """The list's own hint, plus the read atom while a readable setting is highlighted."""
+        base = super().footer_hint
+        return _splice_hint(base, READ_ONE_HINT) if self._readable_key() else base
+
+    @property
+    def fkey_lane(self):
+        """The list's lane with ``Read`` on F3 — dim on a row there is nothing to read.
+
+        F1/F2 are this grouped list's section jumps and F4/F5 the pager; F3 is the slot a
+        select list spends on its own verb. Dim rather than empty on an action row: reading
+        is a thing on this screen, just not for the row the cursor is on.
+        """
+        from .tui.fkeys import FPair
+
+        lane = list(super().fkey_lane)
+        lane[2] = FPair("Read", "retry", enabled=self._readable_key() is not None)
+        return lane
+
+    def handle(self, action: str, data: str = "") -> None:
+        """Ask for the highlighted setting's value, or behave as any select list does."""
+        if action == "retry":
+            key = self._readable_key()
+            if key is not None:
+                self.resolve(ReadOne(key))
+            return
+        super().handle(action, data)
 
 
 async def open_repeater_admin(ctx: AppContext) -> dict[str, Any] | None:
@@ -178,11 +256,11 @@ async def _admin_session(ctx: AppContext, device: Device, node: Contact) -> dict
     """Run the editor loop for one logged-in node.
 
     One screen for the whole session, its rows refreshed in place after every action: they
-    carry the cache's ``current → new`` values and their ages, and the title counts what is
-    staged, so the content moves under a highlight that stays where the reader put it —
-    typed filter included. Every sub-prompt floats over it, and Esc leaves the node.
+    carry the cache's ``current → new`` values, and the title counts what is staged, so the
+    content moves under a highlight that stays where the reader put it — typed filter
+    included. Every sub-prompt floats over it, and Esc leaves the node.
     """
-    from .tui import CANCEL, SelectScreen
+    from .tui import CANCEL
 
     session = ctx.ui.session
 
@@ -191,7 +269,7 @@ async def _admin_session(ctx: AppContext, device: Device, node: Contact) -> dict
 
     cache = ctx.remote_store.settings(node)
     title, items = _menu_items(node, cache, pending)
-    menu = SelectScreen(
+    menu = AdminMenu(
         title,
         items,
         footer_hint="↑↓ move · type to filter · Enter select · Esc back",
@@ -206,10 +284,14 @@ async def _admin_session(ctx: AppContext, device: Device, node: Contact) -> dict
                 if pending and not await confirm_discard(ctx, len(pending), verb="sending"):
                     continue
                 return {"node": node.name, "applied": applied}
-            if choice == _APPLY:
+            if isinstance(choice, ReadOne):
+                spec = get_setting(choice.key)
+                if spec is not None:
+                    await read_settings(ctx, device, node, [spec])
+            elif choice == _APPLY:
                 applied += await _apply(ctx, device, node, pending)
             elif choice == _READ:
-                await _read_all(ctx, device, node)
+                await read_settings(ctx, device, node, REPEATER_SETTINGS)
             elif choice == _CLI:
                 await _command_line(ctx, device, node)
             elif choice == _ADVERT:
@@ -246,9 +328,14 @@ async def _admin_session(ctx: AppContext, device: Device, node: Contact) -> dict
                     danger=True,
                 )
             else:  # a setting key
-                await _stage_setting(ctx, str(choice), cache, pending)
+                spec = get_setting(str(choice))
+                if spec is not None and not spec.writable:
+                    # A read-only fact has nothing to stage; asking again is all Enter can do.
+                    await read_settings(ctx, device, node, [spec])
+                else:
+                    await _stage_setting(ctx, str(choice), cache, pending)
             # A read or an apply rewrites the cache the rows are drawn from; re-read it so
-            # the values and their ages are the ones the action just produced.
+            # the values are the ones the action just produced.
             cache = ctx.remote_store.settings(node)
             title, items = _menu_items(node, cache, pending)
             menu.replace_items(items, title=title)
@@ -289,7 +376,7 @@ def _menu_items(node: Contact, cache: dict, pending: dict[str, str]) -> tuple[st
     # every mark padded out to it — otherwise Read settings and Command line start their
     # labels a column left of the rows under them.
     actions = [
-        ("↻", "Read settings", "Fetch every value from the node, one paced get", _READ),
+        ("↻", "Read settings", "Fetch every value from the node, one paced read", _READ),
         ("⌨", "Command line…", "Talk to the node's CLI directly", _CLI),
         ("📡", "Send advert…", "Have the node announce itself now", _ADVERT),
         ("🕒", "Sync clock…", "Set the node's clock over the mesh", _CLOCK),
@@ -313,19 +400,25 @@ def _menu_items(node: Contact, cache: dict, pending: dict[str, str]) -> tuple[st
 
 
 def _value_text(spec: RemoteSetting, cache: dict, pending: dict[str, str]) -> Text:
-    """One setting's VALUE lane: cached value (with its age), and any staged arrow."""
+    """One setting's VALUE lane: what the node last said, and any staged arrow.
+
+    Four states, each its own word: the value; ``empty`` for a string the node holds blank;
+    ``n/a`` when the node's firmware answered that it has no such setting; ``?`` when it was
+    never read. No age: the lane is the value, and a stamp beside it only crowded it.
+    """
     cached = cache.get(spec.key)
     if not spec.readable:
         value = Text("write-only", style="faint")
     elif cached is None:
         value = Text("?", style="muted")
+    elif not cached.supported:
+        value = Text("n/a", style="muted")
+    elif cached.value == "":
+        value = Text("empty", style="muted")
     else:
-        value = Text(cached.value)
-        age = _format_age(_age_seconds(cached.read_at))
-        if age != "now":
-            value.append(f" ·{age}", style="faint")
+        value = Text(spec.display(cached.value))
     if spec.key in pending:
-        value.append(f" → {pending[spec.key]}", style="warn")
+        value.append(f" → {spec.display(pending[spec.key])}", style="warn")
     return value
 
 
@@ -334,13 +427,12 @@ def _value_text(spec: RemoteSetting, cache: dict, pending: dict[str, str]) -> Te
 
 async def _stage_setting(ctx: AppContext, key: str, cache: dict, pending: dict[str, str]) -> None:
     """Prompt for one setting's new value and stage it (nothing is sent yet)."""
-    from ..core.remote_config import get_setting, validate_value
-
     spec = get_setting(key)
     if spec is None or not spec.writable:  # pragma: no cover - menu offers only real keys
         return
     cached = cache.get(key)
-    current = pending.get(key, cached.value if cached is not None else "")
+    known = cached.value if cached is not None and cached.supported else None
+    current = pending.get(key, known or "")
 
     if spec.kind == "bool":
         picked = await ctx.ui.dialog(
@@ -353,43 +445,73 @@ async def _stage_setting(ctx: AppContext, key: str, cache: dict, pending: dict[s
         if picked is None:
             return
         value = str(picked)
+    elif spec.kind == "enum":
+        items = [
+            Choice(
+                title=option.label
+                + (f" — {option.help}" if option.help else "")
+                + ("  (current)" if option.value == current else ""),
+                value=option.value,
+            )
+            for option in spec.options
+        ]
+        picked = await ctx.ui.select(
+            spec.label,
+            items,
+            prompt=spec.help,
+            default=current if any(o.value == current for o in spec.options) else None,
+        )
+        if picked is None:
+            return
+        value = str(picked)
     else:
-        hint = ""
-        if spec.minimum is not None and spec.maximum is not None:
-            hint = f"Allowed: {spec.minimum:g} – {spec.maximum:g}"
-        elif spec.minimum is not None:
-            hint = f"Allowed: ≥ {spec.minimum:g}"
-        if spec.unit:
-            hint = f"{hint}  ({spec.unit})" if hint else f"In {spec.unit}."
         raw = await ctx.ui.text(
             spec.label,
             prompt=spec.help,
             default=str(current),
             validate=lambda t: validate_value(spec, t),
-            help_text=hint,
+            help_text=range_hint(spec),
         )
         if raw is None:
             return
-        value = raw.strip()
+        value = normalize_value(spec, raw)
 
-    if cached is not None and value == cached.value:
+    if value == known:
         pending.pop(key, None)  # back to what the node last said — nothing to send
     else:
         pending[key] = value
 
 
-async def _apply(ctx: AppContext, device: Device, node: Contact, pending: dict[str, str]) -> int:
-    """Send every staged ``set`` command, paced, under an abortable progress dialog.
+def _known_values(ctx: AppContext, node: Contact) -> dict[str, str]:
+    """The node's last-read values, for restating a composite's unstaged fields."""
+    return {
+        key: cached.value
+        for key, cached in ctx.remote_store.settings(node).items()
+        if cached.supported
+    }
 
-    Each confirmed value folds straight into the per-node cache; a rejected or
-    unanswered set stays staged so it can be retried (or unstaged) rather than being
-    silently dropped. Records one ``runs`` row for the batch.
+
+def _remark(reply: str, value: str) -> str:
+    """What a successful write's reply adds beyond ``OK`` (``reboot to apply``), or ``""``."""
+    remark = re.sub(r"^ok\b[\s,:-]*", "", reply.strip(), flags=re.IGNORECASE)
+    return "" if remark.lower() in ("", value.lower()) else remark
+
+
+async def _apply(ctx: AppContext, device: Device, node: Contact, pending: dict[str, str]) -> int:
+    """Send every staged value, paced, under an abortable progress dialog.
+
+    Staged values go out as :func:`~meshterm.core.remote_config.write_plan` groups them:
+    one command per setting, except the radio's four fields, which travel as one
+    ``set radio``. That command restates every field, so a radio field staged while its
+    siblings were never read first reads them — one paced ``get radio`` — rather than
+    guessing a frequency. Each confirmed value folds straight into the per-node cache (and
+    stales any other spelling of the same firmware value); a rejected or unanswered write
+    stays staged so it can be retried (or unstaged) rather than being silently dropped.
+    Records one ``runs`` row for the batch.
 
     Returns:
         How many settings the node accepted.
     """
-    from ..core.remote_config import get_setting
-
     session = ctx.ui.session
     run_id = ctx.repo.start_run(
         "repeater-admin",
@@ -401,30 +523,56 @@ async def _apply(ctx: AppContext, device: Device, node: Contact, pending: dict[s
 
     async def work(dialog: TracingDialog) -> None:
         nonlocal applied
-        total = len(pending)
-        for i, (key, value) in enumerate(sorted(pending.items()), start=1):
-            spec = get_setting(key)
-            assert spec is not None
-            dialog.status = f"set {key} · {i}/{total}"
+        first = True
+
+        async def send(command: str, status: str) -> str | None:
+            nonlocal first
+            if not first:  # every transmission after the first waits out the cooldown
+                await asyncio.sleep(ctx.preferences.trace_cooldown_s)
+            first = False
+            dialog.status = status
             session.invalidate()
-            reply = await device.send_remote_command(
-                node, spec.set_command(value), timeout=_REPLY_TIMEOUT_S
-            )
-            if reply is not None and not reply_is_error(reply):
-                ctx.remote_store.remember_setting(node, key, value)
-                pending.pop(key, None)
-                applied += 1
-                outcomes.append(Text.assemble(("✓ ", "ok"), f"{spec.label} = {value}"))
-            elif reply is None:
+            return await device.send_remote_command(node, command, timeout=_REPLY_TIMEOUT_S)
+
+        for command in composite_reads(pending, _known_values(ctx, node)):
+            fills = [s for s in REPEATER_SETTINGS if s.get_command == command]
+            reply = await send(command, command)
+            if reply is not None:
+                remember_reply(ctx, node, fills, reply)
+
+        writes = write_plan(pending, _known_values(ctx, node))
+        for i, write in enumerate(writes, start=1):
+            staged = [s for s in REPEATER_SETTINGS if s.key in write.values and s.key in pending]
+            names = ", ".join(f"{s.label} = {s.display(write.values[s.key])}" for s in staged)
+            if write.missing:
+                unread = ", ".join(s.label for s in map(get_setting, write.missing) if s)
                 outcomes.append(
-                    Text.assemble(("? ", "warn"), f"{spec.label} — no reply (still staged)")
+                    Text.assemble(
+                        ("✗ ", "err"), f"{names} — {unread} couldn't be read (still staged)"
+                    )
                 )
+                continue
+            verb = " ".join(write.command.split()[:2])  # never a secret's value on screen
+            reply = await send(write.command, f"{verb} · {i}/{len(writes)}")
+            if reply is not None and not reply_is_error(reply):
+                for key, value in write.values.items():
+                    ctx.remote_store.remember_setting(node, key, value)
+                    spec = get_setting(key)
+                    for other in spec.overlaps if spec is not None else ():
+                        ctx.remote_store.forget_setting(node, other)
+                for spec in staged:
+                    pending.pop(spec.key, None)
+                applied += len(staged)
+                remark = _remark(reply, write.values[staged[0].key]) if staged else ""
+                outcomes.append(
+                    Text.assemble(("✓ ", "ok"), names, (f" — {remark}" if remark else "", "muted"))
+                )
+            elif reply is None:
+                outcomes.append(Text.assemble(("? ", "warn"), f"{names} — no reply (still staged)"))
             else:
                 outcomes.append(
-                    Text.assemble(("✗ ", "err"), f"{spec.label} — {reply.strip()} (still staged)")
+                    Text.assemble(("✗ ", "err"), f"{names} — {reply.strip()} (still staged)")
                 )
-            if i < total:
-                await asyncio.sleep(ctx.preferences.trace_cooldown_s)
 
     aborted = await _run_under_dialog(ctx, f"Applying — {node.name}", work)
     ctx.repo.finish_run(
@@ -444,36 +592,78 @@ async def _apply(ctx: AppContext, device: Device, node: Contact, pending: dict[s
     return applied
 
 
-async def _read_all(ctx: AppContext, device: Device, node: Contact) -> None:
-    """Refresh every readable setting from the node, one paced ``get`` at a time.
+def remember_reply(ctx: AppContext, node: Contact, fills: list[RemoteSetting], reply: str) -> int:
+    """Fold one read's reply into the cache for every setting it answers.
 
-    Values that parse land in the cache (and on screen); firmware that doesn't know a
-    key just leaves that row unknown. Abort keeps everything already read.
+    An error reply is the firmware saying it has no such setting, and is remembered as
+    that (the row reads ``n/a``). A reply that isn't an error but doesn't parse leaves the
+    cache alone: a phrasing we don't understand is not evidence the setting is missing.
+
+    Returns:
+        How many settings got a value.
+    """
+    if reply_is_error(reply):
+        for spec in fills:
+            ctx.remote_store.remember_unsupported(node, spec.key)
+        return 0
+    got = 0
+    for spec in fills:
+        value = parse_reply_value(spec, reply)
+        if value is not None:
+            ctx.remote_store.remember_setting(node, spec.key, value)
+            got += 1
+    return got
+
+
+async def read_settings(
+    ctx: AppContext, device: Device, node: Contact, specs: Iterable[RemoteSetting]
+) -> None:
+    """Refresh ``specs`` from the node, one paced read at a time.
+
+    The four radio fields share one ``get radio`` (see
+    :func:`~meshterm.core.remote_config.read_plan`), so a full read asks each question once.
+    Values that parse land in the cache (and on screen), a setting the firmware lacks reads
+    ``n/a``, and abort keeps everything already read. Reads the node never answered are
+    listed afterwards, because their rows go on showing what they last said and would
+    otherwise pass for fresh.
     """
     session = ctx.ui.session
-    specs = [s for cat, ss in settings_by_category() for s in ss if s.readable]
+    plan = read_plan(specs)
     run_id = ctx.repo.start_run(
         "repeater-admin", {"node": node.name, "mode": "read"}, ctx.profile_name
     )
     read = 0
+    unanswered: list[str] = []
 
     async def work(dialog: TracingDialog) -> None:
         nonlocal read
-        for i, spec in enumerate(specs, start=1):
-            dialog.status = f"get {spec.key} · {i}/{len(specs)}"
+        for i, (command, fills) in enumerate(plan, start=1):
+            dialog.status = f"{command} · {i}/{len(plan)}"
             session.invalidate()
-            reply = await device.send_remote_command(
-                node, spec.get_command, timeout=_REPLY_TIMEOUT_S
-            )
-            value = parse_reply_value(spec, reply)
-            if value is not None:
-                ctx.remote_store.remember_setting(node, spec.key, value)
-                read += 1
-            if i < len(specs):
+            reply = await device.send_remote_command(node, command, timeout=_REPLY_TIMEOUT_S)
+            if reply is None:
+                unanswered.extend(spec.label for spec in fills)
+            else:
+                read += remember_reply(ctx, node, fills, reply)
+            if i < len(plan):
                 await asyncio.sleep(ctx.preferences.trace_cooldown_s)
 
     aborted = await _run_under_dialog(ctx, f"Reading — {node.name}", work)
-    ctx.repo.finish_run(run_id, "error" if aborted else "ok", {"read": read, "asked": len(specs)})
+    asked = sum(len(fills) for _command, fills in plan)
+    ctx.repo.finish_run(
+        run_id,
+        "error" if aborted else "ok",
+        {"read": read, "asked": asked, "unanswered": len(unanswered)},
+    )
+    if unanswered and not aborted:
+        await session.message_dialog(
+            Text(
+                f"No reply from {node.name} for: {', '.join(unanswered)}. "
+                "Those rows still show what they last said.",
+                style="warn",
+            ),
+            title=f"Read — {node.name}",
+        )
 
 
 async def _run_under_dialog(ctx: AppContext, title: str, work) -> bool:

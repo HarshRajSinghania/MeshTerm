@@ -2873,24 +2873,45 @@ class MockDevice(Device):
         self._admin_sessions.add(self._mock_key(node))
         return LoginResult.ACCEPTED
 
-    #: The simulated repeater CLI's configuration defaults (see send_remote_command).
+    #: The simulated repeater CLI's configuration, keyed and answered the way MeshCore's
+    #: ``CommonCLI.cpp`` does (see send_remote_command). What is absent is absent on purpose:
+    #: a board with no front-end module and a build with no bridge, so a read of those
+    #: answers ``??:`` exactly as that hardware would.
     _REMOTE_CFG_DEFAULTS = {
+        "owner.info": "",
+        "lat": "0",
+        "lon": "0",
         "freq": "910.525",
         "bw": "62.5",
         "sf": "7",
         "cr": "5",
-        "lat": "0",
-        "lon": "0",
+        "radio.rxgain": "on",
+        "cad": "off",
+        "int.thresh": "0",
+        "agc.reset.interval": "0",
         "repeat": "on",
-        "txdelay": "0",
-        "direct.txdelay": "0",
+        "txdelay": "0.5",
+        "direct.txdelay": "0.2",
         "rxdelay": "0",
         "af": "1",
-        "allow.read.only": "off",
+        "loop.detect": "off",
+        "path.hash.mode": "0",
+        "multi.acks": "0",
+        "flood.max": "64",
+        "flood.max.unscoped": "64",
+        "flood.max.advert": "8",
         "advert.interval": "240",
         "flood.advert.interval": "12",
-        "flood.max": "64",
+        "guest.password": "",
+        "allow.read.only": "off",
+        "powersaving": "off",
+        "adc.multiplier": "0.000",
+        "gps advert": "none",
+        "bridge.type": "none",
     }
+
+    #: The ``get radio`` fields, in the order the reply joins them.
+    _REMOTE_RADIO = ("freq", "bw", "sf", "cr")
 
     async def send_remote_command(  # noqa: D102 - inherited docstring
         self, node: Contact, command: str, *, timeout: float = 8.0
@@ -2914,25 +2935,57 @@ class MockDevice(Device):
         if verb == "neighbors":
             table = self._neighbour_tables.get(node.key_prefix or "", [])
             return "\n".join(f"{p} {snr:+.1f}dB {ago}s" for p, snr, ago in table) or "none"
+        if verb == "powersaving":
+            if len(parts) == 2 and parts[1] in ("on", "off"):
+                cfg["powersaving"] = parts[1]
+            return cfg["powersaving"]  # bare, no "> ": a verb, not a get
+        if verb == "gps":
+            if parts[1:2] == ["advert"]:
+                if len(parts) == 2:
+                    return f"> {cfg['gps advert']}"
+                if parts[2] in ("none", "share", "prefs"):
+                    cfg["gps advert"] = parts[2]
+                    return "OK"
+                return "error: expected none, share or prefs"
+            if len(parts) == 1:
+                return "off"  # no receiver on this board
+            return "gps toggle not supported"
         if verb == "get" and len(parts) == 2:
             param = parts[1].lower()
             if param == "tx":
-                return str(self._remote_tx.get(key, self._default_remote_tx))
-            if param == "guest.password":
-                return f"ERR: unknown config: {param}"  # write-only, like hardware
-            value = cfg.get(param)
-            return f"> {value}" if value is not None else f"ERR: unknown config: {param}"
+                return f"> {self._remote_tx.get(key, self._default_remote_tx)}"
+            if param == "radio":
+                return "> " + ",".join(cfg[name] for name in self._REMOTE_RADIO)
+            if param == "dutycycle":
+                return f"> {100.0 / (float(cfg['af']) + 1.0):.1f}%"
+            if param in cfg and param not in ("gps advert", "powersaving"):
+                return f"> {cfg[param]}"
+            return f"??: {param}"
         if verb == "set" and len(parts) >= 3:
             param = parts[1].lower()
             value = " ".join(parts[2:])
             if param == "tx":
                 self._remote_tx[key] = int(float(value))
                 return "OK"
-            if param in cfg or param == "guest.password":
+            if param == "radio":
+                fields = value.split(",")
+                if len(fields) != len(self._REMOTE_RADIO):
+                    return "Error, invalid params"
+                cfg.update(zip(self._REMOTE_RADIO, fields, strict=True))
+                return "OK - reboot to apply"
+            if param == "dutycycle":
+                duty = float(value)
+                if not 1 <= duty <= 100:
+                    return "ERROR: dutycycle must be 1-100"
+                cfg["af"] = f"{100.0 / duty - 1.0:g}"
+                return f"OK - {duty:.1f}%"
+            # freq alone is serial-only; the rest of the radio goes through "set radio".
+            read_only = (*self._REMOTE_RADIO, "bridge.type", "gps advert", "powersaving")
+            if param in cfg and param not in read_only:
                 cfg[param] = value
                 return "OK"
-            return f"ERR: unknown config: {param}"
-        return f"ERR: unknown command: {command.strip()}"
+            return f"unknown config: {param} {value}"
+        return f"??: {command.strip()}"
 
     async def get_remote_tx_power(self, node: Contact) -> int | None:  # noqa: D102
         key = self._mock_key(node)
