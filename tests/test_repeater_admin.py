@@ -571,6 +571,12 @@ async def test_ctrl_r_reads_only_a_highlighted_setting() -> None:
     assert not menu.future.done()
 
 
+def test_admin_editor_is_a_full_screen_page() -> None:
+    """The editor fills the frame like Device config; only its prompts float over it."""
+    title, items = repeater_admin._menu_items(NODE, {}, {})
+    assert AdminMenu(title, items).floating is False
+
+
 # --- the command-line screen -----------------------------------------------------------
 
 

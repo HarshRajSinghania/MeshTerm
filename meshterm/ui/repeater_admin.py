@@ -108,7 +108,14 @@ class AdminMenu(SelectScreen):
 
     The footer names it, and the F-key lane lights its ``Read`` chip, only on a readable
     setting row — never on an action row, where there is nothing to read.
+
+    It is a full-screen page, not a floating popup: a node's whole catalog is a place the
+    reader works in for a while, like the local Device config editor it mirrors, and a
+    content-sized box over the node picker spent the frame's width on a backdrop. The
+    picker, the value prompts, the confirms and the progress dialogs still float over it.
     """
+
+    floating = False
 
     def _readable_key(self) -> str | None:
         """The highlighted row's setting key, when it is a setting the node can be asked."""

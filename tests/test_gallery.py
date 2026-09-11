@@ -51,6 +51,7 @@ from meshterm.core.models import (
     utcnow,
 )
 from meshterm.core.preferences import Preferences
+from meshterm.core.remote_store import CachedValue
 from meshterm.core.watch_store import WatchStore
 from meshterm.persistence.repository import DiscoveredPath
 from meshterm.platforms import PICOCALC, REGULAR, Platform, set_platform
@@ -84,6 +85,8 @@ from meshterm.ui.path_composer import PathComposerScreen
 from meshterm.ui.preferences import _menu_items as _preference_items
 from meshterm.ui.records_screen import RecordDialog
 from meshterm.ui.remote_cli import RemoteCliScreen
+from meshterm.ui.repeater_admin import AdminMenu
+from meshterm.ui.repeater_admin import _menu_items as _admin_menu_items
 from meshterm.ui.theme import name_style
 from meshterm.ui.timemachine_screen import TimeMachineScreen
 from meshterm.ui.trace_screen import TraceScreen
@@ -814,6 +817,19 @@ def _config_editor_revealed(cols: int, rows: int) -> Screen:
     return screen
 
 
+def _repeater_admin(cols: int, rows: int) -> Screen:
+    """The repeater admin page at its widest: values read, one staged, Apply drawn."""
+    hub = Contact(name="Hilltop-Repeater", public_key=_HUB_KEY, key_prefix="3d63c6429436")
+    now = utcnow()
+    cache = {
+        "name": CachedValue("Hilltop-Repeater", now),
+        "txdelay": CachedValue("0.50", now),
+        "bridge.delay": CachedValue("", now, supported=False),
+    }
+    title, items = _admin_menu_items(hub, cache, {"txdelay": "1.25"})
+    return AdminMenu(title, items, footer_hint="↑↓ move · type to filter · Enter select · Esc back")
+
+
 def _preferences(cols: int, rows: int) -> Screen:
     """The Preferences page at its widest: one saved override, one staged, reset row drawn."""
     prefs = Preferences()
@@ -879,6 +895,7 @@ _ENTRIES: list[_Entry] = [
     _Entry("device_info_revealed", _device_info_revealed),
     _Entry("config_editor", _config_editor),
     _Entry("config_editor_revealed", _config_editor_revealed),
+    _Entry("repeater_admin", _repeater_admin),
     _Entry("preferences", _preferences),
     _Entry("cooldown_countdown", _cooldown_countdown),
     _Entry("about_meshterm", _about_meshterm),
