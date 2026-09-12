@@ -182,8 +182,9 @@ meshterm --mock --platform picocalc
 meshterm specimen
 ```
 
-Handheld bring-up (fonts, palette, boot services) lives in
-`scripts/calculinux-setup.sh` + `scripts/calculinux-console-font.sh`.
+Putting MeshTerm on that handheld — the console font, the boot services, a soldered radio for
+it, and the bridge that fronts a uConsole's SPI LoRa chip as a companion — is
+[`scripts/`](scripts/), and **[`docs/hardware.md`](docs/hardware.md) is its manual**.
 
 ## Features
 
@@ -479,7 +480,7 @@ format.
 MeshTerm ships **Cascadia Mono PL**, © 2019–present Microsoft Corporation, redistributed
 unmodified under the [SIL Open Font License 1.1](meshterm/assets/fonts/CascadiaMono-OFL.txt).
 It's offered to Windows users whose console can't draw the charts — see
-[A word about fonts](#a-word-about-fonts). Microsoft doesn't endorse MeshTerm; the font is
+[A word about terminals, on Windows](#a-word-about-terminals-on-windows). Microsoft doesn't endorse MeshTerm; the font is
 simply the right tool, being one of the very few monospace faces that carries the braille
 block the timelines are drawn from.
 
@@ -497,6 +498,8 @@ respective project for the authoritative terms):
 | [Typer](https://typer.tiangolo.com/) | Scripted CLI (subcommands mirror the menu) | MIT |
 | [Rich](https://github.com/Textualize/rich) | Console rendering | MIT |
 | [prompt_toolkit](https://github.com/prompt-toolkit/python-prompt-toolkit) | Full-screen interactive TUI | BSD-3-Clause |
+| [markdown-it-py](https://github.com/executablebooks/markdown-it-py) | CommonMark parser behind the written About pages | MIT |
+| [PyYAML](https://pyyaml.org/) | The preferences file | MIT |
 | [Segno](https://github.com/heuer/segno) | Pure-Python QR codes (channel share links) | BSD-3-Clause |
 | [tomli](https://github.com/hukkin/tomli) / [tomli-w](https://github.com/hukkin/tomli-w) | TOML config read/write | MIT |
 
