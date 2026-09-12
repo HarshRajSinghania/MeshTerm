@@ -67,8 +67,8 @@ from rich.text import Text
 from ..core.models import NODE_TYPE_REPEATER, Contact, utcnow
 from ..platforms import get_platform
 from ..services.topology import Link, MeshTopology
-from .map_render import _SELF, _UNKNOWN
 from .mapcanvas import RGB, MapCanvas, parse_hex
+from .marks import SELF_MARK, UNKNOWN_MARK
 from .menus import fit_cells
 from .pathline import ELIDE_HEAD, ELIDE_TAIL, SELF_GLYPH, PathHop, PathLine, cut_mark
 from .theme import mark_rgb, name_style, snr_style
@@ -859,7 +859,7 @@ class WalkScreen(Screen):
         for other, (x, y) in placed.items():
             node = stand_in if other == _MORE else other
             if node is None:
-                canvas.marker(x, y, "…", mark_rgb(_UNKNOWN[1]))
+                canvas.marker(x, y, "…", mark_rgb(UNKNOWN_MARK[1]))
                 continue
             glyph, _colour = self._glyph(node)
             canvas.marker(x, y, glyph, self._marker_rgb(node))
@@ -872,7 +872,7 @@ class WalkScreen(Screen):
                 self._label_right(canvas, x, y, self._label(other), self._label_rgb(other))
         if _MORE in placed:
             x, y = placed[_MORE]
-            grey = mark_rgb(_UNKNOWN[1])
+            grey = mark_rgb(UNKNOWN_MARK[1])
             if stand_in is not None:
                 # The marker is that node now: its own mark, and its name in the selection
                 # white — a collapsed node is *only ever drawn while selected*, so white is
@@ -1133,10 +1133,10 @@ class WalkScreen(Screen):
         """
         legend = Text()
         for (glyph, colour), word in (
-            (_SELF, " you   "),
+            (SELF_MARK, " you   "),
             (_NODE_GLYPHS[NODE_TYPE_REPEATER], " repeater   "),
             (_DEFAULT_GLYPH, " node   "),
-            (_UNKNOWN, " unknown"),
+            (UNKNOWN_MARK, " unknown"),
         ):
             legend.append(glyph, style=colour)
             legend.append(word, style="muted")
@@ -1406,10 +1406,10 @@ class WalkScreen(Screen):
             the platform must pick its own slot).
         """
         if node == self._topo.self_id:
-            return _SELF
+            return SELF_MARK
         contact = self._contacts.get(node)
         if contact is None:
-            return _UNKNOWN
+            return UNKNOWN_MARK
         return _NODE_GLYPHS.get(contact.node_type, _DEFAULT_GLYPH)
 
     def _label(self, node: str) -> str:
@@ -1435,7 +1435,6 @@ async def open_walk(ctx: AppContext) -> None:
     """
     from ..services.topology import build_topology
     from .surface import TuiUi
-    from .timemachine_screen import _routing_prefix_bytes
 
     if not isinstance(ctx.ui, TuiUi):  # pragma: no cover - guarded by the menu-only caller
         raise RuntimeError("the mesh walk is only available in the menu")
@@ -1452,7 +1451,7 @@ async def open_walk(ctx: AppContext) -> None:
             self_hash = str(info.get("public_key") or "") or None
     except Exception:  # noqa: BLE001 - names are a nicety; the graph renders without them
         contacts = []
-    prefix_bytes = await _routing_prefix_bytes(ctx)
+    prefix_bytes = await ctx.devstate.routing_prefix_bytes()
 
     topo = build_topology(
         self_id=self_hash or "local",

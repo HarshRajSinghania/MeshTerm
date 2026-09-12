@@ -34,7 +34,7 @@ from .contactlist import SORT_COLUMNS, SORT_OPENS_ASCENDING, ContactListScreen, 
 from .menus import icon_lane, marked_label, run_steps, section_heading
 from .tui import CANCEL, DM_BYTE_LIMIT, Choice, SelectScreen, Separator
 from .watchtower_screen import contact_watch_key
-from .widgets import ContactsSort, _age_seconds, _contact_pkts, format_ago
+from .widgets import ContactsSort, _age_seconds, contact_packets, format_ago
 
 if TYPE_CHECKING:
     from ..context import AppContext
@@ -377,7 +377,7 @@ class CourierRecipientScreen(ContactListScreen):
                 key=c.public_key or c.key_prefix or "",
                 node_type=c.node_type,
                 last_seen=c.last_seen,
-                count=_contact_pkts(c, counts),
+                count=contact_packets(c, counts),
             )
             for c in contacts
         ]
@@ -400,8 +400,6 @@ async def _queue_flow(ctx: AppContext, contacts: list[Contact]) -> None:
     message was being written to), and from there out to the outbox. Nothing typed is lost
     to a single keypress — see :func:`~meshterm.ui.menus.run_steps`.
     """
-    from .timemachine_screen import _routing_prefix_bytes
-
     session = ctx.ui.session
     # A courier message is a direct message, so only companions can receive one — a
     # repeater, room, or sensor is never a recipient (the app-wide DM rule, see
@@ -421,7 +419,7 @@ async def _queue_flow(ctx: AppContext, contacts: list[Contact]) -> None:
     # The shared contact-list presentation (see CourierRecipientScreen), opened A→Z by
     # name — the default of a re-sortable list, with heard/packets/key a Ctrl+arrow away.
     counts = {n.node: n.count for n in ctx.repo.heard_nodes() if n.node}
-    prefix_bytes = await _routing_prefix_bytes(ctx)
+    prefix_bytes = await ctx.devstate.routing_prefix_bytes()
     picker = CourierRecipientScreen(
         contacts=companions,
         prefix_bytes=prefix_bytes,

@@ -28,7 +28,8 @@ DELIVERED = "delivered"
 GAVE_UP = "gave-up"
 
 #: How many finished (delivered / given-up) entries are kept for the screen's history —
-#: the code's default behind the ``courier_history_kept`` preference.
+#: *the* default behind the ``courier_history_kept`` preference, which the registry names
+#: rather than re-types (:data:`meshterm.core.preferences.PREFERENCES`).
 DONE_CAP = 100
 
 

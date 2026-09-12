@@ -18,6 +18,7 @@ from rich.console import Console
 
 from meshterm.context import AppContext
 from meshterm.core.admin_store import AdminStore
+from meshterm.core.channel_probe import ChannelSlot, read_channel_slots
 from meshterm.core.channels import (
     CHANNEL_SECRET_BYTES,
     CHANNEL_SLOT_EMPTY_RUN,
@@ -37,13 +38,7 @@ from meshterm.core.device_store import DeviceStore
 from meshterm.persistence.repository import Repository
 from meshterm.services.chat_service import ChatService
 from meshterm.tools.channels import ChannelsTool
-from meshterm.ui.channels import (
-    _CREATE,
-    ChannelSlot,
-    _apply_order,
-    _next_free_slot,
-    read_channel_slots,
-)
+from meshterm.ui.channels import _CREATE, _apply_order, _next_free_slot
 from meshterm.ui.qr import QrScreen, fit_qr, qr_text
 
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
@@ -1076,8 +1071,8 @@ async def test_a_probe_cut_short_by_a_failed_read_is_not_a_layout() -> None:
     They look identical in the returned list — a short one either way — which is what let
     one timed-out read stand in for "this device has no channels".
     """
+    from meshterm.core.channel_probe import probe_channel_slots
     from meshterm.core.connection import DeviceCommandError
-    from meshterm.ui.channels import probe_channel_slots
 
     dropped = _FlakyDevice(["Alpha", "Beta"], fail_from=1, error=DeviceCommandError("no reply"))
     slots, complete = await probe_channel_slots(dropped)

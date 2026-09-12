@@ -33,7 +33,9 @@ TILE_PX = 256
 #: :mod:`meshterm.ui.map_screen` for it dragged the whole map stack (and, through the
 #: basemap's tile fetcher, ``urllib.request`` → ``http.client`` → ``ssl``) into every run,
 #: including runs that never open a map. This module is pure arithmetic and already on the
-#: boot path, so the constant is free here.
+#: boot path, so the constant is free here. It is also what the ``map_view_fraction``
+#: preference defaults to — the registry names this constant rather than re-typing the
+#: number, so the code default and the preference default are one value.
 DEFAULT_VIEW_FRACTION = 0.5
 
 
@@ -87,7 +89,9 @@ def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     dphi = math.radians(lat2 - lat1)
     dlambda = math.radians(lon2 - lon1)
     a = math.sin(dphi / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dlambda / 2) ** 2
-    return 2 * EARTH_RADIUS_KM * math.asin(math.sqrt(a))
+    # Clamped because rounding can push ``a`` a hair past 1 for near-antipodal points, and
+    # ``asin`` of that raises a domain error rather than returning half the planet.
+    return 2 * EARTH_RADIUS_KM * math.asin(min(1.0, math.sqrt(a)))
 
 
 def _central_points(

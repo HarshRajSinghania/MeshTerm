@@ -16,14 +16,13 @@ screen is open.
 from __future__ import annotations
 
 import asyncio
-import re
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 from rich.console import Group, RenderableType
 from rich.text import Text
 
-from ..core.channels import split_channel_sender
+from ..core.channels import MENTION, split_channel_sender
 from ..core.connection import ContactNotOnDeviceError
 from ..core.events import EventKind, MeshEvent
 from ..core.models import ChatMessage, Contact, Conversation, Message, utcnow
@@ -31,7 +30,7 @@ from .theme import name_style, snr_style
 from .tui.prompt import (
     CHANNEL_BYTE_LIMIT,
     DM_BYTE_LIMIT,
-    _LineEditor,
+    LineEditor,
     byte_counter,
 )
 from .tui.render import render_hanging, render_lines, right_aligned_tail
@@ -43,12 +42,6 @@ if TYPE_CHECKING:
     from ..context import AppContext
 
 
-#: Matches an ``@[Name]`` mention token, as the reply flow primes into the compose line (see
-#: :meth:`ChatScreen._begin_reply`). The transcript renders each as a bare ``@Name`` colored
-#: in that sender's hue instead of showing the literal brackets. Name is 1–20 non-``]`` chars.
-_MENTION = re.compile(r"@\[([^\]]{1,20})\]")
-
-
 #: Delivery-state marks for a *resolved* outbound direct message, shown at the end of its
 #: line: acknowledged, or transmitted-but-unacknowledged (retryable via ^R). The app-wide
 #: ``✓``/``✗`` status marks in their ok/err styles — not the ✅/❌ emoji, which belong to
@@ -56,12 +49,6 @@ _MENTION = re.compile(r"@\[([^\]]{1,20})\]")
 #: spinner instead (see :meth:`ChatScreen._delivery_glyph`).
 _DELIVERED = ("✓", "ok")
 _FAILED = ("✗", "err")
-
-#: The sender-prefix parser, shared app-wide from the protocol layer (the transcript,
-#: the conversation picker, the dashboard feed, and the message-paths matcher must all
-#: split ``Name: body`` identically). Kept under its old private name for the callers
-#: that import it from here.
-_split_channel_sender = split_channel_sender
 
 
 class ChatScreen(Screen):
@@ -183,7 +170,7 @@ class ChatScreen(Screen):
         self._paths = paths
         self._names = names
         self._session = session
-        self._editor = _LineEditor()
+        self._editor = LineEditor()
         self._sending = False
         # Cycled while a direct message is in flight, so its trailing glyph spins (rather than
         # a static hourglass) until the ack resolves. Shared across messages: only one send or
@@ -201,6 +188,18 @@ class ChatScreen(Screen):
         # something outside the transcript (a keystroke, the 1s idle tick, a spinner
         # frame) only re-renders the rows that actually changed. See _render_grouped.
         self._render_cache: dict | None = None
+        # Strong references to the sends, resends and spinner tickers started off a key
+        # handler. The event loop only holds a *weak* one, so a task nothing else names can
+        # be collected mid-flight — a half-transmitted message, or a spinner that stops
+        # turning. Each task discards itself from the set when it finishes.
+        self._tasks: set[asyncio.Task] = set()
+
+    def _spawn(self, coro) -> asyncio.Task:  # noqa: ANN001 - any coroutine this screen owns
+        """Start ``coro`` on the loop and hold a reference to it until it finishes."""
+        task = asyncio.ensure_future(coro)
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+        return task
 
     @property
     def footer_hint(self) -> str:
@@ -446,7 +445,7 @@ class ChatScreen(Screen):
         if message.outbound:
             return "you", message.text
         if message.is_channel:
-            name, body = _split_channel_sender(message.text)
+            name, body = split_channel_sender(message.text)
             return (name or "·"), body
         return (self._name(message.peer) or message.peer or "?"), message.text
 
@@ -515,7 +514,7 @@ class ChatScreen(Screen):
         base = "cursor" if selected else None
         text = Text()
         pos = 0
-        for match in _MENTION.finditer(body):
+        for match in MENTION.finditer(body):
             if match.start() > pos:
                 text.append(body[pos : match.start()], style=base)
             name = match.group(1)
@@ -723,7 +722,7 @@ class ChatScreen(Screen):
                 self._status = ""
             self._session.invalidate()
 
-        asyncio.ensure_future(run())
+        self._spawn(run())
 
     def _move_selection(self, delta: int) -> None:
         """Move the reply selection by ``delta`` messages (negative = toward older).
@@ -797,7 +796,7 @@ class ChatScreen(Screen):
         sender, _ = self._sender_and_body(message)
         named = not message.outbound and sender != "·"
         mention = f"@[{sender}] " if named else "@"
-        self._editor = _LineEditor(mention + self._editor.text)
+        self._editor = LineEditor(mention + self._editor.text)
         self._clear_selection()
         self._stick = True
         self._session.invalidate()
@@ -817,13 +816,13 @@ class ChatScreen(Screen):
             self._status = f"Too long by {over} byte{'s' if over != 1 else ''} — trim to send."
             self._session.invalidate()
             return
-        self._editor = _LineEditor()
+        self._editor = LineEditor()
         self._sending = True
         self._stick = True
         if self._is_channel:
             self._status = "sending…"
             self._session.invalidate()
-            asyncio.ensure_future(self._send_channel(text))
+            self._spawn(self._send_channel(text))
         else:
             # Direct chats show an optimistic bubble whose trailing mark tracks delivery:
             # a spinner now, then ✓/✗ once the ack resolves (or times out). acked=None
@@ -832,7 +831,7 @@ class ChatScreen(Screen):
             self._messages.append(pending)
             self._status = ""
             self._session.invalidate()
-            asyncio.ensure_future(self._send_direct(pending))
+            self._spawn(self._send_direct(pending))
 
     async def _send_channel(self, text: str) -> None:
         """Broadcast a channel message and append it once the companion accepts it."""
@@ -866,7 +865,7 @@ class ChatScreen(Screen):
                 self._spinner.tick()
                 self._session.invalidate()
 
-        ticker = asyncio.ensure_future(animate())
+        ticker = self._spawn(animate())
         try:
             return await coro
         finally:
@@ -926,7 +925,7 @@ class ChatScreen(Screen):
         self._status = "retrying…"
         self._stick = True
         self._session.invalidate()
-        asyncio.ensure_future(self._resend_message(target))
+        self._spawn(self._resend_message(target))
 
     async def _resend_message(self, message: ChatMessage) -> None:
         """Drive a retry to completion, refreshing the message's delivery state in place."""
@@ -1182,7 +1181,6 @@ async def _make_paths_presenter(
         distinct_paths,
     )
     from .message_paths_screen import MessagePathsScreen
-    from .timemachine_screen import _routing_prefix_bytes
 
     session = ctx.ui.session
     contacts = await ctx.devstate.contacts()
@@ -1190,7 +1188,7 @@ async def _make_paths_presenter(
     resolve = trace_runner.make_node_resolver(contacts, stored_names)
     type_of = trace_runner.make_node_type_resolver(contacts)
     key_of = trace_runner.make_name_key_resolver(contacts, stored_names)
-    prefix_bytes = await _routing_prefix_bytes(ctx)
+    prefix_bytes = await ctx.devstate.routing_prefix_bytes()
     self_name: str | None = None
     self_key: str | None = None
     try:
@@ -1274,7 +1272,7 @@ async def _make_paths_presenter(
             if not conversation.is_channel:
                 destination = conversation.label
         elif conversation.is_channel:
-            source, _body = _split_channel_sender(message.text)
+            source, _body = split_channel_sender(message.text)
         else:
             source = conversation.label
         await session.run_screen(

@@ -58,8 +58,8 @@ author — a fork that keeps soliciting through it, without pointing it at
 itself, isn't affiliated with MeshTerm.
 
 Built on **MeshCore** *https://meshcore.io/* — its firmware and companion
-library — with Rich, prompt_toolkit, Typer, bleak, pyserial, pycryptodome
-and Segno, each under its own terms.
+library — with Rich, prompt_toolkit, Typer, bleak, pyserial, pycryptodome,
+markdown-it-py, PyYAML, tomli/tomli-w and Segno, each under its own terms.
 
 Map data **© OpenStreetMap contributors**, served as vector tiles by
 **OpenFreeMap** *https://openfreemap.org/*, used under the

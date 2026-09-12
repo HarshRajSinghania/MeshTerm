@@ -76,7 +76,7 @@ from .menus import (
     section_heading,
 )
 from .tui import Choice, SelectScreen, Separator
-from .tui.select import _splice_hint
+from .tui.select import splice_hint
 
 if TYPE_CHECKING:
     from ..context import AppContext
@@ -543,7 +543,7 @@ class _ConfigMenu(SelectScreen):
         if not self._conceals:
             return base
         verb = "hide" if self._revealed else "show"
-        return _splice_hint(base, f"{REVEAL_KEY} {verb} PIN")
+        return splice_hint(base, f"{REVEAL_KEY} {verb} PIN")
 
     @property
     def fkey_lane(self):

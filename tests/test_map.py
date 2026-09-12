@@ -29,9 +29,9 @@ from meshterm.core.models import (
     utcnow,
 )
 from meshterm.core.mvt import GEOM_LINE, GEOM_POLYGON, Layer, decode_tile
+from meshterm.services.basemap import TILE_RETRY_SECONDS as _TILE_RETRY
 from meshterm.tools.map import MapTool
 from meshterm.ui.map_screen import _PAN_DIRS, _PAN_STEP
-from meshterm.ui.map_screen import _TILE_RETRY_SECONDS as _TILE_RETRY
 from meshterm.ui.mapcanvas import MapCanvas, parse_hex
 from tests.conftest import plain as _plain  # THE strip-and-join screen reader
 
@@ -620,9 +620,10 @@ def _glyph_color(lines: list[str], glyph: str) -> tuple[int, int, int]:
 
 def test_render_map_brightens_piled_markers() -> None:
     """A cell many nodes share renders its glyph brighter than a lone node's."""
-    from meshterm.ui.map_render import _NODE, MapMarker, render_map
+    from meshterm.ui.map_render import MapMarker, render_map
+    from meshterm.ui.marks import NODE_MARK
 
-    base = parse_hex(_NODE[1])
+    base = parse_hex(NODE_MARK[1])
     vp = Viewport(45.50, -73.57, 14, 60, 40)
 
     lone = render_map(vp, {}, [MapMarker("solo", 45.50, -73.57)])
@@ -1196,7 +1197,7 @@ async def test_gather_markers_drops_out_of_range_fix(ctx) -> None:
     lon -1042``); projecting it flings the view off the world, leaving the map an all-black
     off-world frame. It is treated as no fix at all, the same guard the 0/0 null island gets.
     """
-    from meshterm.tools.map import gather_markers
+    from meshterm.services.markers import gather_markers
 
     run_id = ctx.repo.start_run("monitor", {})
     ctx.repo.record_observation(
@@ -1244,7 +1245,7 @@ async def test_map_tool_reports_nothing_to_plot(ctx, monkeypatch) -> None:
     async def _no_contacts(_ctx):
         return []
 
-    monkeypatch.setattr("meshterm.tools.map._contacts", _no_contacts)
+    monkeypatch.setattr("meshterm.services.markers._contacts", _no_contacts)
     result = await MapTool().run(ctx, {"static": True, "basemap": False})
     assert result.summary == {"located": 0}
 
@@ -1257,7 +1258,7 @@ async def test_gather_markers_drops_null_island_fixes(ctx, monkeypatch) -> None:
     fix at all, exactly as our own node's marker already is.
     """
     from meshterm.core.models import Contact
-    from meshterm.tools.map import gather_markers
+    from meshterm.services.markers import gather_markers
 
     async def _contacts(_ctx):
         return [
@@ -1265,7 +1266,7 @@ async def test_gather_markers_drops_null_island_fixes(ctx, monkeypatch) -> None:
             Contact(name="NoFix", public_key="bb" * 32, lat=0.0, lon=0.0),
         ]
 
-    monkeypatch.setattr("meshterm.tools.map._contacts", _contacts)
+    monkeypatch.setattr("meshterm.services.markers._contacts", _contacts)
     labels = [m.label for m in await gather_markers(ctx)]
     assert "Real" in labels
     assert "NoFix" not in labels  # the null-island node is dropped
@@ -1845,7 +1846,8 @@ def test_render_map_labels_take_the_name_hue_ours_white() -> None:
     Our own label is white while the ★ glyph stays yellow, and a keyless label lands
     on the muted grey.
     """
-    from meshterm.ui.map_render import _SELF, MapMarker, render_map
+    from meshterm.ui.map_render import MapMarker, render_map
+    from meshterm.ui.marks import SELF_MARK
     from meshterm.ui.widgets import name_rgb
 
     vp = Viewport.fit([(45.5, -73.6), (45.4, -73.5)], 120, 80, max_zoom=14)
@@ -1855,7 +1857,7 @@ def test_render_map_labels_take_the_name_hue_ours_white() -> None:
         MapMarker("BARE", 45.45, -73.55),
     ]
     lines = render_map(vp, {}, markers)
-    assert _glyph_color(lines, "★") == parse_hex(_SELF[1])  # the glyph keeps its yellow
+    assert _glyph_color(lines, "★") == parse_hex(SELF_MARK[1])  # the glyph keeps its yellow
     assert _glyph_color(lines, "US") == (255, 255, 255)  # ...the label goes you-white
     assert _glyph_color(lines, "KEYED") == name_rgb("KEYED", "d4" * 32)
     assert _glyph_color(lines, "BARE") == (148, 163, 184)  # no key, the muted grey

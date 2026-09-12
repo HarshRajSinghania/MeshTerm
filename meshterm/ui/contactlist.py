@@ -29,7 +29,7 @@ from datetime import datetime
 from rich.cells import cell_len
 from rich.text import Text
 
-from .map_render import _SELF
+from .marks import SELF_MARK
 from .menus import fit_cells
 from .theme import name_style
 from .tui.select import Choice, SelectScreen, Separator
@@ -301,7 +301,7 @@ def _you_lane(
     ourselves, so none of those has a value to show and each says so identically.
     """
     text = Text(no_wrap=True, overflow="ellipsis")
-    text.append(_SELF[0], style=_SELF[1])
+    text.append(SELF_MARK[0], style=SELF_MARK[1])
     text.append(" ")
     # The name lane, exactly name_w cells: the name (white) with a snug muted "(you)" tag —
     # padded out to fill the lane — or, when the name alone would crowd out the tag, the

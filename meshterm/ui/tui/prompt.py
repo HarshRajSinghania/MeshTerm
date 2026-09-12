@@ -79,7 +79,7 @@ def _center(content: Text, width: int) -> Text:
     return line
 
 
-class _LineEditor:
+class LineEditor:
     """A minimal single-line text editor (insert, delete, and cursor movement).
 
     Shared by :class:`TextScreen` and :class:`AutocompleteScreen`. Tracks the text and the
@@ -287,7 +287,7 @@ class TextScreen(_KeylessDialog):
         self.title = title
         self.footer_hint = footer_hint
         self._prompt = prompt
-        self._editor = _LineEditor(default)
+        self._editor = LineEditor(default)
         self._validate = validate
         self._help = help_text
         self._password = password
@@ -397,7 +397,7 @@ class PinDialog(_KeylessDialog):
         self._device = device_name
         self._error = error
         self._help = help_text
-        self._editor = _LineEditor("", max_length=self.PIN_LENGTH)
+        self._editor = LineEditor("", max_length=self.PIN_LENGTH)
 
     def render_body(self, width: int) -> list[str]:
         """Render the prompt, the six-slot PIN field, any hint, and a rejected-PIN error."""
@@ -718,7 +718,7 @@ class TypedConfirmDialog(_KeylessDialog):
         self.title = title
         self._warning = warning
         self._word = word
-        self._editor = _LineEditor("")
+        self._editor = LineEditor("")
         self._error = ""
 
     @property
@@ -873,7 +873,7 @@ class AutocompleteScreen(_KeylessDialog):
         self.title = title
         self.footer_hint = footer_hint
         self._prompt = prompt
-        self._editor = _LineEditor(default)
+        self._editor = LineEditor(default)
         self._choices = choices
         self._validate = validate
         self._error = ""
@@ -928,7 +928,7 @@ class AutocompleteScreen(_KeylessDialog):
             self._sugg = min(len(suggestions) - 1, self._sugg + 1) if suggestions else 0
         elif action == "tab":
             if suggestions:
-                self._editor = _LineEditor(suggestions[self._sugg])
+                self._editor = LineEditor(suggestions[self._sugg])
                 self._error = ""
         elif action == "enter":
             value = self._editor.text

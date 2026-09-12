@@ -143,7 +143,7 @@ def _plain(label: str | Text) -> str:
     return label.plain if isinstance(label, Text) else label
 
 
-def _splice_hint(base: str, segment: str) -> str:
+def splice_hint(base: str, segment: str) -> str:
     """Insert ``segment`` into a footer hint just before its trailing ``Esc`` clause.
 
     Keeps the hint grammar's "Esc last" rule when a per-row hint (e.g. ``Del remove`` on a
@@ -182,7 +182,7 @@ def _insert_atom(base: str, atom: str, index: int = 1) -> str:
 
     Surfaces a conditional *navigation* atom (the ←→ per-row scroll) right after the
     leading move atom, keeping the hint's navigation-then-actions-then-``Esc`` shape — where
-    :func:`_splice_hint` instead places an *action* atom just before the trailing ``Esc``.
+    :func:`splice_hint` instead places an *action* atom just before the trailing ``Esc``.
     """
     parts = base.split(" · ")
     parts.insert(min(index, len(parts)), atom)
@@ -587,7 +587,7 @@ class SelectScreen(Screen):
         advertises a key that would do nothing:
 
         * the :attr:`_delete_hint` atom, spliced just before the trailing ``Esc`` clause
-          (see :func:`_splice_hint`) while the highlighted row is :attr:`Choice.deletable`;
+          (see :func:`splice_hint`) while the highlighted row is :attr:`Choice.deletable`;
         * whatever ``key_hint`` names for the highlighted row's value — the shortcut keys
           (``keys``) that would act on *it*, spliced the same way;
         * the :attr:`_hscroll_hint` atom (``hscroll`` lists only), inserted right after the
@@ -600,11 +600,11 @@ class SelectScreen(Screen):
         base = self._footer_base
         current = self._current_choice()
         if self._delete_hint and current is not None and current.deletable:
-            base = _splice_hint(base, self._delete_hint)
+            base = splice_hint(base, self._delete_hint)
         if self._key_hint is not None:
             atoms = self._key_hint(current.value if current is not None else None)
             if atoms:
-                base = _splice_hint(base, atoms)
+                base = splice_hint(base, atoms)
         if self._hscroll and self._hscroll_hint and self._selected_overflows():
             base = _insert_atom(base, self._hscroll_hint)
         if self._filter:
@@ -646,7 +646,7 @@ class SelectScreen(Screen):
         lands on a deletable row.
         """
         if self._delete_hint:
-            return _splice_hint(self._footer_base, self._delete_hint)
+            return splice_hint(self._footer_base, self._delete_hint)
         return self._footer_base
 
     # --- rendering -----------------------------------------------------------
@@ -665,7 +665,7 @@ class SelectScreen(Screen):
         whole header, and the header only abbreviates once the *terminal* caps the box.
         """
         footer = (
-            _splice_hint(self._footer_base, self._delete_hint)
+            splice_hint(self._footer_base, self._delete_hint)
             if self._delete_hint
             else self._footer_base
         )

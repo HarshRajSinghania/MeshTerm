@@ -205,7 +205,7 @@ class EventHub:
         Returns:
             The matching :class:`MeshEvent`, or ``None`` if ``timeout`` elapsed first.
         """
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         future: asyncio.Future = loop.create_future()
 
         def handler(event: MeshEvent) -> None:

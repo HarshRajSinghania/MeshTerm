@@ -187,9 +187,11 @@ class _FakeMeshCore:
 @pytest.fixture()
 def quick_budget(monkeypatch):  # noqa: ANN001
     """Shrink the route-sized reply budget so a no-reply test is not a ten-second wait."""
-    import meshterm.services.trace_runner as trace_runner
+    # Patched where the device *reads* it: the budget arithmetic lives in ``core.tracing``
+    # and ``core.connection`` binds the name at import, so that binding is the one in play.
+    import meshterm.core.connection as connection
 
-    monkeypatch.setattr(trace_runner, "trace_timeout", lambda hops: 0.05)
+    monkeypatch.setattr(connection, "trace_timeout", lambda hops: 0.05)
 
 
 def _device(mc) -> MeshCoreDevice:  # noqa: ANN001
@@ -353,22 +355,22 @@ def test_the_reply_budget_is_sized_to_the_route_the_login_has_to_walk() -> None:
     The login goes out along the contact's route and the answer comes back over it, so the
     wire carries twice the stored one-way hops — the same shape ``run_trace`` budgets for.
     """
-    import meshterm.services.trace_runner as trace_runner
+    import meshterm.core.connection as connection
 
     asked: list[int] = []
-    real = trace_runner.trace_timeout
+    real = connection.trace_timeout
 
     def spy(hops):  # noqa: ANN001
         asked.append(hops)
         return 0.01
 
-    trace_runner.trace_timeout = spy
+    connection.trace_timeout = spy
     try:
         two_hops = Contact(name="Hub-Far", public_key="a1b2c3d4" * 8, route_hops=("3d", "f2"))
         asyncio.run(_device(_FakeMeshCore()).admin_login(two_hops, "hunter2"))
         asyncio.run(_device(_FakeMeshCore()).admin_login(_NODE, "hunter2"))
     finally:
-        trace_runner.trace_timeout = real
+        connection.trace_timeout = real
 
     # Each login asks twice: for its own walk, and for the routeless floor (hops ``0``)
     # it may never be given less than.
@@ -384,10 +386,11 @@ def test_a_known_short_route_never_buys_less_patience_than_no_route_at_all() -> 
     narrower window than the routeless contact beside it that floods — so the flood budget
     is the floor, and the route only ever widens it.
     """
-    import meshterm.services.trace_runner as trace_runner
+    import meshterm.core.connection as connection
+    import meshterm.core.tracing as tracing
 
     budgets: list[float] = []
-    real = trace_runner.trace_timeout
+    real = connection.trace_timeout
 
     def spy(hops):  # noqa: ANN001
         # The real shape, scaled down so the no-reply this provokes is not a real wait.
@@ -395,16 +398,16 @@ def test_a_known_short_route_never_buys_less_patience_than_no_route_at_all() -> 
         budgets.append(budget)
         return budget
 
-    trace_runner.trace_timeout = spy
+    connection.trace_timeout = spy
     try:
         near = Contact(name="Hub-Near", public_key="a1b2c3d4" * 8, route_hops=("3d",))
         asyncio.run(_device(_FakeMeshCore()).admin_login(near, "hunter2"))
     finally:
-        trace_runner.trace_timeout = real
+        connection.trace_timeout = real
 
     walked, floor = budgets
     assert walked < floor  # the literal trace sizing really is the narrower of the two
-    assert real(2) < real(0) == trace_runner.TRACE_TIMEOUT_FLOOD_S  # and so at full scale
+    assert real(2) < real(0) == tracing.TRACE_TIMEOUT_FLOOD_S  # and so at full scale
 
 
 # --- the simulator speaks the same three answers --------------------------------------

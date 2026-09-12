@@ -30,7 +30,7 @@ from rich.console import Group
 from rich.text import Text
 
 from ..core.remote_config import known_commands
-from .tui.prompt import _LineEditor
+from .tui.prompt import LineEditor
 from .tui.render import render_lines
 from .tui.screen import Screen
 from .tui.spinner import Spinner
@@ -83,7 +83,7 @@ class RemoteCliScreen(Screen):
         self._node_label = node_label
         self._send = send
         self._session = session
-        self._editor = _LineEditor()
+        self._editor = LineEditor()
         self._log: list[Text] = []
         self._history = list(history)
         self._recall: int | None = None  # index into history while ↑/↓ browse it
@@ -142,7 +142,7 @@ class RemoteCliScreen(Screen):
         if action == "enter":
             command = self._editor.text.strip()
             if command and not self.busy:
-                self._editor = _LineEditor()
+                self._editor = LineEditor()
                 self._send(command)
         elif action == "up":
             self._recall_step(-1)
@@ -151,7 +151,7 @@ class RemoteCliScreen(Screen):
         elif action == "tab":
             completion = self._completion()
             if completion is not None:
-                self._editor = _LineEditor(completion)
+                self._editor = LineEditor(completion)
         elif action == "pageup":
             self.scroll_pages(-1)
         elif action in ("pagedown",):
@@ -175,10 +175,10 @@ class RemoteCliScreen(Screen):
             self._recall += direction
         if self._recall >= len(self._history):
             self._recall = None
-            self._editor = _LineEditor(self._draft)
+            self._editor = LineEditor(self._draft)
             return
         self._recall = max(0, self._recall)
-        self._editor = _LineEditor(self._history[self._recall])
+        self._editor = LineEditor(self._history[self._recall])
 
     def _completion(self) -> str | None:
         """The first known command extending the current text, or ``None``."""

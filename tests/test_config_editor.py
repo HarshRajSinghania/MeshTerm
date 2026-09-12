@@ -566,6 +566,11 @@ async def test_location_picker_keeps_the_crosshair_when_the_basemap_lands(
     assert coros, "no background raster was scheduled"
 
     await coros[-1]  # the raster finishes — long after the crosshair was taken back
+    # Every other coroutine the paint scheduled (the tile ``_load``) is collected, never
+    # awaited, so close them here: an un-awaited coroutine warns at collection time, and a
+    # RuntimeWarning from a passing test is noise the next real one hides behind.
+    for pending in coros[:-1]:
+        pending.close()
     assert screen._frame is not None
     assert "⌖" in _plain(screen._frame), "the basemap landed over the crosshair"
     # And the finished frame is what the next paint serves, crosshair intact.
@@ -601,7 +606,7 @@ async def test_markers_without_waiting_never_ask_the_radio(
     ctx: AppContext, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The picker's markers come from what is in hand; the radio is never asked for them."""
-    from meshterm.tools.map import gather_markers
+    from meshterm.services.markers import gather_markers
 
     device = await ctx.device()
 

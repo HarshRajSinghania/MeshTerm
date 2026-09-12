@@ -96,6 +96,24 @@ version is written**. `[project] version` in `pyproject.toml` is `dynamic` and h
 reads the attribute, so the number in a built wheel cannot drift from the number in the
 source. Do not add a second one.
 
+### Then re-point the README's download commands
+
+`installers.yml` names each asset `meshterm-${version}-<label><ext>`, so **the file a reader
+downloads is named after the release** — and the README tells them what to type at it. Those
+lines are prose, not code, so nothing rewrites them for you:
+
+```
+grep -n '<the previous version>' README.md
+```
+
+Every hit is a download or run command (`.\meshterm-X.Y.Z-windows-x64.exe`,
+`chmod +x meshterm-X.Y.Z-*`, the `xattr` quarantine note, the `MESHTERM_HOME` trial runs).
+Replace the old number with the one just bumped to, and re-read each line: they must name
+the file the workflow is about to publish, or the first thing a new user does fails.
+
+Also check `docs/cli.md` for a sample document carrying a `"version"` field, which is the
+live `{version}` placeholder and must show the new number too.
+
 ## 5. Commit, tag, push
 
 ```

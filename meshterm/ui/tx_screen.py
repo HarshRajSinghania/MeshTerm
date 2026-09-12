@@ -45,7 +45,7 @@ from ..services.topology import build_topology, render_custom_spec
 from .menus import icon_lane, icon_mark
 from .pathline import SELF_GLYPH, PathHop, PathLine, cut_to, path_line
 from .theme import name_style, snr_style
-from .trace_screen import TracingDialog, _collapse_trace_width, snr_bar
+from .trace_screen import TracingDialog, collapse_trace_width, snr_bar
 from .tui.render import render_lines, render_to_ansi
 from .tui.screen import Screen
 from .tui.spinner import Spinner, spinner_interval
@@ -630,7 +630,7 @@ async def open_tx_optimize(
     device_hash = str(self_info.get("public_key") or "") or None
 
     try:
-        width_bytes = _collapse_trace_width(int(await ctx.devstate.path_hash_mode()))
+        width_bytes = collapse_trace_width(int(await ctx.devstate.path_hash_mode()))
     except Exception:  # noqa: BLE001 - optional read; the 1-byte default always works
         width_bytes = 1
 

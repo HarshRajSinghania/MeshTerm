@@ -71,7 +71,7 @@ from ..services.topology import (
     HopSuggestion,
     Link,
     MeshTopology,
-    _is_hex,
+    is_path_hash,
     render_custom_spec,
     render_forced_spec,
 )
@@ -79,7 +79,7 @@ from .pathline import PathLine, cut_to, path_line
 from .theme import snr_style
 from .tui.render import query_line, render_lines, render_to_ansi
 from .tui.screen import ListWindow, Screen
-from .widgets import NodeResolver, _age_seconds, _format_age, _identity, path_text
+from .widgets import NodeResolver, _age_seconds, _format_age, identity_label, path_text
 
 #: Sentinel spec meaning "no forced path — let the device route" (the trace screen's
 #: empty-spec convention). Only meaningful in target mode; a path walk has no target
@@ -177,7 +177,7 @@ class PathComposerScreen(Screen):
         hops: list[str] | None = None,
         cursor: int | None = None,
         fetch_nodes: frozenset[str] = frozenset(),
-        resolve: NodeResolver = _identity,
+        resolve: NodeResolver = identity_label,
     ) -> None:
         """Build the composer.
 
@@ -385,7 +385,7 @@ class PathComposerScreen(Screen):
     def _custom_hex(self) -> str | None:
         """The typed entry as an addable hex hop, or ``None`` when it isn't one."""
         needle = self._entry.strip().lower().removeprefix("0x")
-        return needle if _is_hex(needle) else None
+        return needle if is_path_hash(needle) else None
 
     def _rows(self) -> list[tuple[str, object]]:
         """The cursor-addressable rows: custom hop, suggestions, fetch, then actions."""

@@ -8,9 +8,24 @@ from __future__ import annotations
 
 import statistics
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from enum import Enum
+
+#: Maps a hop's raw key-prefix hash to a display label (a contact name when known, or the
+#: hash itself when not). ``None`` passes through, being our own device. THE alias for the
+#: name side of a hop, shared by everything that builds one
+#: (:func:`~meshterm.services.trace_runner.make_node_resolver`) and everything that takes
+#: one (every screen that draws a route).
+NodeResolver = Callable[[str | None], str | None]
+
+#: Maps a display name back to the node's key — as full as we hold one: a public key, a key
+#: prefix, or a stored node id — or ``None`` for a name no known node carries. The colour
+#: side of :data:`NodeResolver`: where that turns hex into names, this turns a bare name back
+#: into the key its palette hue derives from
+#: (:func:`~meshterm.services.trace_runner.make_name_key_resolver`).
+NameKeyResolver = Callable[[str], str | None]
 
 #: Label used for our own (local) device when framing a trace path's endpoints.
 LOCAL_DEVICE_LABEL = "us"
@@ -175,6 +190,39 @@ class Contact:
     def is_repeater(self) -> bool:
         """Whether this contact advertises as a repeater (fixed infrastructure)."""
         return self.node_type == NODE_TYPE_REPEATER
+
+
+@dataclass(slots=True)
+class MapMarker:
+    """One mesh node to overlay on the map.
+
+    Data, not drawing: a located node with the little the map needs to place and label it.
+    It lives here rather than beside the renderer because it is assembled well below the UI
+    — :func:`~meshterm.services.markers.gather_markers` builds the list from contacts and
+    observations, and three separate surfaces draw it.
+
+    Attributes:
+        label: Node name shown beside the marker.
+        lat: Latitude in decimal degrees.
+        lon: Longitude in decimal degrees.
+        is_repeater: Whether the node is a repeater (prioritised marker).
+        is_self: Whether this is our own node (highlighted).
+        detail: Extra text for the CLI legend (e.g. ``"18 pkts · +6.0 dB"``).
+        key: The node's key hex (as full as the caller holds), seeding the label's
+            key-derived hue; ``None`` leaves the label the muted no-key grey.
+    """
+
+    label: str
+    lat: float
+    lon: float
+    is_repeater: bool = False
+    is_self: bool = False
+    detail: str = ""
+    key: str | None = None
+
+    def _rank(self) -> int:
+        """Draw order: self on top of repeaters on top of leaf nodes."""
+        return 2 if self.is_self else (1 if self.is_repeater else 0)
 
 
 @dataclass(slots=True)

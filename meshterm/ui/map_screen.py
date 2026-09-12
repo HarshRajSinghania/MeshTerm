@@ -40,7 +40,7 @@ from ..core.geo import DEFAULT_VIEW_FRACTION, EARTH_RADIUS_KM, Viewport, clamp_l
 from ..core.mvt import Layer
 from ..platforms import get_platform
 from ..services import modifier_watch
-from ..services.basemap import BasemapSource
+from ..services.basemap import TILE_RETRY_SECONDS, BasemapSource
 from .map_render import Ghost, MapMarker, render_ground, render_map
 from .tui.render import query_line
 from .tui.screen import Screen
@@ -116,12 +116,6 @@ _PREFETCH_SETTLE = 1.0
 #: bound rather than a target: the plan usually runs dry first, and this stops a view at a
 #: tile-grid corner from walking the whole neighbourhood.
 _PREFETCH_MAX = 12
-
-#: How long a tile the source gave no answer about is left alone before it is asked for
-#: again. Long enough that a genuinely offline map isn't retrying every visible tile on a
-#: loop, short enough that a Wi-Fi blip costs a few seconds of missing streets rather than
-#: the rest of the session (see :meth:`MapScreen._load`).
-_TILE_RETRY_SECONDS = 20.0
 
 #: The zoom a frame homes in at when the matches set no extent of their own — a
 #: single node (or several at one spot) has nothing to frame, so ^Enter zooms to this
@@ -668,7 +662,8 @@ class MapScreen(Screen):
         map that opened a moment too early stays empty for the rest of the session. The
         fetch resolves the source itself, in its own thread, so asking is what un-sticks it.
 
-        A tile the source never answered about waits out :data:`_TILE_RETRY_SECONDS` in
+        A tile the source never answered about waits out
+        :data:`~meshterm.services.basemap.TILE_RETRY_SECONDS` in
         :attr:`_unanswered` and is then asked for again — see :meth:`_load` for why that
         isn't the same as a tile it answered "nothing here" about.
         """
@@ -912,7 +907,7 @@ class MapScreen(Screen):
         if layers is not None or self._source.answered_empty(*t):
             self._tiles[t] = layers
         else:
-            self._unanswered[t] = monotonic() + _TILE_RETRY_SECONDS
+            self._unanswered[t] = monotonic() + TILE_RETRY_SECONDS
         self._session.invalidate()
 
     # --- input ---------------------------------------------------------------
@@ -1262,7 +1257,7 @@ async def pick_location(
     """
     import asyncio
 
-    from ..tools.map import gather_markers
+    from ..services.markers import gather_markers
     from .surface import TuiUi
     from .tui.screen import CANCEL
 

@@ -85,11 +85,12 @@ from rich.cells import cell_len
 from rich.text import Text
 
 from ..core.connection import ContactNotOnDeviceError
-from ..core.geo import EARTH_RADIUS_KM, usable_fix
+from ..core.geo import haversine_km, usable_fix
 from ..core.models import NODE_TYPE_LABELS, Contact, utcnow
 from ..platforms import Platform, on_platform
 from . import menus
 from .mapcanvas import RGB
+from .marks import SELF_MARK
 from .minimap import MiniMap
 from .pathgraph import (
     DST_NODE,
@@ -129,9 +130,6 @@ from .widgets import (
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from ..context import AppContext
-
-#: Our own node's marker glyph and hue, matching the map/mesh-walk star.
-_SELF_GLYPH = ("★", "#facc15")
 
 #: Whether the route fan is captioned ("node → you, as heard  ·  white = selected route")
 #: and allowed to keep the empty canvas row its top air leaves. Both go on the PicoCalc
@@ -1032,15 +1030,6 @@ class NodeDetailScreen(Screen):
 _COMPASS = ("N", "NE", "E", "SE", "S", "SW", "W", "NW")
 
 
-def _distance_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    """Great-circle distance between two coordinates, in kilometres (haversine)."""
-    p1, p2 = math.radians(lat1), math.radians(lat2)
-    dp = math.radians(lat2 - lat1)
-    dl = math.radians(lon2 - lon1)
-    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
-    return 2 * EARTH_RADIUS_KM * math.asin(min(1.0, math.sqrt(a)))
-
-
 def _bearing(lat1: float, lon1: float, lat2: float, lon2: float) -> str:
     """The 8-point compass direction from ``(lat1, lon1)`` toward ``(lat2, lon2)``."""
     p1, p2 = math.radians(lat1), math.radians(lat2)
@@ -1055,7 +1044,7 @@ def _range_text(lat: float, lon: float, self_lat: float | None, self_lon: float 
     """A location value: the coordinates, plus range + bearing from us when we're placed."""
     text = Text(f"{lat:.4f}, {lon:.4f}", style="")
     if self_lat is not None and self_lon is not None:
-        km = _distance_km(self_lat, self_lon, lat, lon)
+        km = haversine_km(self_lat, self_lon, lat, lon)
         dist = f"{km * 1000:.0f} m" if km < 1 else f"{km:.1f} km"
         text.append(f"  ·  {dist} {_bearing(self_lat, self_lon, lat, lon)}", style="muted")
     return text
@@ -1121,18 +1110,18 @@ async def open_node_detail(
     Raises:
         RuntimeError: If called outside the interactive menu (no full-screen session).
     """
-    from ..services.topology import _is_hex, build_topology
+    from ..services.markers import gather_markers
+    from ..services.topology import build_topology, is_path_hash
     from ..services.trace_runner import (
         make_name_key_resolver,
         make_node_resolver,
         make_node_type_resolver,
     )
-    from ..tools.map import gather_markers
     from .config_editor import show_contact_card
     from .map_screen import basemap_source, open_map
     from .surface import TuiUi
     from .timemachine_screen import open_timemachine_node, open_timemachine_self
-    from .trace_screen import _collapse_trace_width, open_trace
+    from .trace_screen import collapse_trace_width, open_trace
     from .widgets import route_graph_style
 
     if not isinstance(ctx.ui, TuiUi):  # pragma: no cover - guarded by the menu-only caller
@@ -1160,7 +1149,7 @@ async def open_node_detail(
     try:
         mode = int(await ctx.devstate.path_hash_mode())
         prefix_bytes = (mode + 1) if 0 <= mode <= 3 else 0
-        width_bytes = _collapse_trace_width(mode)
+        width_bytes = collapse_trace_width(mode)
     except Exception:  # noqa: BLE001 - optional reads; sane defaults keep the page working
         prefix_bytes, width_bytes = 0, 1
 
@@ -1200,7 +1189,7 @@ async def open_node_detail(
 
     # -- identity header.
     if you:
-        glyph, glyph_style = _SELF_GLYPH
+        glyph, glyph_style = SELF_MARK
         name_hue = "you"
     else:
         glyph, glyph_style = _NODE_GLYPHS.get(node_type, _DEFAULT_GLYPH)
@@ -1216,7 +1205,7 @@ async def open_node_detail(
 
     # -- the observed topology: the suggested best path and the routes to draw.
     target_hash = key.lower().removeprefix("0x")
-    target_hash = target_hash if (not you and _is_hex(target_hash)) else None
+    target_hash = target_hash if (not you and is_path_hash(target_hash)) else None
     topo = build_topology(
         self_id=(self_key.lower().removeprefix("0x")[:12]) or "local",
         contacts=contacts,
@@ -1325,7 +1314,7 @@ async def open_node_detail(
     # synced from the device) has nothing scannable to offer, so the row only shows when
     # the whole key is known.
     full_key = key.lower().removeprefix("0x")
-    if len(full_key) == 64 and _is_hex(full_key):
+    if len(full_key) == 64 and is_path_hash(full_key):
         info_actions.append(_Action("share", "📱", "", "Share contact — QR / link"))
     # -- contact management, the page's last group and the only actions that end the visit.
     # Withheld entirely when the caller opened the page to look rather than to act (see

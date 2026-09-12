@@ -17,6 +17,7 @@ import typer
 from rich.console import Console
 from typer.core import TyperGroup
 
+from . import __version__
 from .context import AppContext
 from .core import exitcodes, win32dll
 from .core.admin_store import AdminStore
@@ -126,6 +127,21 @@ app = typer.Typer(
     epilog=EXIT_STATUS_EPILOG,
 )
 
+
+def _print_version(value: bool) -> None:
+    """Print the version and stop, the moment ``--version`` is seen.
+
+    Eager, so it answers before the callback opens a database, resolves a platform or looks
+    for a radio — the one question that is true of the program rather than of a run. Bare
+    ``meshterm <version>``: the caller asked for a version, and a script reading it back has
+    one field to take. Exits ``0``, because knowing the version is a success.
+    """
+    if not value:
+        return
+    script.console().print(f"meshterm {__version__}", highlight=False)
+    raise typer.Exit(exitcodes.OK)
+
+
 # The context built by the callback and consumed by subcommands within one process.
 _state: AppContext | None = None
 
@@ -137,6 +153,13 @@ _platform_resolution: Resolution | None = None
 @app.callback(invoke_without_command=True)
 def main_callback(
     ctx: typer.Context,
+    version: bool = typer.Option(
+        False,
+        "--version",
+        help="Print the version and exit",
+        callback=_print_version,
+        is_eager=True,
+    ),
     profile: str | None = typer.Option(None, "--profile", "-p", help="Device profile"),
     port: str | None = typer.Option(None, "--port", help="Serial port override"),
     ble: str | None = typer.Option(
@@ -167,6 +190,7 @@ def main_callback(
 
     Args:
         ctx: The Click/Typer context.
+        version: Print the version and exit (handled eagerly by :func:`_print_version`).
         profile: Named device profile to use.
         port: Explicit serial port, overriding the profile.
         ble: Explicit Bluetooth address, selecting the BLE transport.

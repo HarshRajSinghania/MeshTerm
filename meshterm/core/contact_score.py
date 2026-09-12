@@ -529,7 +529,7 @@ def rank_contacts(
 
     gathered: list[ContactSignals] = []
     for contact in contacts:
-        node = _node_id(contact)
+        node = node_id(contact)
         found = signals.get(node) or ContactSignals(node=node)
         gathered.append(replace(found, distance_km=_self_distance(contact, self_lat, self_lon)))
 
@@ -607,7 +607,7 @@ def sweep_candidates(ranked: Sequence[ScoredContact], keep: int) -> list[ScoredC
     return list(reversed(victims))
 
 
-def _node_id(contact: Contact) -> str:
+def node_id(contact: Contact) -> str:
     """The 12-hex canonical id a contact's history is keyed by (see ``observations.node``)."""
     ident = contact.public_key or contact.key_prefix or ""
     return ident.lower().removeprefix("0x")[:12]

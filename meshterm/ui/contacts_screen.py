@@ -44,7 +44,7 @@ from .menus import icon_lane, marked_label
 from .purge_screen import purge_contacts
 from .tui import Choice, Separator
 from .tui.screen import CANCEL
-from .widgets import ContactsSort, _contact_pkts
+from .widgets import ContactsSort, contact_packets
 
 if TYPE_CHECKING:
     from ..context import AppContext
@@ -111,7 +111,7 @@ class ContactsScreen(ContactListScreen):
                     key=c.public_key,
                     node_type=c.node_type,
                     last_seen=c.last_seen,
-                    count=_contact_pkts(c, counts),
+                    count=contact_packets(c, counts),
                 )
             )
         # The maintenance actions close the list, past every contact whatever the sort: a

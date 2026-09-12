@@ -35,6 +35,13 @@ from urllib.parse import parse_qs, quote, urlsplit
 #: be followed by ``": "`` — conservative enough to leave ``http://…`` and ``note:x`` alone.
 SENDER_PREFIX = re.compile(r"^([^\s:][^:]{0,19}):[ \t]+(.*)$", re.DOTALL)
 
+#: Matches an ``@[Name]`` mention token, as the reply flow primes into the compose line. A
+#: transcript renders each as a bare ``@Name`` coloured in that sender's hue instead of
+#: showing the literal brackets, and the CLI's history face lifts the same names out — so the
+#: token lives here with the rest of the message-body parsing rather than in either renderer.
+#: Name is 1–20 non-``]`` characters.
+MENTION = re.compile(r"@\[([^\]]{1,20})\]")
+
 
 def split_channel_sender(text: str) -> tuple[str | None, str]:
     """Split a channel message into ``(sender_name, body)`` when it carries a name prefix.
@@ -74,7 +81,7 @@ MAX_CHANNELS = 8
 CHANNEL_SLOT_PROBE_CAP = 64
 
 #: A run of this many consecutive *empty* slots ends a *configured-channel* scan (see
-#: :func:`meshterm.ui.channels.read_channel_slots`) on firmware that never rejects an
+#: :func:`meshterm.core.channel_probe.read_channel_slots`) on firmware that never rejects an
 #: out-of-range index — some builds answer every index with an empty payload instead of
 #: raising, so the scan would otherwise walk all :data:`CHANNEL_SLOT_PROBE_CAP` slots on
 #: every read. The channel manager packs channels from slot 0 up within the stock

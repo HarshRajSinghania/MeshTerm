@@ -280,7 +280,7 @@ CATEGORIES: tuple[Category, ...] = (
 CATEGORY_BY_ID: dict[str, Category] = {c.id: c for c in CATEGORIES}
 
 
-def _local_xy(origin: tuple[float, float], point: tuple[float, float]) -> tuple[float, float]:
+def local_xy(origin: tuple[float, float], point: tuple[float, float]) -> tuple[float, float]:
     """Project a lat/lon onto a local plane around ``origin``, in km.
 
     An equirectangular approximation — exact enough for mesh-sized areas (a few tens
@@ -353,7 +353,7 @@ def compute_walk_stats(
     if self_pos is not None:
         placed = [p for p in points[:-1] if p is not None]  # circuit closes itself
         if len(placed) >= 3:
-            xy = [_local_xy(self_pos, p) for p in placed]
+            xy = [local_xy(self_pos, p) for p in placed]
             twice = sum(
                 xy[i][0] * xy[(i + 1) % len(xy)][1] - xy[(i + 1) % len(xy)][0] * xy[i][1]
                 for i in range(len(xy))

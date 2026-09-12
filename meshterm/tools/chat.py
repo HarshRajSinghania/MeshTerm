@@ -27,9 +27,11 @@ from ..core import exitcodes
 from ..core.channels import (
     CHANNEL_SLOT_PROBE_CAP,
     DEFAULT_PUBLIC_SECRET,
+    MENTION,
     channel_hash,
     channel_identity,
     is_public_channel,
+    split_channel_sender,
 )
 from ..core.connection import Device
 from ..core.events import EventKind, MeshEvent
@@ -43,7 +45,6 @@ from ..core.models import (
 )
 from ..services.trace_runner import NameKeyResolver, make_name_key_resolver
 from ..ui import renderers
-from ..ui.chat import _MENTION, _split_channel_sender
 from ..ui.fields import ChannelRef, NodeRef
 from ..ui.menus import Lane, column_header, fit_cells, section_heading
 from ..ui.theme import name_style
@@ -52,7 +53,7 @@ from ..ui.widgets import _NODE_GLYPHS, _age_seconds, _format_age, channel_glyph
 from .base import Tool, ToolResult, register
 
 if TYPE_CHECKING:
-    from ..ui.channels import ChannelSlot
+    from ..core.channel_probe import ChannelSlot
     from ..ui.report import Facts, Listing
 
 #: How many recent messages ``chat history`` prints by default.
@@ -498,7 +499,7 @@ def _channels_from_slots(slots: list[ChannelSlot]) -> list[Conversation]:
     The picker reads its channels through the session cache
     (:meth:`~meshterm.services.device_state.DeviceState.channel_slots`) so it reuses the one
     slow slot probe instead of re-walking every slot on each Chat open; this maps that cached
-    :class:`~meshterm.ui.channels.ChannelSlot` list onto the picker's
+    :class:`~meshterm.core.channel_probe.ChannelSlot` list onto the picker's
     :class:`~meshterm.core.models.Conversation` rows. Channel 0 (the default public channel) is
     synthesised when the firmware reports no slot for it, so there is always somewhere to chat —
     the same guarantee :func:`_read_channels` (the CLI path) makes.
@@ -879,7 +880,7 @@ def _preview_text(last: ChatMessage, key_of: NameKeyResolver) -> Text:
         text.append("you: ", style="accent")
         _append_body(text, body_raw, key_of)
     elif last.is_channel:
-        name, body = _split_channel_sender(body_raw)
+        name, body = split_channel_sender(body_raw)
         if name is not None:
             text.append(name, style=name_style(name, key_of(name)))
             text.append(": ", style="muted")
@@ -898,7 +899,7 @@ def _append_body(text: Text, body: str, key_of: NameKeyResolver) -> None:
     name resolves to no node we know.
     """
     pos = 0
-    for match in _MENTION.finditer(body):
+    for match in MENTION.finditer(body):
         if match.start() > pos:
             text.append(body[pos : match.start()], style="muted")
         name = match.group(1)

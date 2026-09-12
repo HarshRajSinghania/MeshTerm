@@ -1058,9 +1058,9 @@ def test_text_screen_byte_limit_gauges_and_blocks_an_oversize_entry() -> None:
 
 def test_line_editor_word_motion() -> None:
     """Ctrl+Left/Right hop by word — to the current word's start, else the previous/next."""
-    from meshterm.ui.tui.prompt import _LineEditor
+    from meshterm.ui.tui.prompt import LineEditor
 
-    editor = _LineEditor("the quick  brown fox")  # cursor at the end (len 20)
+    editor = LineEditor("the quick  brown fox")  # cursor at the end (len 20)
     editor.edit("ctrl_left")
     assert editor.cursor == 17  # start of "fox"
     editor.edit("ctrl_left")
@@ -1086,33 +1086,33 @@ def test_text_screen_password_masks() -> None:
 
 def test_line_editor_caps_length_and_truncates_paste() -> None:
     """A max_length editor swallows keys past the cap and truncates an over-long paste."""
-    from meshterm.ui.tui.prompt import _LineEditor
+    from meshterm.ui.tui.prompt import LineEditor
 
-    editor = _LineEditor("", max_length=6)
+    editor = LineEditor("", max_length=6)
     for ch in "123456":
         assert editor.edit("text", ch) is True
     assert editor.edit("text", "9") is False  # at capacity — key swallowed, buffer unchanged
     assert editor.text == "123456"
 
-    pasted = _LineEditor("", max_length=6)
+    pasted = LineEditor("", max_length=6)
     pasted.edit("text", "12345678")  # one over-long insert
     assert pasted.text == "123456"  # filled only the six available slots
 
 
 def test_line_editor_paste_folds_controls_and_respects_max_length() -> None:
     """A ``paste`` action folds newlines/controls to spaces and inserts the run at the cursor."""
-    from meshterm.ui.tui.prompt import _LineEditor
+    from meshterm.ui.tui.prompt import LineEditor
 
-    editor = _LineEditor("ab")
+    editor = LineEditor("ab")
     editor.cursor = 1
     assert editor.edit("paste", "X\nY") is True
     assert editor.text == "aX Yb"  # the newline became a space, inserted mid-buffer
 
-    capped = _LineEditor("", max_length=3)
+    capped = LineEditor("", max_length=3)
     capped.edit("paste", "hello")
     assert capped.text == "hel"  # a paste is trimmed to the remaining room, like a big insert
 
-    assert _LineEditor("z").edit("paste", "") is False  # nothing to paste leaves the buffer
+    assert LineEditor("z").edit("paste", "") is False  # nothing to paste leaves the buffer
 
 
 def test_pin_dialog_shows_six_slots_with_dots_for_blanks() -> None:
@@ -3304,11 +3304,11 @@ def test_the_splash_hint_stays_inside_the_box_it_is_drawn_in() -> None:
     from meshterm.core.discovery import serial_device
     from meshterm.platforms import PICOCALC, REGULAR
     from meshterm.ui.device_picker import _shortcut_hint
-    from meshterm.ui.tui.select import _splice_hint
+    from meshterm.ui.tui.select import splice_hint
 
     base = "↑↓ move · Enter select · Esc bye"  # the splash's own send-off
     radio = serial_device("COM7", name="A Radio")
-    common = _splice_hint(base, _shortcut_hint(0)(radio))
+    common = splice_hint(base, _shortcut_hint(0)(radio))
     for platform in (REGULAR, PICOCALC):
         budget = platform.readable_cols - platform.dialog_margin - 2
         assert cell_len(common) <= budget, (platform.name, common)

@@ -51,6 +51,7 @@ With no command, MeshTerm launches the interactive menu instead.
 
 | Option | What it does |
 | --- | --- |
+| `--version` | Print `meshterm <version>` and exit `0`, before anything else is opened. |
 | `-p`, `--profile NAME` | Use a named device profile from `config.toml`. |
 | `--port PORT` | Serial port to connect to (`COM5`, `/dev/ttyACM0`), overriding the profile. |
 | `--ble ADDRESS` | Bluetooth address of a companion; selects the BLE transport. |
@@ -70,8 +71,8 @@ for. A bare `--` stops the lifting, the standard way to say the rest is data, an
 `--help` is never lifted: `meshterm contacts --help` stays the *contacts* help.
 
 Commands that need a radio open one, do their work, and close it. Commands that only read
-stored history (`records`) or MeshTerm's own state (`preferences`, the written pages) need
-no device at all and work with nothing attached.
+stored history (`records`) or MeshTerm's own state (`preferences`, `platform`, `specimen`,
+the written pages) need no device at all and work with nothing attached.
 
 > **One transmission per invocation.** A trace transmits exactly once — repeaters
 > penalise, and can blacklist, nodes that burst traffic. To sample more, run the command
@@ -984,7 +985,7 @@ The live transcript is a menu screen; from the command line, pick a subcommand.
 | `send TEXT --channel N` | Broadcast on a channel slot. |
 | `history [--to NAME \| --channel N] [--limit N]` | Print a conversation's stored transcript. Default limit 50. |
 | `list` | Every channel and contact with its unread count and last message. |
-| `listen [-s SECONDS] [--debug]` | Tail inbound messages live. |
+| `listen [-s SECONDS] [--debug]` | Tail inbound messages live. `-s 0` (the default) runs until Ctrl-C. |
 
 Exactly one of `--to` and `--channel` is required on `send` and `history`.
 
@@ -1201,7 +1202,7 @@ Walk the path to a target once and report what came back.
 | Option | What it does |
 | --- | --- |
 | `-t`, `--target NAME` | **Required.** Target node name or key prefix. |
-| `-p`, `--path SPEC` | Force a route: comma-separated contact names and/or hex hashes, mixed freely (`3d,f2,3d`). Omit it and the device routes. |
+| `--path SPEC` | Force a route: comma-separated contact names and/or hex hashes, mixed freely (`3d,f2,3d`). Omit it and the device routes. |
 
 `--target` is required, so `meshterm trace --path …` alone is a usage error — the
 target-free form is [`trace-path`](#meshterm-trace-path).
@@ -1238,7 +1239,7 @@ whichever way you choose. It only has to end within earshot of this node.
 
 | Option | What it does |
 | --- | --- |
-| `-p`, `--path SPEC` | **Required.** The whole walk, comma-separated. |
+| `--path SPEC` | **Required.** The whole walk, comma-separated. |
 
 ```console
 $ meshterm trace-path --path "a1,d4,a1"
@@ -1288,7 +1289,7 @@ gets through reliably.
 
 | Option | What it does |
 | --- | --- |
-| `-p`, `--path SPEC` | **Required.** Forced path ending at the target (`Repeater,Target`, or `3d,f2`). The hop before the target is the node being tuned. |
+| `--path SPEC` | **Required.** Forced path ending at the target (`Repeater,Target`, or `3d,f2`). The hop before the target is the node being tuned. |
 | `-n`, `--samples N` | Traces per TX level. Default 3. |
 | `--step N` | Coarse sweep step. Default 3. |
 | `--min N` / `--max N` | Bound the sweep (else the `tx_opt_min` / `tx_opt_max` preferences). |
@@ -1388,7 +1389,8 @@ CLI grammar, and a document that pretended to would be inventing structure. `rep
 #### `meshterm preferences`
 
 How MeshTerm behaves, as opposed to how the radio is configured. Reads nothing from the
-companion, transmits nothing, and works with no device attached.
+companion, transmits nothing, and works with no device attached. With no subcommand it
+runs `show`.
 
 | Subcommand | What it does |
 | --- | --- |
@@ -1455,7 +1457,7 @@ each link; the scripted face prints the link alone.
 **`--json`:**
 
 ```json
-{"page":"discord","title":"Join Discord","version":"0.2.8","text":"Join the Discord\n  Questions, ideas, bug reports, and mesh talk.\n\n  • https://discord.gg/AZwe5Uvb3S","links":["https://discord.gg/AZwe5Uvb3S"]}
+{"page":"discord","title":"Join Discord","version":"0.3.2","text":"Join the Discord\n  Questions, ideas, bug reports, and mesh talk.\n\n  • https://discord.gg/AZwe5Uvb3S","links":["https://discord.gg/AZwe5Uvb3S"]}
 ```
 
 | Field | Type | Meaning |

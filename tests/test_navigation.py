@@ -169,6 +169,10 @@ async def test_the_trace_target_picker_is_a_popup_gone_before_the_live_screen(
         async def contacts(self):
             return list(contacts)
 
+        async def routing_prefix_bytes(self):
+            # What the real DeviceState answers with no radio: nothing to highlight.
+            return 0
+
     class _Ctx:
         repo = _Repo()
         devstate = _Devstate()

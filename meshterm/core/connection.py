@@ -41,6 +41,7 @@ from .models import (
     advert_time,
     utcnow,
 )
+from .tracing import path_hash_flags, trace_timeout
 
 if TYPE_CHECKING:
     from .discovery import DiscoveredDevice
@@ -704,7 +705,7 @@ class Device(ABC):
             timeout: Seconds to wait for the trace reply. ``None`` (the default) sizes the
                 wait to the route: a trace has to travel the whole path out and back, so a
                 long walk is given proportionally longer to come home
-                (:func:`~meshterm.services.trace_runner.trace_timeout`).
+                (:func:`~meshterm.core.tracing.trace_timeout`).
 
         Returns:
             A :class:`TraceResult`; ``success`` is ``False`` on timeout.
@@ -1924,8 +1925,6 @@ class MeshCoreDevice(Device):
     async def admin_login(self, node: Contact, password: str) -> LoginResult:  # noqa: D102
         from meshcore import EventType
 
-        from ..services.trace_runner import trace_timeout
-
         mc = self._require()
         pub = self._node_pubkey(node)
         loop = asyncio.get_running_loop()
@@ -2159,11 +2158,9 @@ class MeshCoreDevice(Device):
         transmit_gate.mark()
         from meshcore import EventType  # local import keeps mock path dependency-free
 
-        from ..services.trace_runner import path_hash_flags, trace_timeout
-
         mc = self._require()
         tag = random.randint(0, 0xFFFFFFFF)
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         started = loop.time()
 
         # A trace packet has no destination field — it walks an explicit path of
@@ -2286,8 +2283,6 @@ class MeshCoreDevice(Device):
             ``(path_bytes, flags)`` to walk, or ``None`` only when the contact is
             unknown or carries no public key to address.
         """
-        from ..services.trace_runner import path_hash_flags
-
         payload = await self._contacts_payload(mc)
         needle = target.casefold()
         for name, info in payload.items():

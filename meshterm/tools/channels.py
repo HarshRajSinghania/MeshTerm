@@ -84,7 +84,7 @@ class ChannelsTool(Tool):
 
     async def _cli_list(self, ctx: AppContext) -> ToolResult:
         """List the configured channel slots."""
-        from ..ui.channels import read_channel_slots
+        from ..core.channel_probe import read_channel_slots
 
         device = await ctx.device()
         slots = await read_channel_slots(device)
@@ -150,7 +150,7 @@ class ChannelsTool(Tool):
         the secret and the share URL leave the app at all — every other channel document
         carries the identity and stops there.
         """
-        from ..ui.channels import read_channel_slots
+        from ..core.channel_probe import read_channel_slots
 
         device = await ctx.device()
         idx = int(params["index"])
@@ -175,7 +175,8 @@ class ChannelsTool(Tool):
         command (a private channel's key is lost with the slot unless it's saved
         elsewhere), mirroring the interactive flow's danger confirmation.
         """
-        from ..ui.channels import read_channel_slots, write_channel
+        from ..core.channel_probe import read_channel_slots
+        from ..ui.channels import write_channel
 
         device = await ctx.device()
         idx = int(params["index"])

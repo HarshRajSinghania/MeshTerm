@@ -185,7 +185,6 @@ class TraceTool(Tool):
             ContactListScreen,
         )
         from ..ui.surface import TuiUi
-        from ..ui.timemachine_screen import _routing_prefix_bytes
         from ..ui.widgets import ContactsSort
 
         # Through the session cache: this picker runs on every Trace open, and the contacts
@@ -199,7 +198,7 @@ class TraceTool(Tool):
         picker = ContactListScreen(
             "Trace target — pick a target",
             rows=self._picker_rows(ctx, contacts),
-            prefix_bytes=await _routing_prefix_bytes(ctx),
+            prefix_bytes=await ctx.devstate.routing_prefix_bytes(),
             sort=ContactsSort.from_name("traced", TRACE_SORT_COLUMNS, TRACE_SORT_OPENS_ASCENDING),
             footer_hint="↑↓ move · ^←→↑↓ sort · type to filter · Enter select · Esc back",
             lanes=TRACE_LANES,
@@ -226,7 +225,7 @@ class TraceTool(Tool):
             given (the screen sorts them).
         """
         from ..ui.contactlist import ContactRow
-        from ..ui.widgets import _contact_pkts
+        from ..ui.widgets import contact_packets
 
         traced = _last_traced_by_name(contacts, ctx.repo.target_last_traced())
         counts = {n.node: n.count for n in ctx.repo.heard_nodes() if n.node}
@@ -237,7 +236,7 @@ class TraceTool(Tool):
                 key=c.public_key or c.key_prefix or "",
                 node_type=c.node_type,
                 last_seen=c.last_seen,
-                count=_contact_pkts(c, counts),
+                count=contact_packets(c, counts),
                 last_traced=traced.get(c.name),
             )
             for c in contacts
@@ -279,7 +278,9 @@ class TraceTool(Tool):
             path: str | None = typer.Option(
                 None,
                 "--path",
-                "-p",
+                # No ``-p`` short form: ``-p`` is the global ``--profile``, and
+                # ``_globals_first`` lifts a group option ahead of the subcommand wherever it
+                # is typed — so a leaf ``-p`` could never reach this option, only shadow it.
                 help="Force a route: comma-separated contact names/hex prefixes (e.g. 3d,f2,3d)",
             ),
         ) -> None:
@@ -361,7 +362,9 @@ class TracePathTool(Tool):
             path: str = typer.Option(
                 ...,
                 "--path",
-                "-p",
+                # No ``-p`` short form: ``-p`` is the global ``--profile``, and
+                # ``_globals_first`` lifts a group option ahead of the subcommand wherever it
+                # is typed — so a leaf ``-p`` could never reach this option, only shadow it.
                 help="The whole walk: comma-separated contact names/hex prefixes "
                 "(must end within earshot of this node)",
             ),

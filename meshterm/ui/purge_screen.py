@@ -192,9 +192,9 @@ async def _rank(ctx: AppContext, contacts: list[Contact]) -> list[ScoredContact]
     Returns:
         The full ranking, strongest first.
     """
-    from ..core.contact_score import _node_id
+    from ..core.contact_score import node_id
 
-    nodes = [_node_id(c) for c in contacts]
+    nodes = [node_id(c) for c in contacts]
     signals = ctx.repo.contact_signals(nodes)
 
     # Channel attribution is by display name — a channel frame carries no sender key — so a

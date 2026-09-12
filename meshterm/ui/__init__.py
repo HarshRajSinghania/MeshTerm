@@ -1,1 +1,1 @@
-"""Presentation layer: Rich theme/widgets and the Questionary-driven menu."""
+"""Presentation layer: Rich theme/widgets and the prompt_toolkit full-screen session."""

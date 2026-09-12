@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING
 
 from ..core.geo import Viewport, clamp_lat
 from ..core.mvt import Layer
+from ..services.basemap import TILE_RETRY_SECONDS
 from .map_render import MapMarker, render_map
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -32,11 +33,6 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 #: magnified to fill it. Matches the big map's overzoom so a close preview still has a
 #: (blurred) basemap rather than blank tiles.
 _OVERZOOM = 2
-
-#: How long a tile the source gave no answer about is left alone before the preview asks
-#: for it again — the big map's cooldown, for the same reason (see
-#: :meth:`meshterm.ui.map_screen.MapScreen._load`).
-_TILE_RETRY_SECONDS = 20.0
 
 
 def _loop_running() -> bool:
@@ -168,5 +164,5 @@ class MiniMap:
         if layers is not None or self._source.answered_empty(*t):
             self._tiles[t] = layers  # an answer, settled for the session
         else:
-            self._unanswered[t] = monotonic() + _TILE_RETRY_SECONDS  # silence — ask again
+            self._unanswered[t] = monotonic() + TILE_RETRY_SECONDS  # silence — ask again
         self._session.invalidate()

@@ -437,7 +437,8 @@ def _channels_manager(cols: int, rows: int) -> Screen:
     mark folds to a different glyph on the console), a channel with no messages at all, and
     a three-digit unread badge.
     """
-    from meshterm.ui.channels import _MANAGER_HINT, ChannelSlot, _LiveStats, _menu_items
+    from meshterm.core.channel_probe import ChannelSlot
+    from meshterm.ui.channels import _MANAGER_HINT, _LiveStats, _menu_items
 
     slots = [
         ChannelSlot(idx=0, name="Public", secret=DEFAULT_PUBLIC_SECRET),
@@ -452,7 +453,8 @@ def _channels_manager(cols: int, rows: int) -> Screen:
 
 def _channel_detail(cols: int, rows: int) -> Screen:
     """One channel's action page, its vital-signs line above the rows."""
-    from meshterm.ui.channels import ChannelSlot, _detail_items, _detail_summary, _LiveStats
+    from meshterm.core.channel_probe import ChannelSlot
+    from meshterm.ui.channels import _detail_items, _detail_summary, _LiveStats
 
     slot = ChannelSlot(idx=2, name="Lakeside emergency", secret=bytes(range(16)))
     ctx = _ChannelsCtx(muted=set())

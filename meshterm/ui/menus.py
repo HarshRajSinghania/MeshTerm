@@ -638,14 +638,24 @@ def fit_cells(text: str, width: int, *, align: str = "left") -> str:
 
 
 __all__ = [
+    "SEP_COMPACT",
+    "SEP_ROOMY",
     "Lane",
+    "WizardPage",
+    "align_icons",
     "changes_phrase",
     "column_header",
+    "command_label",
     "confirm_discard",
     "exit_rows",
     "fit_cells",
+    "icon_lane",
+    "icon_mark",
     "lane_header",
     "lane_row",
+    "marked_label",
     "menu_rows",
+    "run_steps",
+    "run_wizard",
     "section_heading",
 ]

@@ -1129,14 +1129,14 @@ def test_chat_screen_up_picks_and_ctrl_end_returns_to_compose() -> None:
 
 def test_split_channel_sender_extracts_name_prefix() -> None:
     """A ``Name: message`` channel line splits into sender and cleaned body."""
-    from meshterm.ui.chat import _split_channel_sender
+    from meshterm.core.channels import split_channel_sender
 
-    assert _split_channel_sender("Alice: hey there") == ("Alice", "hey there")
-    assert _split_channel_sender("Yagi Repeater: online") == ("Yagi Repeater", "online")
+    assert split_channel_sender("Alice: hey there") == ("Alice", "hey there")
+    assert split_channel_sender("Yagi Repeater: online") == ("Yagi Repeater", "online")
     # No plausible prefix: left untouched.
-    assert _split_channel_sender("just a message") == (None, "just a message")
-    assert _split_channel_sender("https://example.com") == (None, "https://example.com")
-    assert _split_channel_sender("14:30 standup") == (None, "14:30 standup")
+    assert split_channel_sender("just a message") == (None, "just a message")
+    assert split_channel_sender("https://example.com") == (None, "https://example.com")
+    assert split_channel_sender("14:30 standup") == (None, "14:30 standup")
 
 
 def test_channel_transcript_groups_by_sender() -> None:

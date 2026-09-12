@@ -62,7 +62,7 @@ from .menus import (
 )
 from .trace_screen import TracingDialog
 from .tui import Choice, Separator
-from .tui.select import SelectScreen, _splice_hint
+from .tui.select import SelectScreen, splice_hint
 from .tui.spinner import Spinner, spinner_interval
 
 if TYPE_CHECKING:
@@ -145,7 +145,7 @@ class AdminMenu(SelectScreen):
     def footer_hint(self) -> str:  # type: ignore[override]
         """The list's own hint, plus the read atom while a readable setting is highlighted."""
         base = super().footer_hint
-        return _splice_hint(base, READ_ONE_HINT) if self._readable_key() else base
+        return splice_hint(base, READ_ONE_HINT) if self._readable_key() else base
 
     @property
     def fkey_lane(self):

@@ -17,13 +17,14 @@ from rich.console import Console
 
 from meshterm.context import AppContext
 from meshterm.core.admin_store import AdminStore
+from meshterm.core.channel_probe import read_channel_slots
 from meshterm.core.channel_store import ChannelStore, reconcile
 from meshterm.core.channels import DEFAULT_PUBLIC_SECRET, channel_identity, derive_secret
 from meshterm.core.config import Settings
 from meshterm.core.connection import make_device
 from meshterm.core.device_store import DeviceStore
 from meshterm.persistence.repository import Repository
-from meshterm.ui.channels import read_channel_slots, write_channel
+from meshterm.ui.channels import write_channel
 
 PUB_A = "aa" * 32
 PUB_B = "bb" * 32

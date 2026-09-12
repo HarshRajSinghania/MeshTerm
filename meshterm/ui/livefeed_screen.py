@@ -840,7 +840,6 @@ async def open_livefeed(ctx: AppContext) -> None:
     """
     from ..services import trace_runner
     from .surface import TuiUi
-    from .timemachine_screen import _routing_prefix_bytes
 
     if not isinstance(ctx.ui, TuiUi):  # pragma: no cover - guarded by the menu-only caller
         raise RuntimeError("the live feed is only available in the menu")
@@ -868,7 +867,7 @@ async def open_livefeed(ctx: AppContext) -> None:
     resolve = trace_runner.make_node_resolver(contacts, stored_names)
     type_of = trace_runner.make_node_type_resolver(contacts)
     key_of = trace_runner.make_name_key_resolver(contacts, stored_names)
-    prefix_bytes = await _routing_prefix_bytes(ctx)
+    prefix_bytes = await ctx.devstate.routing_prefix_bytes()
 
     # The cap is the only bound: the newest _FEED_CAP packets ever recorded, however
     # long ago the quiet stretch before them began.

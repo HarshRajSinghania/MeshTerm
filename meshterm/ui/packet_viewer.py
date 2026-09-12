@@ -51,7 +51,7 @@ from rich.text import Text
 from ..core.channels import decrypt_channel_text, identify_channel
 from ..core.models import NODE_TYPE_LABELS, Observation, utcnow
 from ..services.trace_runner import NodeResolver
-from .map_render import _SELF, _UNKNOWN
+from .marks import SELF_MARK, UNKNOWN_MARK
 from .menus import SEP_COMPACT, SEP_ROOMY
 from .pathgraph import PathLayer, render_path_graph, revisited_hops
 from .pathline import PathLine, hops_atom, path_line
@@ -773,12 +773,12 @@ class PacketViewer(Screen):
             The ``(glyph, style)`` pair, ready to append to the row.
         """
         if style == "you":
-            return _SELF
+            return SELF_MARK
         node_type = entry.node_type
         if node_type is None and entry.node and self._type_of is not None:
             node_type = self._type_of(entry.node)
         if node_type is None:
-            return _UNKNOWN
+            return UNKNOWN_MARK
         return _NODE_GLYPHS.get(node_type, _DEFAULT_GLYPH)
 
     def _tail_rows(self, entry: PacketEntry) -> list[tuple[str, RenderableType]]:

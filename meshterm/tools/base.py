@@ -109,7 +109,8 @@ class Tool(ABC):
         """Interactively gather parameters for the menu.
 
         The default implementation requires no parameters. Tools override this to ask
-        the user via ``questionary``.
+        the user through :attr:`AppContext.ui` — a dialog or a select list in the menu, and
+        nothing at all on the CLI, where the arguments came off the command line.
 
         Args:
             ctx: Shared application context.

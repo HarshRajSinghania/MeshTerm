@@ -69,6 +69,14 @@ DEFAULT_TILEJSON_URL = "https://tiles.openfreemap.org/planet"
 #: the tile path is no place to discover either.
 _USER_AGENT = f"MeshTerm/{__version__} (+https://github.com/jpmartineau/MeshTerm; mesh node map)"
 
+#: How long a tile the source gave no answer about is left alone before it is asked for
+#: again. Long enough that a genuinely offline map isn't retrying every visible tile on a
+#: loop, short enough that a Wi-Fi blip costs a few seconds of missing streets rather than
+#: the rest of the session. It lives here, beside the source that failed to answer, because
+#: both surfaces that draw tiles wait out the same cooldown (see
+#: :meth:`meshterm.ui.map_screen.MapScreen._load` and the minimap's).
+TILE_RETRY_SECONDS = 20.0
+
 #: Fallback max tile zoom if the TileJSON doesn't declare one (OpenFreeMap serves 14).
 _DEFAULT_MAX_ZOOM = 14
 

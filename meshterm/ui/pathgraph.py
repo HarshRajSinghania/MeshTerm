@@ -107,6 +107,7 @@ from dataclasses import dataclass
 from itertools import pairwise, permutations, product
 from math import ceil
 
+from ..services.topology import is_path_hash
 from .mapcanvas import MapCanvas
 from .marks import (  # noqa: F401 - canonical home; re-exported for existing importers
     DST_NODE,
@@ -281,9 +282,6 @@ def _collapse(layers: Sequence[PathLayer]) -> list[PathLayer]:
     return drawn
 
 
-_HEX_DIGITS = frozenset("0123456789abcdef")
-
-
 def _coalesce_prefixes(layers: Sequence[PathLayer]) -> list[PathLayer]:
     """Fold an under-specified hop into the longer id it can only be, across the layers.
 
@@ -338,14 +336,14 @@ def _prefix_merge(nodes: set[str]) -> tuple[str, str] | None:
     only name that one node. Shortest ids are offered first, collapsing a chain from its end.
     """
     for short in sorted(nodes, key=len):
-        if len(short) >= 12 or not _is_hex(short):
+        if len(short) >= 12 or not is_path_hash(short):
             continue
         exts = [
             other
             for other in nodes
             if other != short
             and len(other) > len(short)
-            and _is_hex(other)
+            and is_path_hash(other)
             and other.startswith(short)
         ]
         if not exts:
@@ -354,11 +352,6 @@ def _prefix_merge(nodes: set[str]) -> tuple[str, str] | None:
         if all(longest.startswith(ext) for ext in exts):
             return short, longest
     return None
-
-
-def _is_hex(value: str) -> bool:
-    """Whether every character of ``value`` is a hex digit (endpoint sentinels are not)."""
-    return bool(value) and all(char in _HEX_DIGITS for char in value)
 
 
 def revisited_hops(hops: Sequence[str]) -> tuple[str, ...]:

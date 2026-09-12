@@ -37,8 +37,9 @@ DEFAULT_SILENCE_HOURS = 12
 #: The stored value meaning "this rule is off".
 OFF = 0
 
-#: How many alerts the log retains (oldest dropped first) — the code's default behind
-#: the ``watch_alerts_kept`` preference.
+#: How many alerts the log retains (oldest dropped first) — *the* default behind the
+#: ``watch_alerts_kept`` preference, which the registry names rather than re-types
+#: (:data:`meshterm.core.preferences.PREFERENCES`), so the two can never disagree.
 ALERT_CAP = 200
 
 #: Minimum seconds between disk flushes for the packet-driven last-heard updates.

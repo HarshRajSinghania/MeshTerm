@@ -43,7 +43,9 @@ from pathlib import Path
 from typing import Any
 
 from .atomicwrite import write_atomically
-from .watch_store import DEFAULT_SILENCE_HOURS, OFF, SILENCE_CHOICES_H
+from .courier_store import DONE_CAP
+from .geo import DEFAULT_VIEW_FRACTION
+from .watch_store import ALERT_CAP, DEFAULT_SILENCE_HOURS, OFF, SILENCE_CHOICES_H
 
 #: Display groups, in the order the page and the file present them. The order is the
 #: order a session happens in — what MeshTerm puts on the air, how loud, what it watches
@@ -140,12 +142,6 @@ _COLOR_DEPTH_CHOICES: dict[str, str] = {
     "16": "16",
 }
 
-#: Every preference MeshTerm has, in page order. Adding one here gives it a row on the
-#: Preferences page, a key in the YAML file, a ``preferences get``/``set`` CLI face, and a
-#: default — nothing else has to follow.
-#: What the log file keeps. The plain level names, which are what every other tool calls
-#: these — someone being talked through a problem is being told "set it to debug", not
-#: "set it to everything".
 #: What MeshTerm may offer when it lands in a console that cannot draw it. Only ever
 #: consulted on the classic Windows console, the one host with no font fallback of its own.
 _CONSOLE_SETUP_CHOICES: dict[str, str] = {
@@ -153,6 +149,9 @@ _CONSOLE_SETUP_CHOICES: dict[str, str] = {
     "off": "Leave it alone",
 }
 
+#: What the log file keeps. The plain level names, which are what every other tool calls
+#: these — someone being talked through a problem is being told "set it to debug", not
+#: "set it to everything".
 _LOG_LEVEL_CHOICES: dict[str, str] = {
     "ERROR": "Error",
     "WARNING": "Warning",
@@ -161,6 +160,11 @@ _LOG_LEVEL_CHOICES: dict[str, str] = {
 }
 
 
+#: Every preference MeshTerm has, in page order. Adding one here gives it a row on the
+#: Preferences page, a key in the YAML file, a ``preferences get``/``set`` CLI face, and a
+#: default — nothing else has to follow. A default that a module already states as its
+#: code-level behaviour is named, never re-typed: one source, so changing it cannot leave
+#: the constant and the registry disagreeing about what MeshTerm does.
 PREFERENCES: tuple[PrefSpec, ...] = (
     # --- Sending -----------------------------------------------------------------
     PrefSpec(
@@ -245,7 +249,7 @@ PREFERENCES: tuple[PrefSpec, ...] = (
         help="How many past alerts to keep",
         group="Watchtower",
         value_type="int",
-        default=200,
+        default=ALERT_CAP,
         minimum=10,
         maximum=5000,
     ),
@@ -256,7 +260,7 @@ PREFERENCES: tuple[PrefSpec, ...] = (
         help="Share of nodes to fit on screen; 1 shows them all",
         group="Map",
         value_type="float",
-        default=0.5,
+        default=DEFAULT_VIEW_FRACTION,
         minimum=0.1,
         maximum=1.0,
     ),
@@ -297,7 +301,7 @@ PREFERENCES: tuple[PrefSpec, ...] = (
         help="Finished outbox messages to keep",
         group="History",
         value_type="int",
-        default=100,
+        default=DONE_CAP,
         minimum=10,
         maximum=5000,
     ),

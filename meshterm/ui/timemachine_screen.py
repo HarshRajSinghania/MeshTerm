@@ -1144,22 +1144,6 @@ def _known_name(resolve: NodeResolver, node: str | None, name: str | None) -> st
     return None
 
 
-async def _routing_prefix_bytes(ctx: AppContext) -> int:
-    """The device's path-hash width in bytes, or 0 when unknowable.
-
-    Best-effort, exactly like the Nodes tool: the Time Machine reads stored history
-    and must work with no radio at all, so an unreachable device (or firmware that
-    doesn't report the mode) just leaves every hash un-highlighted.
-    """
-    try:
-        if not (ctx.is_connected or ctx.settings.connect_on_start):
-            return 0
-        mode = await ctx.devstate.path_hash_mode()
-    except Exception:  # noqa: BLE001 - optional read; absence just skips highlighting
-        return 0
-    return (mode + 1) if isinstance(mode, int) and 0 <= mode <= 3 else 0
-
-
 async def _contact_resolvers(
     ctx: AppContext,
 ) -> tuple[NodeResolver, Callable[[str | None], int | None], NodeResolver]:
@@ -1305,7 +1289,7 @@ async def open_timemachine(ctx: AppContext) -> None:
     if not isinstance(ctx.ui, TuiUi):  # pragma: no cover - guarded by the menu-only caller
         raise RuntimeError("the time machine is only available in the menu")
     session = ctx.ui.session
-    prefix_bytes = await _routing_prefix_bytes(ctx)
+    prefix_bytes = await ctx.devstate.routing_prefix_bytes()
     resolve, type_of, resolve_key = await _contact_resolvers(ctx)
     self_name, self_key = await _self_identity(ctx)
     # One sort for the whole visit, so the order the user picks survives leaving a subject

@@ -85,8 +85,13 @@ _HEX_DIGITS = frozenset("0123456789abcdef")
 _MISS = object()
 
 
-def _is_hex(value: str) -> bool:
-    """Whether ``value`` is non-empty, even-length hex (a plausible path hash)."""
+def is_path_hash(value: str) -> bool:
+    """Whether ``value`` could be a path hash: non-empty hex, a whole number of bytes.
+
+    THE test, shared by everything that has to tell a hop id from a name or a graph
+    sentinel. Even length because a hash is bytes, never a half one — which is also what
+    keeps a one-character endpoint marker out.
+    """
     return bool(value) and len(value) % 2 == 0 and all(c in _HEX_DIGITS for c in value)
 
 
@@ -340,7 +345,7 @@ class MeshTopology:
         if cached is not _MISS:
             return cached
         needle = hop.lower().removeprefix("0x")
-        if not _is_hex(needle):
+        if not is_path_hash(needle):
             result: str | None = None
         else:
             matches = {

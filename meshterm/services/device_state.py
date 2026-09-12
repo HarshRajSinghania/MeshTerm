@@ -4,8 +4,9 @@ Opening a screen used to re-read the same stable facts from the companion every 
 the contacts table, the node's own self-info, the path-hash routing width, the configured
 channel slots, the channel-slot capacity. Over Bluetooth each of those is a full
 request→reply round-trip, and the channel-slot reads dominate: ``get_contacts`` on a busy
-node (hundreds of contacts), the slot probe (:func:`~meshterm.ui.channels.read_channel_slots`)
-and the capacity probe (:meth:`~meshterm.core.connection.Device.channel_capacity`) each walk
+node (hundreds of contacts), the slot probe
+(:func:`~meshterm.core.channel_probe.read_channel_slots`) and the capacity probe
+(:meth:`~meshterm.core.connection.Device.channel_capacity`) each walk
 the slot table one index at a time and are measured in *seconds* on firmware that never
 rejects an out-of-range index. Firing them on every navigation is what made moving between
 screens feel like it stalled.
@@ -43,10 +44,11 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
+from ..core.channel_probe import ChannelSlot, probe_channel_slots
+
 if TYPE_CHECKING:
     from ..context import AppContext
     from ..core.models import Contact
-    from ..ui.channels import ChannelSlot
 
 #: How long a cached contacts list is served before a read triggers a background refresh
 #: (seconds). Contacts only grow as the mesh advertises, and the list is a naming/addressing
@@ -286,26 +288,45 @@ class DeviceState:
                     self._path_hash_mode = int(await device.get_path_hash_mode())
         return self._path_hash_mode
 
+    async def routing_prefix_bytes(self) -> int:
+        """The device's path-hash width in bytes, or 0 when unknowable.
+
+        What a surface that *highlights* hashes actually wants: how many leading bytes of a
+        key the mesh routes on, which is what :func:`~meshterm.ui.widgets.highlighted_hash`
+        lights. Best-effort, because every caller reads stored history and must work with no
+        radio at all — an unreachable device (or firmware that doesn't report the mode) just
+        leaves every hash un-highlighted rather than failing the screen.
+
+        Returns:
+            The hash width in bytes (1–4), or 0 when the mode could not be read.
+        """
+        try:
+            if not (self._ctx.is_connected or self._ctx.settings.connect_on_start):
+                return 0
+            mode = await self.path_hash_mode()
+        except Exception:  # noqa: BLE001 - optional read; absence just skips highlighting
+            return 0
+        return (mode + 1) if isinstance(mode, int) and 0 <= mode <= 3 else 0
+
     # -- channel slots (held until the channel editor invalidates them) --------
 
     async def channel_slots(self) -> list[ChannelSlot]:
         """Return the configured channel slots, cached until a channel edit invalidates them.
 
-        The underlying probe (:func:`~meshterm.ui.channels.read_channel_slots`) walks every
-        slot index on the firmware, which is one of the slowest reads on a screen open — so it
+        The underlying probe (:func:`~meshterm.core.channel_probe.read_channel_slots`) walks
+        every slot index on the firmware, which is one of the slowest reads on a screen open — so it
         is well worth reading once. It is best-effort itself (an unsupported firmware yields an
         empty list rather than raising), but a probe that ended early because a *read failed*
-        is answered and then dropped rather than cached — see :func:`~meshterm.ui.channels.
-        probe_channel_slots` for why a short list is not a layout.
+        is answered and then dropped rather than cached — see
+        :func:`~meshterm.core.channel_probe.probe_channel_slots` for why a short list is not a
+        layout.
 
         Returns:
-            One :class:`~meshterm.ui.channels.ChannelSlot` per configured slot, in index order.
+            One :class:`~meshterm.core.channel_probe.ChannelSlot` per slot, in index order.
         """
         if self._channels is None:
             async with self._channels_lock:
                 if self._channels is None:
-                    from ..ui.channels import probe_channel_slots
-
                     device = await self._ctx.device()
                     slots, complete = await probe_channel_slots(device)
                     if complete:

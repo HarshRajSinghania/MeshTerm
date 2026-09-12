@@ -138,7 +138,7 @@ def _listing(contacts: list[Contact], counts: dict[str, int], prefix_bytes: int)
     """
     from ..ui import fields
     from ..ui.report import Listing
-    from ..ui.widgets import _contact_pkts
+    from ..ui.widgets import contact_packets
 
     rows = []
     for contact in contacts:
@@ -152,7 +152,7 @@ def _listing(contacts: list[Contact], counts: dict[str, int], prefix_bytes: int)
                     type=NODE_TYPE_LABELS.get(contact.node_type),
                 ),
                 "heard_at": contact.last_seen,
-                "packets": _contact_pkts(contact, counts),
+                "packets": contact_packets(contact, counts),
                 "position": (
                     fields.Position(contact.lat, contact.lon) if contact.has_location else None
                 ),

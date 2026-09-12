@@ -103,7 +103,7 @@ from .theme import snr_style
 from .tui.render import render_lines, render_to_ansi
 from .tui.screen import ListWindow, Screen
 from .tui.spinner import Spinner, spinner_interval
-from .widgets import NodeResolver, _link_text, _route_path, highlighted_hash
+from .widgets import NodeResolver, highlighted_hash, link_text, route_path
 
 if TYPE_CHECKING:
     from ..context import AppContext
@@ -559,7 +559,7 @@ class TraceScreen(Screen):
                 if total > 1:
                     dialog.status = f"trace {done + 1}/{total} · transmitting…"
                     self._session.invalidate()
-                self._last_tx = asyncio.get_event_loop().time()
+                self._last_tx = asyncio.get_running_loop().time()
                 await self._trace_once(self._path_spec, self._on_trace)
         except asyncio.CancelledError:
             raise
@@ -590,7 +590,7 @@ class TraceScreen(Screen):
         """Seconds still owed before the next transmission may go out (0 when clear)."""
         if self._last_tx is None or self._pace_s <= 0:
             return 0.0
-        elapsed = asyncio.get_event_loop().time() - self._last_tx
+        elapsed = asyncio.get_running_loop().time() - self._last_tx
         return max(0.0, self._pace_s - elapsed)
 
     async def _animate(self) -> None:
@@ -951,7 +951,7 @@ class TraceScreen(Screen):
         """
         indent = len(_ROUTE_LANE)
         if current is not None:
-            route = _route_path(
+            route = route_path(
                 current,
                 self._device_label,
                 self._resolve,
@@ -967,7 +967,7 @@ class TraceScreen(Screen):
                 lines.append(_note(f"(auto · {self._auto_source})", indent))
             return lines
         if self._previous is not None:
-            route = _route_path(
+            route = route_path(
                 self._previous,
                 self._device_label,
                 self._resolve,
@@ -1022,7 +1022,7 @@ class TraceScreen(Screen):
                 prompt.append_text(
                     # The hashes read at the width the screen addresses hops by, like
                     # every other node this session shows.
-                    _link_text(
+                    link_text(
                         edge[0],
                         edge[1],
                         self._device_label,
@@ -1165,7 +1165,7 @@ class TraceScreen(Screen):
         for agg in stats.hop_snrs:
             table.add_row(
                 str(agg.index),
-                _link_text(
+                link_text(
                     agg.origin,
                     agg.destination,
                     self._device_label,
@@ -1212,7 +1212,7 @@ class TraceScreen(Screen):
         return row
 
 
-def _collapse_trace_width(mode: int) -> int:
+def collapse_trace_width(mode: int) -> int:
     """Collapse a routing hash mode to the widest trace-representable hop width.
 
     Routing widths are ``mode + 1`` bytes, but a trace's flags can only encode 1, 2, 4,
@@ -1460,7 +1460,7 @@ async def _open_session(ctx: AppContext, target: str | None, *, initial_spec: st
         NeighbourInfo,
     )
     from ..services.path_probe import ProbeCandidate, ProbeOutcome, probe_paths
-    from ..services.topology import MeshTopology, _is_hex, build_topology, collapse_width
+    from ..services.topology import MeshTopology, build_topology, collapse_width, is_path_hash
     from .path_composer import FetchNeighbours, PathComposerScreen
     from .surface import TuiUi
     from .tui import CANCEL, Choice, SelectScreen, Separator
@@ -1488,7 +1488,7 @@ async def _open_session(ctx: AppContext, target: str | None, *, initial_spec: st
     # protocol default and what all stored evidence uses anyway. The user can override
     # it for the session through the screen's *Path width* action (see pick_width).
     try:
-        width_bytes = _collapse_trace_width(int(await ctx.devstate.path_hash_mode()))
+        width_bytes = collapse_trace_width(int(await ctx.devstate.path_hash_mode()))
     except Exception:  # noqa: BLE001 - optional read; the 1-byte default always works
         width_bytes = 1
     device_width = width_bytes  # remembered so the width dialog can mark the default
@@ -1520,7 +1520,7 @@ async def _open_session(ctx: AppContext, target: str | None, *, initial_spec: st
             .lower()
             .removeprefix("0x")
         )
-        target_hash = raw_hash if _is_hex(raw_hash) else None
+        target_hash = raw_hash if is_path_hash(raw_hash) else None
         target_label = target_contact.name if target_contact else target
 
     def fresh_topology() -> MeshTopology:

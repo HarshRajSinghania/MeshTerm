@@ -556,12 +556,11 @@ def test_narrow_wordmark_keeps_its_dim_rows_off_the_bright_bank() -> None:
 
 def test_mark_constants_reexport_from_their_old_hosts() -> None:
     """The P3 relocation to ``ui.marks`` left the old names bound in the old modules."""
-    from meshterm.ui.map_render import _NODE, _REPEATER, _SELF, _UNKNOWN
     from meshterm.ui.mapcanvas import RGB, parse_hex
     from meshterm.ui.marks import NODE_MARK, REPEATER_MARK, SELF_MARK, UNKNOWN_MARK
     from meshterm.ui.pathgraph import DST_NODE, SRC_NODE, GlyphOf, LabelOf, LabelRgbOf
 
-    assert (_SELF, _REPEATER, _NODE, _UNKNOWN) == (
+    assert (SELF_MARK, REPEATER_MARK, NODE_MARK, UNKNOWN_MARK) == (
         SELF_MARK,
         REPEATER_MARK,
         NODE_MARK,

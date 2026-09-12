@@ -81,6 +81,19 @@ _NOT_ONE_SHOT = {("monitor",), ("chat", "listen"), ("tx-optimize",)}
 #: The one command whose output *is* its colour, and says so (:mod:`meshterm.ui.specimen`).
 _KEEPS_ITS_COLOUR = {("specimen",)}
 
+#: Extra arguments the derived sweep passes a leaf that would otherwise reach for real
+#: hardware. ``devices`` enumerates serial ports *and* scans for Bluetooth companions, so
+#: run bare it turned this machine's radio on three times per suite run and took its wall
+#: time from whatever happened to be in the room. ``--no-ble`` drops the scan and keeps the
+#: (cheap, local) serial walk. The tool is deliberately untouched: what the sweep checks is
+#: the *shape* of an answer, and one transport's worth of rows proves that as well as two.
+_SWEEP_ARGS: dict[tuple[str, ...], tuple[str, ...]] = {("devices",): ("--no-ble",)}
+
+
+def _sweep(leaf: tuple[str, ...]) -> tuple[str, ...]:
+    """The leaf as the sweep invokes it: its own path, plus any hardware-sparing flag."""
+    return (*leaf, *_SWEEP_ARGS.get(leaf, ()))
+
 
 @pytest.fixture()
 def run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):  # noqa: ANN201 - a closure
@@ -166,7 +179,7 @@ def test_every_registered_command_obeys_the_rules(run, leaf) -> None:  # noqa: A
     ``---`` in ``about`` drawn as a rule the width of a 16384-cell console, and the
     ``[muted]`` tags around what ``config export-key`` exists to emit.
     """
-    out = run(*leaf).stdout
+    out = run(*_sweep(leaf)).stdout
     assert not _ANSI.search(out), f"{' '.join(leaf)} put an escape sequence on stdout"
     assert not set(out) & set("─│┌┐└┘├┤━┃╭╮╰╯"), f"{' '.join(leaf)} drew a frame or a rule"
     assert not _MARKUP.search(out), f"{' '.join(leaf)} printed a console markup tag"
@@ -188,7 +201,7 @@ def test_every_registered_command_answers_json_that_parses(run, leaf) -> None:  
     line on stdout is one complete document**, on success and on empty alike, and a
     command that fails writes nothing there at all.
     """
-    result = run("--json", *leaf)
+    result = run("--json", *_sweep(leaf))
     for line in result.stdout.splitlines():
         json.loads(line)  # raises, with the offending line, if anything else got out
     if result.exit_code in (exitcodes.OK, exitcodes.NO_RESULT):
@@ -209,7 +222,7 @@ def test_the_two_faces_never_disagree_about_the_exit_status(run, leaf) -> None: 
     plain path said ``5``, so a script could not tell an empty scan from a full one by
     asking the same question twice.
     """
-    assert run("--json", *leaf).exit_code == run(*leaf).exit_code, " ".join(leaf)
+    assert run("--json", *_sweep(leaf)).exit_code == run(*_sweep(leaf)).exit_code, " ".join(leaf)
 
 
 @pytest.mark.parametrize("leaf", sorted(_REFUSES_JSON), ids=lambda leaf: "-".join(leaf))
@@ -221,7 +234,7 @@ def test_a_command_whose_output_is_the_colour_refuses_json_loudly(run, leaf) -> 
     refuse from. It is a usage error, so stdout stays empty and the sentence goes where
     every other failure's does.
     """
-    result = run("--json", *leaf)
+    result = run("--json", *_sweep(leaf))
     assert result.exit_code == exitcodes.USAGE
     assert result.stdout == ""
     assert "machine-readable" in result.stderr
@@ -236,6 +249,54 @@ def test_the_menu_has_no_document_and_says_so(run) -> None:  # noqa: ANN001
     result = run("--json")
     assert result.exit_code == exitcodes.USAGE
     assert result.stdout == ""
+
+
+def test_no_leaf_command_declares_a_short_option_the_globals_already_claim() -> None:
+    """A leaf short form that a global also spells could never be reached, only shadowed.
+
+    ``_globals_first`` lifts any token matching a group option ahead of the subcommand
+    wherever it was typed, so ``trace -t Alice -p a1,d4`` handed ``a1,d4`` to ``--profile``
+    and failed with "no device profile named 'a1,d4'". Three commands documented ``-p`` as
+    the short form of ``--path``, and on all three it was unusable. Checked against the real
+    app rather than a list, because the next collision will be some other letter.
+    """
+    from typer.main import get_command
+
+    from meshterm.cli import app
+
+    root = get_command(app)
+    globals_ = {
+        opt
+        for param in root.params
+        for opt in getattr(param, "opts", ())
+        if opt.startswith("-") and not opt.startswith("--")
+    }
+    assert globals_, "the root group declares no short options — has the callback moved?"
+
+    def walk(command, prefix: tuple[str, ...] = ()) -> None:  # noqa: ANN001
+        for name, sub in sorted(getattr(command, "commands", {}).items()):
+            here = (*prefix, name)
+            if getattr(sub, "commands", None):
+                walk(sub, here)
+                continue
+            for param in sub.params:
+                clash = globals_ & {o for o in getattr(param, "opts", ()) if o.startswith("-")}
+                assert not clash, f"{' '.join(here)} declares {sorted(clash)}, a global's own"
+
+    walk(root)
+
+
+def test_version_answers_without_touching_a_device(run) -> None:  # noqa: ANN001
+    """``--version`` is the one question that is about the program, not about a run.
+
+    Eager, so it answers before a database is opened or a radio looked for, and bare — one
+    field for a script to read back. Knowing the version is a success, so it exits ``0``.
+    """
+    from meshterm import __version__
+
+    result = run("--version")
+    assert result.exit_code == exitcodes.OK
+    assert result.stdout.strip() == f"meshterm {__version__}"
 
 
 def test_the_sweep_actually_covers_the_whole_command_surface() -> None:
@@ -562,8 +623,14 @@ def test_a_port_that_will_not_open_is_no_device_not_a_device_failure(run) -> Non
         ("repeater-admin", "Nobody", "get", "name"),
         ("courier", "queue", "Nobody", "hi"),
         ("courier", "queue", "Alice", "hi", "--at", "25:99"),
+        ("tx-optimize", "--path", "Yagi-Repeater", "--samples", "1"),
     ],
-    ids=["unknown-admin-node", "unknown-courier-contact", "bad-at-time"],
+    ids=[
+        "unknown-admin-node",
+        "unknown-courier-contact",
+        "bad-at-time",
+        "tx-optimize-one-hop-path",
+    ],
 )
 def test_a_bad_argument_is_never_reported_as_a_device_failure(run, args) -> None:  # noqa: ANN001
     """``4`` promises a caller that the radio answered and a retry is worth trying.
@@ -571,7 +638,8 @@ def test_a_bad_argument_is_never_reported_as_a_device_failure(run, args) -> None
     Each of these is the *argument* being wrong, decided before a word goes over the air —
     so a caller that retried on ``4`` would retransmit nothing, forever. ``tx-optimize``
     already answered the identical question the identical way for a missing password;
-    these three were the ones that had not caught up.
+    these are the ones that had not caught up — including its own one-hop ``--path``, which
+    reported ``4`` for a path that never left the machine.
     """
     result = run(*args)
     assert result.exit_code == exitcodes.USAGE, result.output

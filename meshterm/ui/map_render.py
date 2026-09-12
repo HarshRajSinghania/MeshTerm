@@ -26,45 +26,15 @@ from collections import Counter
 from dataclasses import dataclass, field
 
 from ..core.geo import Viewport
+from ..core.models import MapMarker
 from ..core.mvt import GEOM_LINE, GEOM_POLYGON, Layer
 from ..platforms import Platform, on_platform
 from .mapcanvas import MapCanvas, Raster
 from .marks import NODE_MARK, REPEATER_MARK, RGB, SELF_MARK, UNKNOWN_MARK, parse_hex
 from .theme import mark_rgb
 
-# -- node markers -------------------------------------------------------------
-
-
-@dataclass(slots=True)
-class MapMarker:
-    """One mesh node to overlay on the map.
-
-    Attributes:
-        label: Node name shown beside the marker.
-        lat: Latitude in decimal degrees.
-        lon: Longitude in decimal degrees.
-        is_repeater: Whether the node is a repeater (prioritised marker).
-        is_self: Whether this is our own node (highlighted).
-        detail: Extra text for the CLI legend (e.g. ``"18 pkts · +6.0 dB"``).
-        key: The node's key hex (as full as the caller holds), seeding the label's
-            key-derived hue; ``None`` leaves the label the muted no-key grey.
-    """
-
-    label: str
-    lat: float
-    lon: float
-    is_repeater: bool = False
-    is_self: bool = False
-    detail: str = ""
-    key: str | None = None
-
-    def _rank(self) -> int:
-        """Draw order: self on top of repeaters on top of leaf nodes."""
-        return 2 if self.is_self else (1 if self.is_repeater else 0)
-
-
-# Marker palette, shared across the whole app — canonical tuples in ui.marks; the old
-# private names stay bound here for this module and its existing importers.
+# Marker palette, shared across the whole app — canonical tuples in ui.marks. These are
+# local shorthand for the renderer's own hot paths; anything else imports from ui.marks.
 _SELF = SELF_MARK
 _REPEATER = REPEATER_MARK
 _NODE = NODE_MARK

@@ -97,7 +97,7 @@ def configure_logging(
     """
     logger = logging.getLogger(_LOGGER_NAME)
     logger.setLevel(logging.DEBUG)
-    logger.handlers.clear()
+    _drop_handlers(logger)
     logger.propagate = False
 
     if not quiet:
@@ -161,10 +161,27 @@ def _quiet_library_console(file_handler: logging.Handler) -> None:
 
     for name in _LIBRARY_LOGGERS:
         lib = logging.getLogger(name)
-        lib.handlers.clear()
+        _drop_handlers(lib)
         lib.setLevel(logging.INFO)
         lib.propagate = False
         lib.addHandler(file_handler)
+
+
+def _drop_handlers(logger: logging.Logger) -> None:
+    """Detach ``logger``'s handlers, closing each on the way out.
+
+    Clearing the list alone drops the *reference* and leaves the file open: every
+    reconfigure — a reconnect in the app, each in-process CLI invocation under test — leaked
+    another descriptor on ``meshterm.log``, which on Windows is also a lock on a file the
+    rotation then wants to rename. A handler that refuses to close is dropped anyway: the
+    point of this call is that the old handlers stop receiving records.
+    """
+    for handler in list(logger.handlers):
+        try:
+            handler.close()
+        except Exception:  # noqa: BLE001 - a handler we are discarding cannot fail the app
+            pass
+    logger.handlers.clear()
 
 
 def get_logger(name: str | None = None) -> logging.Logger:

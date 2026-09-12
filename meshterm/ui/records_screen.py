@@ -45,7 +45,7 @@ from rich.text import Text
 from ..core.geo import haversine_km
 from ..persistence.repository import DiscoveredPath
 from ..services import trace_runner
-from ..services.records import CATEGORIES, CATEGORY_BY_ID, Category, _local_xy
+from ..services.records import CATEGORIES, CATEGORY_BY_ID, Category, local_xy
 from .mapcanvas import RGB, MapCanvas
 from .menus import fit_cells, icon_lane, marked_label, section_heading
 from .pathgraph import PathLayer, render_path_graph
@@ -854,7 +854,7 @@ async def open_records(ctx: AppContext) -> dict:
             pos, ntype = node_geo(node_id)
             if pos is None:
                 continue
-            east, north = _local_xy(self_pos, pos)
+            east, north = local_xy(self_pos, pos)
             # The node-type glyph in the node's *name* hue — the pin reads as that mesh
             # name, the way the route line and graph labels colour it; an unnamed hop keeps
             # the neutral shape tone so it never masquerades as a coloured name.

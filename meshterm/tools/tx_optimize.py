@@ -385,7 +385,9 @@ class TxOptimizeTool(Tool):
             path: str = typer.Option(
                 ...,
                 "--path",
-                "-p",
+                # No ``-p`` short form: ``-p`` is the global ``--profile``, and
+                # ``_globals_first`` lifts a group option ahead of the subcommand wherever it
+                # is typed — so a leaf ``-p`` could never reach this option, only shadow it.
                 help="Forced path ending at the target (e.g. 'Repeater,Target' or '3d,f2')",
             ),
             samples: int = typer.Option(3, "--samples", "-n", help="Traces per TX level"),
@@ -424,12 +426,16 @@ def _resolve_link(path: str, contacts: list[Contact]) -> tuple[Contact, str]:
         :class:`Contact` (needed for login), and a friendly name for the last hop.
 
     Raises:
-        DeviceCommandError: If the path has fewer than two hops, or the admin hop can't
-            be matched to a known contact carrying a public key.
+        typer.BadParameter: If the path has fewer than two hops — the argument is what is
+            wrong and nothing was transmitted, so that is a usage error (exit 2), not a
+            device failure.
+        DeviceCommandError: If the admin hop can't be matched to a known contact carrying a
+            public key. That one *is* about the mesh: the path is well formed and we simply
+            have not heard from the node it names.
     """
     hops = [h for h in path.split(",") if h]
     if len(hops) < 2:
-        raise DeviceCommandError(
+        raise typer.BadParameter(
             "the path needs at least two hops: the node to tune and the target after it "
             "(e.g. 'AdminNode,Target')."
         )

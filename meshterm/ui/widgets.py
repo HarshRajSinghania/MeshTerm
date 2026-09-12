@@ -34,6 +34,8 @@ from ..core.models import (
     NODE_TYPE_SENSOR,
     Contact,
     HopAggregate,
+    NameKeyResolver,
+    NodeResolver,
     TraceResult,
     TraceStats,
     TxOptResult,
@@ -58,13 +60,6 @@ from .theme import glyph, mark_rgb, name_style, node_style, snr_style
 
 if TYPE_CHECKING:
     from ..core.discovery import DiscoveredDevice
-
-#: Maps a hop's raw key-prefix hash to a display label (a contact name when known).
-NodeResolver = Callable[[str | None], str | None]
-
-#: Maps a display name back to its node's key hex, or ``None`` for a name no known
-#: node carries (built by :func:`~meshterm.services.trace_runner.make_name_key_resolver`).
-NameKeyResolver = Callable[[str], str | None]
 
 
 def channel_glyph(name: str, secret: bytes | None) -> str:
@@ -93,7 +88,7 @@ def channel_glyph(name: str, secret: bytes | None) -> str:
     return glyph("🔒")
 
 
-def _identity(label: str | None) -> str | None:
+def identity_label(label: str | None) -> str | None:
     """Default node resolver: leave labels untouched."""
     return label
 
@@ -146,11 +141,11 @@ def make_progress(console: Console) -> Progress:
     )
 
 
-def _link_text(
+def link_text(
     origin: str | None,
     destination: str | None,
     device_label: str,
-    resolve: NodeResolver = _identity,
+    resolve: NodeResolver = identity_label,
     hash_bytes: int | None = None,
     device_hash: str | None = None,
 ) -> Text:
@@ -187,7 +182,7 @@ def _link_text(
 def traces_table(
     traces: list[TraceResult],
     device_label: str = LOCAL_DEVICE_LABEL,
-    resolve: NodeResolver = _identity,
+    resolve: NodeResolver = identity_label,
     device_hash: str | None = None,
 ) -> Table:
     """Render every trace's per-hop SNR side by side, one column per trace.
@@ -227,7 +222,7 @@ def traces_table(
     for idx in indices:
         link = next(
             (
-                _link_text(
+                link_text(
                     edges[idx].origin,
                     edges[idx].destination,
                     device_label,
@@ -265,7 +260,7 @@ def traces_table(
 
 def path_text(
     hops: Sequence[str | None],
-    resolve: NodeResolver = _identity,
+    resolve: NodeResolver = identity_label,
     *,
     prefix_bytes: int = 0,
     self_name: str | None = None,
@@ -348,7 +343,7 @@ def path_text(
 
 def revisit_note(
     repeats: Sequence[str],
-    resolve: NodeResolver = _identity,
+    resolve: NodeResolver = identity_label,
     *,
     prefix_bytes: int = 0,
     self_name: str | None = None,
@@ -678,10 +673,10 @@ def route_graph_style(
     return glyph_of, label_of, label_rgb_of
 
 
-def _route_path(
+def route_path(
     result: TraceResult,
     device_label: str = LOCAL_DEVICE_LABEL,
-    resolve: NodeResolver = _identity,
+    resolve: NodeResolver = identity_label,
     device_hash: str | None = None,
     *,
     bare_self: bool = False,
@@ -733,7 +728,7 @@ def _route_path(
 def _route_text(
     result: TraceResult,
     device_label: str = LOCAL_DEVICE_LABEL,
-    resolve: NodeResolver = _identity,
+    resolve: NodeResolver = identity_label,
     device_hash: str | None = None,
 ) -> Text:
     """Render a trace's walked route through THE path widget, on one line.
@@ -753,13 +748,13 @@ def _route_text(
     Returns:
         A :class:`Text` with the node sequence, or a muted note when no hops exist.
     """
-    return _route_path(result, device_label, resolve, device_hash).text()
+    return route_path(result, device_label, resolve, device_hash).text()
 
 
 def _hop_medians_table(
     hop_snrs: list[HopAggregate],
     device_label: str,
-    resolve: NodeResolver = _identity,
+    resolve: NodeResolver = identity_label,
     hash_bytes: int | None = None,
     device_hash: str | None = None,
 ) -> Table:
@@ -782,7 +777,7 @@ def _hop_medians_table(
     for agg in hop_snrs:
         table.add_row(
             str(agg.index),
-            _link_text(agg.origin, agg.destination, device_label, resolve, hash_bytes, device_hash),
+            link_text(agg.origin, agg.destination, device_label, resolve, hash_bytes, device_hash),
             Text(f"{agg.median_snr:+.1f} dB", style=snr_style(agg.median_snr)),
         )
     return table
@@ -791,7 +786,7 @@ def _hop_medians_table(
 def stats_panel(
     stats: TraceStats,
     device_label: str = LOCAL_DEVICE_LABEL,
-    resolve: NodeResolver = _identity,
+    resolve: NodeResolver = identity_label,
     route: TraceResult | None = None,
     device_hash: str | None = None,
 ) -> Panel:
@@ -1026,7 +1021,7 @@ def _key_id(value: str) -> str:
     return value.lower().removeprefix("0x")[:12]
 
 
-def _contact_pkts(contact: Contact, counts: dict[str, int]) -> int | None:
+def contact_packets(contact: Contact, counts: dict[str, int]) -> int | None:
     """The overheard-packet tally for ``contact``, or ``None`` if never overheard."""
     ident = contact.public_key or contact.key_prefix
     return counts.get(_key_id(ident)) if ident else None
@@ -1116,7 +1111,7 @@ def ordered_contacts(
     elif sort.column == "packets":
 
         def metric(c: Contact) -> float:
-            return _contact_pkts(c, counts) or 0
+            return contact_packets(c, counts) or 0
     else:
 
         def metric(c: Contact) -> object:
@@ -1353,7 +1348,7 @@ def contacts_table(
     for c in ordered_contacts(contacts, counts, sort):
         secs = _age_seconds(c.last_seen)
         glyph, glyph_style = _NODE_GLYPHS.get(c.node_type, _DEFAULT_GLYPH)
-        pkts = _contact_pkts(c, counts)
+        pkts = contact_packets(c, counts)
         table.add_row(
             Text(glyph, style=glyph_style),
             Text(c.name, style=name_style(c.name, c.public_key or c.key_prefix)),

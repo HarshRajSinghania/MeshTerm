@@ -13,6 +13,7 @@ from types import SimpleNamespace
 
 from rich.text import Text
 
+from meshterm.core.geo import haversine_km
 from meshterm.core.models import Contact, utcnow
 from meshterm.services.topology import build_topology
 from meshterm.services.trace_runner import (
@@ -26,7 +27,6 @@ from meshterm.ui.node_detail_screen import (
     NodeDetailScreen,
     _Action,
     _bearing,
-    _distance_km,
     _range_text,
     _Route,
     _route_line,
@@ -105,7 +105,7 @@ def test_minimap_clamps_zoom_to_the_source_ceiling() -> None:
 def test_distance_and_bearing_are_sane() -> None:
     """Range in km and an 8-point compass bearing between two nearby points."""
     # ~1.11 km due north (0.01° latitude), so bearing reads N.
-    assert 1.0 < _distance_km(45.5, -73.6, 45.51, -73.6) < 1.2
+    assert 1.0 < haversine_km(45.5, -73.6, 45.51, -73.6) < 1.2
     assert _bearing(45.5, -73.6, 45.51, -73.6) == "N"
     assert _bearing(45.5, -73.6, 45.5, -73.59) == "E"  # due east
 
