@@ -21,25 +21,21 @@
 # It is idempotent -- safe to re-run; each phase checks before it acts.
 #
 #   1. UART sanity    /dev/ttyS1 exists, the console isn't on it, no getty owns it.
-#   2. pin routing    Route UART1 to its physical pads. The Calculinux DT enables the
-#                     UART1 *controller* (hence /dev/ttyS1) but never applies its pinctrl
-#                     (the node carries pinctrl-0 with no pinctrl-names), so TX/RX reach no
-#                     pad at all -- verified live: the port's tx counter climbs while rx
-#                     stays 0 forever. Worse, the only pads the RK3506 IO matrix can carry
-#                     UART1 on -- RM_IO28 (rx, pin gpio1-19) and RM_IO30 (tx, gpio1-26) --
-#                     are claimed by SPI1 (ff130000.spi) for the PicoCalc's front SD slot
-#                     (mmc-spi-slot): the radio and that slot share nets. So a boot-time
-#                     helper unbinds SPI1 (the front SD slot goes dark while the radio owns
-#                     the pads) and muxes the two pads to UART1 through debugfs.
-#   3. bridge         A stdlib-only python UART<->TCP pump (no pyserial, no venv) installed
+#   2. bridge         A stdlib-only python UART<->TCP pump (no pyserial, no venv) installed
 #                     as /etc/meshterm-radio-bridge.py + a systemd service, enabled at boot.
 #                     It serves ONE client at a time -- two clients would interleave
 #                     companion frames -- which is why this isn't a `socat ... fork` line.
-#                     The pin-routing helper runs as its ExecStartPre, every boot.
-#   4. profile        A `[profiles.radio]` TCP profile (127.0.0.1:5000) in the deploy
+#   3. profile        A `[profiles.radio]` TCP profile (127.0.0.1:5000) in the deploy
 #                     user's ~/.meshterm/config.toml, made the default profile, so a bare
 #                     `meshterm` lists the radio on the splash and `-p radio` connects.
-#   5. report         Service state and how to connect, locally and over the LAN.
+#   4. report         Service state and how to connect, locally and over the LAN.
+#
+# What this script does NOT do: it never routes UART1 to physical pads. On stock
+# Calculinux the DT enables the UART1 controller (hence /dev/ttyS1 existing) without
+# applying its pinctrl, so TX/RX reach no pad and this pump would faithfully serve a port
+# that is electrically dead. Pin routing now lives in xiao-radio/uart1-mux.py, which uses
+# a different pad pair (header GP4/GP5) than this script's header once assumed -- run that
+# (via xiao-radio/lyra-setup.sh) first if you need the radio actually wired up.
 set -eu
 
 # --- knobs (override via the environment) ----------------------------------------------

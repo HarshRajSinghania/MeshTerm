@@ -72,7 +72,9 @@ def bootloader_port():
         return None
     for p in lp.comports():
         hwid = (p.hwid or "").upper()
-        if "2886" in hwid and "0045" in hwid:  # Seeed VID + bootloader PID
+        # Seeed VID + bootloader PID: 0x0045 (Sense) or 0x0044 (plain nRF52840), both from
+        # Adafruit's UF2 bootloader board.h for this chip family.
+        if "2886" in hwid and ("0045" in hwid or "0044" in hwid):
             return p.device
     return None
 

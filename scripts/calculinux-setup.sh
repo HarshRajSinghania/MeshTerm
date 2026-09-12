@@ -21,13 +21,16 @@
 #                      until then, which is fatal for "heard" ordering, TTL, etc. A oneshot
 #                      service waits for a real route, then steps the clock once (NTP client
 #                      if the image has one, else an HTTPS Date-header fallback).
-#   4. timezone        Eastern (America/Toronto, same rules as America/Montreal) via
+#   4. timezone        `$TIMEZONE`, Eastern (America/Toronto) unless you say otherwise, via
 #                      timedatectl if tzdata's opkg feed is reachable, else a POSIX TZ rule
 #                      in /etc/environment -- glibc honours it with no zoneinfo database.
+#                      The POSIX fallback rule is only known for the default zone; a custom
+#                      $TIMEZONE without tzdata is set via timedatectl only, with a warning.
 #   5. deploy user     The `$DEPLOY_USER` login MeshTerm runs under, `meshterm` unless you
 #                      say otherwise (created if absent; no password is set here -- run
 #                      `passwd` for it yourself).
-#   6. clone           Pull MeshTerm with the READ-ONLY GitHub deploy key over SSH.
+#   6. clone           Pull MeshTerm over SSH with the read-only GitHub deploy key if one
+#                      is present at $KEY_PATH, else a public HTTPS clone of $REPO_URL.
 #   7. venv + install  A venv + `pip install -e .`. pip's C builds hit ENOSPC because /tmp
 #                      is a tiny RAM tmpfs, so TMPDIR is redirected to $HOME/tmp on /data.
 #   8. PATH            Put the venv's `meshterm` on that user's login PATH via ~/.profile.
@@ -35,7 +38,8 @@
 #                      rounded frame corners + the list cursor the bare console can't draw).
 #
 # Two prerequisites this script cannot safely embed and will check for / guide you through:
-#   * the read-only deploy key at $KEY_PATH (never commit a private key);
+#   * the read-only deploy key at $KEY_PATH, if you want the SSH clone (never commit a
+#     private key) -- omit it and the clone falls back to public HTTPS;
 #   * Wi-Fi credentials known to iwd. The kick only nudges an ALREADY-known network. Either
 #     provision it once by hand (`iwctl station wlan0 connect <SSID>`), or export
 #     WIFI_SSID and WIFI_PSK before running and this script writes the iwd config for you.
@@ -43,7 +47,9 @@ set -eu
 
 # --- knobs (override via the environment) ----------------------------------------------
 DEPLOY_USER="${DEPLOY_USER:-meshterm}"
+TIMEZONE="${TIMEZONE:-America/Toronto}"
 REPO_SSH="${REPO_SSH:-git@github.com:jpmartineau/MeshTerm.git}"
+REPO_URL="${REPO_URL:-https://github.com/jpmartineau/MeshTerm.git}"  # used when no deploy key is present
 KEY_PATH="${KEY_PATH:-/home/$DEPLOY_USER/.ssh/id_ed25519}"
 CHECKOUT="/home/$DEPLOY_USER/MeshTerm"
 WIFI_SSID="${WIFI_SSID:-}"     # optional: set both to have iwd credentials written
@@ -227,16 +233,16 @@ systemctl daemon-reload
 systemctl enable time-sync.service >/dev/null 2>&1 || info "could not enable time-sync.service"
 info "installed /etc/time-sync.sh + time-sync.service (enabled)"
 
-# --- 4. timezone (America/Toronto -- Eastern, same rules as America/Montreal) ----------
-log "4/9  timezone (Eastern)"
+# --- 4. timezone ($TIMEZONE -- America/Toronto/Eastern by default) ---------------------
+log "4/9  timezone ($TIMEZONE)"
 opkg install tzdata-americas tzdata-core >/dev/null 2>&1 || true
-if [ -f /usr/share/zoneinfo/America/Toronto ]; then
-    if [ "$(timedatectl show -p Timezone --value 2>/dev/null)" != "America/Toronto" ]; then
-        timedatectl set-timezone America/Toronto && info "set via timedatectl (tzdata present)"
+if [ -f "/usr/share/zoneinfo/$TIMEZONE" ]; then
+    if [ "$(timedatectl show -p Timezone --value 2>/dev/null)" != "$TIMEZONE" ]; then
+        timedatectl set-timezone "$TIMEZONE" && info "set via timedatectl (tzdata present)"
     else
-        info "already America/Toronto (timedatectl)"
+        info "already $TIMEZONE (timedatectl)"
     fi
-else
+elif [ "$TIMEZONE" = "America/Toronto" ] || [ "$TIMEZONE" = "America/Montreal" ]; then
     # opkg.calculinux.org's feed has been observed fully empty (404 at the index, not just
     # this package) -- no zoneinfo database reaches the device then. glibc still honours a
     # POSIX TZ rule without one, so fall back to the exact US/Canada Eastern DST rule
@@ -255,6 +261,14 @@ else
         runas "printf '\n# Eastern time (America/Toronto == America/Montreal); POSIX rule -- no tzdata feed\nexport TZ=$TZ_POSIX\n' >> ~/.profile"
         info "added TZ export to $DEPLOY_USER's ~/.profile (belt-and-suspenders for non-PAM logins)"
     fi
+else
+    # No POSIX DST rule is known here for a non-default $TIMEZONE without a tzdata feed;
+    # set it via timedatectl if it takes, otherwise warn and move on rather than guess.
+    if timedatectl set-timezone "$TIMEZONE" 2>/dev/null; then
+        info "set via timedatectl"
+    else
+        info "warning: no tzdata for $TIMEZONE and no POSIX fallback rule known -- clock stays UTC"
+    fi
 fi
 
 # --- 5. deploy user --------------------------------------------------------------------
@@ -268,41 +282,45 @@ else
     else
         adduser -D -s /bin/bash "$DEPLOY_USER" || die "adduser failed"
     fi
-    # wheel -> sudo, matching the working device; harmless if the group is absent.
+    # wheel -> sudo; harmless if the group is absent.
     (usermod -aG wheel "$DEPLOY_USER" 2>/dev/null || adduser "$DEPLOY_USER" wheel 2>/dev/null) || true
     info "no password set -- run:  passwd $DEPLOY_USER"
 fi
 # input -> the F-key lane's Shift watcher reads /dev/input (services/modifier_watch);
-# dialout/video match the working device (serial radios, framebuffer). All idempotent.
+# dialout/video are needed for serial radios and the framebuffer. All idempotent.
 for grp in input dialout video; do
     (usermod -aG "$grp" "$DEPLOY_USER" 2>/dev/null || adduser "$DEPLOY_USER" "$grp" 2>/dev/null) || true
 done
 
-# --- 5. clone MeshTerm (read-only deploy key over SSH) ---------------------------------
+# --- 5. clone MeshTerm (SSH deploy key if present at $KEY_PATH, else public HTTPS) -----
 log "6/9  clone MeshTerm"
-[ -f "$KEY_PATH" ] || die "deploy key not found at $KEY_PATH
-   place the READ-ONLY GitHub deploy key there first, e.g.:
-     install -d -m700 -o $DEPLOY_USER -g $DEPLOY_USER /home/$DEPLOY_USER/.ssh
-     cp id_ed25519 $KEY_PATH && chmod 600 $KEY_PATH
-     chown $DEPLOY_USER:$DEPLOY_USER $KEY_PATH"
-
-KNOWN_HOSTS="/home/$DEPLOY_USER/.ssh/known_hosts"
-SSH_CMD="ssh -i $KEY_PATH -o IdentitiesOnly=yes -o UserKnownHostsFile=$KNOWN_HOSTS"
-# Pin github.com's host key up front so the clone never blocks on an interactive prompt.
-if ! runas "test -f $KNOWN_HOSTS && grep -q github.com $KNOWN_HOSTS"; then
-    info "recording github.com host key"
-    runas "ssh-keyscan -t ed25519 github.com >> $KNOWN_HOSTS 2>/dev/null" || info "ssh-keyscan failed (offline?)"
+if [ -f "$KEY_PATH" ]; then
+    CLONE_URL="$REPO_SSH"
+    KNOWN_HOSTS="/home/$DEPLOY_USER/.ssh/known_hosts"
+    SSH_CMD="ssh -i $KEY_PATH -o IdentitiesOnly=yes -o UserKnownHostsFile=$KNOWN_HOSTS"
+    # Pin github.com's host key up front so the clone never blocks on an interactive prompt.
+    if ! runas "test -f $KNOWN_HOSTS && grep -q github.com $KNOWN_HOSTS"; then
+        info "recording github.com host key"
+        runas "ssh-keyscan -t ed25519 github.com >> $KNOWN_HOSTS 2>/dev/null" || info "ssh-keyscan failed (offline?)"
+    fi
+    CLONE_ENV="GIT_SSH_COMMAND='$SSH_CMD' "
+else
+    info "no deploy key at $KEY_PATH -- cloning $REPO_URL over public HTTPS instead"
+    CLONE_URL="$REPO_URL"
+    CLONE_ENV=""
 fi
 
 if [ -d "$CHECKOUT/.git" ]; then
     info "already cloned -- pulling"
     runas "git -C ~/MeshTerm pull --ff-only" || info "pull failed (offline?) -- continuing"
 else
-    info "cloning $REPO_SSH"
-    runas "GIT_SSH_COMMAND='$SSH_CMD' git clone $REPO_SSH ~/MeshTerm" \
+    info "cloning $CLONE_URL"
+    runas "${CLONE_ENV}git clone $CLONE_URL ~/MeshTerm" \
         || die "clone failed (key not authorized, or offline)"
-    # Bake the deploy key into the checkout so later pulls just work.
-    runas "git -C ~/MeshTerm config core.sshCommand '$SSH_CMD'"
+    if [ -f "$KEY_PATH" ]; then
+        # Bake the deploy key into the checkout so later pulls just work.
+        runas "git -C ~/MeshTerm config core.sshCommand '$SSH_CMD'"
+    fi
 fi
 
 # --- 6. venv + editable install (TMPDIR off the RAM tmpfs) -----------------------------

@@ -12,6 +12,10 @@
 #   * meshterm.psf.gz   6x12 (Terminus base)     -> 53x26 -- the installed default
 #   * meshterm8.psf.gz  6x8  (kernel font_6x8)   -> 53x40 -- the A/B candidate
 #
+# meshterm.psf.gz is a derivative of Terminus Font (OFL-1.1) and must not itself be called
+# "Terminus" -- the stock ter-u12n.psf.gz base keeps its own OFL-1.1 licence, distinct from
+# this repository's Apache-2.0.
+#
 # Flip live with `setfont /usr/share/consolefonts/meshterm8.psf.gz` (and back with
 # meshterm.psf.gz); persist the winner via FONT= in /etc/vconsole.conf.
 #
@@ -25,16 +29,18 @@
 #
 # The 6x8 base is the Linux kernel's own font_6x8 (lib/fonts/font_6x8.c, GPL-2.0),
 # embedded below -- CP437 coverage, so unlike the Terminus base it has NO Cyrillic;
-# its keeper list drops the Cyrillic canary accordingly.
+# its keeper list drops the Cyrillic canary accordingly. Note: this bitmap's GPL-2.0
+# licence differs from this repository's own (Apache-2.0); it is embedded as data.
 #
 # Everything else is pure geometry, generated on-device; only the stock Terminus font and
 # python3 are required. Run as root on the Lyra (serial console is fine):
 #
 #     sh calculinux-console-font.sh
 #
-# Idempotent -- safe to re-run after a MeshTerm update or a font tweak. Also installs
-# /etc/vtrgb + the meshterm-vtrgb boot oneshot (the 16-slot palette; see
-# meshterm/ui/theme._VT_SLOTS -- a repo test pins the two to each other).
+# Idempotent -- safe to re-run after a MeshTerm update or a font tweak. Also manages the
+# 16-slot palette: a default run restores the stock VT palette (theme._VT_SLOTS) and
+# removes any custom remap; MESHTERM_CUSTOM_PALETTE=1 installs the archived remap
+# (theme._VT_SLOTS_CUSTOM, pinned to theme.vtrgb_lines() by a test).
 set -eu
 
 FONT_NAME=meshterm
@@ -147,8 +153,8 @@ MARKS = {
         "##..##", "##..##", "######", "######", "......", "......"]),
 }
 
-# The same 18 marks redrawn for the 6x8 cell (first-draft art; the P5 tweak round and
-# JP's eyeball pass refine whichever font wins the A/B).
+# The same 18 marks redrawn for the 6x8 cell (first-draft art; a later tweak round
+# refines whichever font wins the A/B).
 MARKS8 = {
     0x25CF: art([  # BLACK CIRCLE
         "......", "..##..", ".####.", "######", "######", ".####.", "..##..", "......"]),
@@ -346,10 +352,10 @@ echo "persisted FONT=$FONT_NAME in $VCONSOLE (loads on every boot)"
 echo "A/B: 'setfont $OUT8' for 53x40, 'setfont $OUT' for 53x26; persist the winner in $VCONSOLE"
 
 # --- palette -----------------------------------------------------------------------------
-# JP's decision (2026-08-01): the console keeps its STANDARD kernel palette -- black
+# By design, the console keeps its STANDARD kernel palette -- black
 # background, stock hues -- and meshterm/ui/theme.MESH_THEME_16 is designed against those
-# (theme._VT_SLOTS). The custom tailwind-family remap P3 originally shipped is ARCHIVED,
-# one environment variable away in case he changes his mind:
+# (theme._VT_SLOTS). The custom tailwind-family remap originally shipped is ARCHIVED,
+# one environment variable away for anyone who wants it back:
 #
 #     MESHTERM_CUSTOM_PALETTE=1 sh calculinux-console-font.sh
 #

@@ -33,7 +33,10 @@ echo ">> installing + enabling systemd service"
 cat > "$UNIT" <<EOF
 [Unit]
 Description=Route RK3506 UART1 to GP4/GP5 for the MeshCore XIAO radio
-After=multi-user.target
+# Ordered on basic.target, not multi-user.target: WantedBy=multi-user.target below already
+# pulls this in as part of reaching multi-user.target, so After=multi-user.target would be
+# an ordering cycle. The mux should still run early enough to precede login/MeshTerm start.
+After=basic.target
 
 [Service]
 Type=oneshot
