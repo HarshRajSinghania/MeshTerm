@@ -97,23 +97,28 @@ def _dialog(record: DiscoveredPath, rank: int = 1, **kw) -> RecordScreen:
 
 def test_record_dialog_shows_stats_route_and_the_trace_action() -> None:
     """Score in the category's unit, the resolved route bracketed by us, and actions."""
-    body = _plain(_dialog(_record()).render_body(60))
-    assert "2 nodes" in body  # the score, in the discipline's own unit
-    assert "Hilltop-Repeater" in body  # a resolved relay on the route
-    assert "Homestead" in body  # us, bracketing the walked route
-    assert "Trace this path" in body  # the renamed action (was "Walk again")
-    assert "Walk again" not in body
-    assert "Delete record" in body
-    assert "Back" not in body  # no exit row: Esc leaves the page
+    screen = _dialog(_record())
+    info = _plain(screen.render_body(60))
+    assert "2 nodes" in info  # the score, in the discipline's own unit
+    assert "Trace this path" in info  # the renamed action (was "Walk again")
+    assert "Walk again" not in info
+    assert "Delete record" in info
+    assert "Back" not in info  # no exit row: Esc leaves the page
+    screen.handle("tab")
+    route = _plain(screen.render_body(60))
+    assert "Hilltop-Repeater" in route  # a resolved relay on the route
+    assert "Homestead" in route  # us, bracketing the walked route
+    assert "Trace this path" in route and "Delete record" not in route  # Enter here traces
 
 
 def test_record_dialog_draws_the_walk_as_a_route_graph() -> None:
     """The walk is drawn on THE route graph — us starred at both ends, over a caption."""
-    lines = _plain(_dialog(_record()).render_body(60)).splitlines()
-    heading = next(i for i, line in enumerate(lines) if line.startswith("Route"))
-    assert "you → … → you" in lines[heading] and "labels = hash byte" in lines[heading]
+    screen = _dialog(_record())
+    screen.handle("tab")  # the Route tab
+    lines = _plain(screen.render_body(60)).splitlines()
     legend = next(i for i, line in enumerate(lines) if "▲ repeater" in line)
-    graph = "\n".join(lines[heading + 1 : legend])  # the drawing, up to its legend
+    assert "you → … → you" in lines[legend - 1] and "labels = hash byte" in lines[legend - 1]
+    graph = "\n".join(lines[_strip_end(lines) : legend - 1])  # the drawing, up to its caption
     assert graph.count("★") == 2  # our node marks both endpoints of the round trip
     assert any("⠀" <= ch <= "⣿" for ch in graph)  # braille edges are drawn
 
@@ -139,9 +144,10 @@ def test_record_dialog_route_runs_unlabelled_across_the_whole_card() -> None:
     our own two ends stand on the ★ the graph above already marks us with.
     """
     dialog = _dialog(_record(route=tuple([HUB_ID, FAR_ID] * 4)))
+    dialog.handle("tab")  # the Route tab
     body = _plain(dialog.render_body(60)).splitlines()
-    # The route closes the Route section: it runs from under the graph's legend to the
-    # blank line before the action rows.
+    # The route closes the Route tab's stage: it runs from under the graph's legend to
+    # the blank line before the action row.
     legend_at = next(i for i, line in enumerate(body) if "▲ repeater" in line)
     route = body[legend_at + 1 : body.index("", legend_at)]
     assert not route[0].startswith("route")  # no label lane
@@ -156,7 +162,9 @@ def test_record_dialog_route_runs_unlabelled_across_the_whole_card() -> None:
 
 def test_record_dialog_shows_the_node_type_legend() -> None:
     """The standard node-type key sits under the graph, so its markers read."""
-    body = _plain(_dialog(_record()).render_body(60))
+    screen = _dialog(_record())
+    screen.handle("tab")  # the Route tab
+    body = _plain(screen.render_body(60))
     assert "★ you" in body and "▲ repeater" in body and "◉ sensor" in body
 
 
@@ -312,41 +320,58 @@ def _strip_end(lines: list[str]) -> int:
     raise AssertionError(f"no tab strip in {lines[:5]}")
 
 
-def test_record_opens_on_the_stats_tab_with_the_area_tab_beside_it() -> None:
-    """A drawable walk gets two tabs — Stats, then Area — and opens on Stats.
+def test_record_opens_on_info_with_route_and_area_tabs_beside_it() -> None:
+    """A drawable walk gets three tabs — Info, Route, Area — and opens on Info.
 
-    The node page's shape: the strip is the page's title, so the stats open directly
-    under it (identity first), the route follows under its own heading, and nothing of the
-    ground is drawn on this tab — the drawing has a tab of its own.
+    Organized like the node page: the strip is the page's title, so the stats open
+    directly under it (identity first) with the page's actions at the foot, and nothing
+    of the route or the ground is drawn on this tab — each has a tab of its own.
     """
     screen = _dialog(_record(), far_label="Far", shape=_loop_shape())
     lines = _plain(screen.render_body(58)).splitlines()
     strip = "\n".join(lines[: _strip_end(lines)])
-    assert "Stats" in strip and "Area" in strip, "both tabs boxed in the strip"
+    assert "Info" in strip and "Route" in strip and "Area" in strip, "all three boxed"
     body = [line for line in lines[_strip_end(lines) :] if line]
     assert body[0].startswith("spec") and body[1].startswith("recorded")  # identity first
     assert body[2].startswith("score")
-    assert any(line.startswith("Route") for line in body)  # the route, under its heading
-    assert "Trace this path" in "\n".join(body)  # the actions close the Stats tab
-    assert not any(
-        _is_braille(ch)
-        for line in body[: body.index("Route  ·  you → … → you · labels = hash byte")]
-        for ch in line
-    )
+    assert "Trace this path" in "\n".join(body) and "Delete record" in "\n".join(body)
+    assert not any(_is_braille(ch) for line in body for ch in line), "no drawing here"
+    assert "Hilltop-Repeater" not in "\n".join(body), "the route has a tab of its own"
     assert "Far" in "\n".join(body)  # the far-point name is a stat, not a drawing label
 
 
+def test_record_route_tab_draws_the_walk_and_enter_traces_it() -> None:
+    """The Route tab: the graph over the route line, with Trace this path as its one row.
+
+    The node page's rule for its Routes tab — Enter on the route on show arms its trace —
+    so the tab carries that action alone; the page's Delete stays on Info.
+    """
+    screen = _dialog(_record(), far_label="Far", shape=_loop_shape())
+    screen.handle("tab")
+    lines = _plain(screen.render_body(58)).splitlines()
+    stage = [line for line in lines[_strip_end(lines) :] if line]
+    assert "▲ repeater" in "\n".join(stage)  # the graph's key
+    assert any(line.startswith("★") and line.endswith("★") for line in stage)  # the route line
+    assert stage[-1].endswith("Trace this path — reopen in Trace path")
+    assert "Delete record" not in "\n".join(stage)
+    assert "spec" not in "\n".join(stage), "the stats have a tab of their own"
+    captured: list = []
+    screen.resolve = captured.append  # type: ignore[method-assign]
+    screen.handle("enter")
+    assert captured == ["trace"]
+
+
 def test_record_area_tab_fills_the_stage_with_hash_byte_pins() -> None:
-    """Tab turns to the Area tab: the ground, pinned and labelled, sized to the viewport.
+    """⇧Tab turns to the Area tab: the ground, pinned and labelled, sized to the viewport.
 
     The drawing used to ride beside the stats in a third of the width, unlabelled — there
     was no cell for a label. It has a tab of its own now and spends every row the strip
-    leaves, so a pin and the graph node on the Stats tab can be matched by their shared
+    leaves, so a pin and the graph node on the Route tab can be matched by their shared
     byte, and a taller terminal is a bigger shape.
     """
     screen = _dialog(_record(), far_label="Far", shape=_loop_shape())
     screen.note_metrics(40, 24)
-    screen.handle("tab")
+    screen.handle("shift_tab")  # Info → Area, the last tab
     lines = _plain(screen.render_body(58)).splitlines()
     stage = [line for line in lines[_strip_end(lines) :] if line]
     block = "\n".join(stage)
@@ -355,15 +380,15 @@ def test_record_area_tab_fills_the_stage_with_hash_byte_pins() -> None:
     assert "▲" in block  # the repeater vertex, in its map glyph
     assert HUB_ID[:2] in block and FAR_ID[:2] in block  # each hop's hash byte beside its pin
     assert stage[-1] == "north up · labels = hash byte"  # the caption reads the drawing back
-    assert "Trace this path" not in block  # the actions belong to the Stats tab
+    assert "Trace this path" not in block  # a picture: no action rows
     assert len(lines) <= 24, "the Area tab never outgrows the viewport"
 
     screen.note_metrics(40, 40)
     taller = _plain(screen.render_body(58)).splitlines()
     assert len(taller) > len(lines), "a taller viewport is a taller drawing"
 
-    screen.handle("tab")  # …and back round to Stats
-    assert "Trace this path" in _plain(screen.render_body(58))
+    screen.handle("tab")  # …and round to Info again
+    assert "Delete record" in _plain(screen.render_body(58))
 
 
 def test_record_area_drawing_spends_the_width_it_is_given() -> None:
@@ -373,7 +398,7 @@ def test_record_area_drawing_spends_the_width_it_is_given() -> None:
         screen = _dialog(_record(), shape=_loop_shape())
         # Rows enough that the shape's proportions bind on the width, not the height.
         screen.note_metrics(40, 40)
-        screen.handle("tab")
+        screen.handle("shift_tab")  # the Area tab
         lines = _plain(screen.render_body(width)).splitlines()
         return max(len(line.rstrip()) for line in lines[_strip_end(lines) : -1])
 
@@ -383,29 +408,31 @@ def test_record_area_drawing_spends_the_width_it_is_given() -> None:
 def test_record_area_tab_says_so_when_too_narrow_to_draw() -> None:
     """Below the drawing's floor the Area tab says why it is empty instead of squeezing."""
     screen = _dialog(_record(), far_label="Far", shape=_loop_shape())
-    screen.handle("tab")
+    screen.handle("shift_tab")  # the Area tab
     body = _plain(screen.render_body(12))
     assert not any(_is_braille(ch) for ch in body)
     assert "no room" in body  # cut at the edge like any row, but there
 
 
-def test_record_without_a_shape_has_one_tab_and_nothing_to_switch() -> None:
-    """No positioned hops, no Area tab: the strip collapses to a heading and Tab is inert."""
+def test_record_without_a_shape_has_no_area_tab() -> None:
+    """No positioned hops, no Area tab: Info and Route still switch between themselves."""
     screen = _dialog(_record())
     lines = _plain(screen.render_body(60)).splitlines()
-    assert "── Stats ──" in "\n".join(lines[: _strip_end(lines)])
-    assert "Area" not in "\n".join(lines)
-    assert "Tab" not in screen.footer_hint
-    screen.handle("tab")
-    assert screen._tab_index == 0
+    strip = "\n".join(lines[: _strip_end(lines)])
+    assert "Info" in strip and "Route" in strip and "Area" not in strip
+    screen.handle("shift_tab")
+    assert screen._tab == "Route"
 
 
 def test_record_footer_names_only_what_each_tab_answers() -> None:
-    """The Stats tab hints the cursor keys; the Area tab, a picture, only the switch and Esc."""
+    """Info hints the cursor keys, Route only Enter (one row), Area only the switch and Esc."""
     screen = _dialog(_record(), shape=_loop_shape())
     assert screen.footer_hint == "Tab/⇧Tab switch · ↑↓ move · Enter select · Esc back"
     screen.note_metrics(40, 10)  # taller than the viewport: the pager earns its atom
     assert "PgUp/PgDn scroll" in screen.footer_hint
+    screen.handle("tab")
+    screen.note_metrics(10, 24)
+    assert screen.footer_hint == "Tab/⇧Tab switch · Enter select · Esc back"
     screen.handle("tab")
     assert screen.footer_hint == "Tab/⇧Tab switch · Esc back"
     screen.handle("down")  # inert on the Area tab

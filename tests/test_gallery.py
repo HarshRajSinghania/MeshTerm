@@ -700,6 +700,13 @@ def _record_area(cols: int, rows: int) -> Screen:
         ],
     )
     screen.note_metrics(rows, rows)
+    screen.handle("shift_tab")  # Info → Area, the last tab
+    return screen
+
+
+def _record_route(cols: int, rows: int) -> Screen:
+    """A record turned to its Route tab: the graph, its key, the route line, the trace row."""
+    screen = _record_dialog(cols, rows)
     screen.handle("tab")
     return screen
 
@@ -927,6 +934,7 @@ _ENTRIES: list[_Entry] = [
     _Entry("path_composer", _path_composer),
     _Entry("courier_outbox", _courier_outbox),
     _Entry("record_dialog", _record_dialog),
+    _Entry("record_route", _record_route),
     _Entry("record_area", _record_area),
     _Entry("packet_viewer", _packet_viewer),
     _Entry("trace", _trace),

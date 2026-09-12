@@ -56,7 +56,6 @@ from .tui.screen import Screen
 from .widgets import (
     NodeResolver,
     TypeOf,
-    body_heading,
     name_rgb,
     node_marker,
     node_type_legend,
@@ -99,11 +98,10 @@ _AREA_TONE: RGB = (148, 163, 184)
 _AREA_MIN_W = 16
 _AREA_MIN_ROWS = 8
 
-#: The page's tabs, in strip order. The Area tab is offered only for a walk with a
-#: drawable shape; a lone tab collapses to a plain heading
-#: (:func:`~meshterm.ui.widgets.tab_strip`), so a record with no ground to draw still
-#: reads as the same page.
-_TAB_STATS = "Stats"
+#: The page's tabs, in strip order — the node page's Info / Routes, plus the ground. The
+#: Area tab is offered only for a walk with a drawable shape.
+_TAB_INFO = "Info"
+_TAB_ROUTE = "Route"
 _TAB_AREA = "Area"
 #: Dots kept clear inside the box's edges — wider on the sides than above and below, so a
 #: pin at the eastern or western extreme still has the cells its hash-byte label needs.
@@ -206,12 +204,14 @@ class RecordScreen(Screen):
     reads *back*. It used to float as a 62-column card, which read as a question over the
     list rather than as the page it is.
 
-    A **tabbed stage**, the node page's shape (:func:`~meshterm.ui.widgets.tab_strip`,
-    ``Tab``/``Shift+Tab`` to switch): **Stats** is the record read — its stats, then the
-    route two ways — with the action rows at its foot; **Area** is the walk's ground, drawn
-    across the whole stage the viewport leaves under the strip, so the shape gets every row
-    and column the page has rather than the corner a stacked layout could spare it. The
-    Area tab is offered only when there is a shape to draw.
+    A **tabbed stage**, organized like the node page (:func:`~meshterm.ui.widgets.tab_strip`,
+    ``Tab``/``Shift+Tab`` to switch): **Info** is the record's stats with the page's
+    action rows at its foot; **Route** is the walk two ways — THE route graph over the
+    route line — with *Trace this path* under it, so Enter there walks the route on show;
+    **Area** is the walk's ground, drawn across the whole stage the viewport leaves under
+    the strip, so the shape gets every row and column the page has rather than the corner
+    a stacked layout could spare it. The Area tab is offered only when there is a shape to
+    draw.
 
     Every stat the walk was measured by — a reliability read from the far node's trace
     history, the far point named with the node it reached, the longest leg drawn as the
@@ -275,14 +275,14 @@ class RecordScreen(Screen):
         self._shape = list(shape) if shape else None
         self._reliability = reliability
         self._type_of = type_of
-        self._actions = ("trace", "delete")
         self._index = 0
         self._cursor: int | None = None
-        self._tabs = [_TAB_STATS] + ([_TAB_AREA] if self._shape else [])
+        self._tabs = [_TAB_INFO, _TAB_ROUTE] + ([_TAB_AREA] if self._shape else [])
         self._tab_index = 0
-        # The Stats tab's composed page above the action rows, per width, and the Area
-        # tab's drawing, per (width, rows): both pure functions of the frozen record.
-        self._stats_cache: tuple[int, list[str]] | None = None
+        # Each tab's composed stage above its action rows, per width — and the Area tab's
+        # drawing per (width, rows) — all pure functions of the frozen record.
+        self._info_cache: tuple[int, list[str]] | None = None
+        self._route_cache: tuple[int, list[str]] | None = None
         self._area_cache: tuple[tuple[int, int], list[str]] | None = None
         # The page opens at the top, reading down; the arrows drive (and follow) the action
         # cursor, while PgUp/PgDn/Home/End scroll the body free of it (see cursor_line).
@@ -294,45 +294,56 @@ class RecordScreen(Screen):
         return self._tabs[self._tab_index]
 
     @property
+    def _actions(self) -> tuple[str, ...]:
+        """The active tab's action rows, in cursor order.
+
+        Info carries the page's actions, the cursor opening on the safe one; Route carries
+        *Trace this path* alone, so Enter there walks the route on show — the node page's
+        rule, where Enter on a route arms its trace; Area is a picture and carries none.
+        """
+        if self._tab == _TAB_INFO:
+            return ("trace", "delete")
+        if self._tab == _TAB_ROUTE:
+            return ("trace",)
+        return ()
+
+    @property
     def fkey_lane(self):
         """The shared pager, dimmed where nothing scrolls, plus the tab switch on F3.
 
         The chip names the tab it would take you *to*, never the one you are on — the node
         page's rule (see :attr:`~meshterm.ui.node_detail_screen.NodeDetailScreen.fkey_lane`).
-        A record with no drawable ground has one tab and nothing to switch, so the slot
-        stays empty; the Area tab is a picture sized to the viewport, so the pager is dim
-        there.
+        The Area tab is a picture sized to the viewport, so the pager is dim there.
         """
         from .tui.fkeys import FPair, default_lane
 
-        lane = list(default_lane(nav=self._tab == _TAB_STATS and self.content_overflows))
-        if len(self._tabs) >= 2:
-            lane[2] = FPair(self._tabs[(self._tab_index + 1) % len(self._tabs)], "tab")
+        lane = list(default_lane(nav=self._tab != _TAB_AREA and self.content_overflows))
+        lane[2] = FPair(self._tabs[(self._tab_index + 1) % len(self._tabs)], "tab")
         return lane
 
     @property
     def footer_hint(self) -> str:  # type: ignore[override]
-        """The hint line: tab switch, then the Stats tab's move/scroll/select, Esc last.
+        """The hint line: tab switch, then the tab's move/scroll/select, Esc last.
 
-        Each atom is gated on there being something for its key to do — the Area tab has
-        no cursor and never scrolls, so it names only the switch and Esc.
+        Each atom is gated on there being something for its key to do — a lone action row
+        has nothing for ↑↓ to move between, and the Area tab has no cursor and never
+        scrolls, so it names only the switch and Esc.
         """
-        parts: list[str] = []
-        if len(self._tabs) >= 2:
-            parts.append("Tab/⇧Tab switch")
-        if self._tab == _TAB_STATS:
+        parts = ["Tab/⇧Tab switch"]
+        actions = self._actions
+        if len(actions) > 1:
             parts.append("↑↓ move")
-            if self.content_overflows:
-                parts.append("PgUp/PgDn scroll")
+        if actions and self.content_overflows:
+            parts.append("PgUp/PgDn scroll")
+        if actions:
             parts.append("Enter select")
         parts.append("Esc back")
         return " · ".join(parts)
 
     def _switch_tab(self, delta: int) -> None:
-        """Move the active tab; the page opens at the top, free of the cursor."""
-        if len(self._tabs) < 2:
-            return
+        """Move the active tab; its page opens at the top, the cursor on its first row."""
         self._tab_index = (self._tab_index + delta) % len(self._tabs)
+        self._index = 0
         self._follow = False
         self.scroll_to_top()
 
@@ -348,7 +359,7 @@ class RecordScreen(Screen):
             self._switch_tab(-1)
         elif action == "escape":
             self.resolve(None)
-        elif self._tab != _TAB_STATS:
+        elif self._tab == _TAB_AREA:
             return
         elif action == "up":
             self._follow = True
@@ -589,11 +600,11 @@ class RecordScreen(Screen):
     def render_body(self, width: int) -> list[str]:
         """The tab strip, then the active tab's stage.
 
-        The Stats tab is the record read — stat lanes, the route graph, the route — and
-        closes on the action rows; it scrolls when it outgrows the viewport. The Area tab
-        is the ground drawing sized to the rows the strip leaves, so it never does.
-        Everything above the action rows is a pure function of the frozen record and the
-        width (and, for the drawing, the rows), so it is composed once and cached; only the
+        Info is the stat lanes and Route the graph over the route line, each closing on its
+        action rows and scrolling if it ever outgrows the viewport. The Area tab is the
+        ground drawing sized to the rows the strip leaves, so it never does. Everything
+        above the action rows is a pure function of the frozen record and the width (and,
+        for the drawing, the rows), so it is composed once and cached; only the
         cursor-bearing action rows re-render per repaint.
         """
         # The pinned chrome every tab opens under: the strip in its air (see widgets.tab_air).
@@ -606,10 +617,16 @@ class RecordScreen(Screen):
             self._scroll_total = max(1, len(lines))
             return lines
 
-        cached = self._stats_cache
-        if cached is None or cached[0] != width:
-            cached = (width, self._stats_lines(width))
-            self._stats_cache = cached
+        if self._tab == _TAB_INFO:
+            cached = self._info_cache
+            if cached is None or cached[0] != width:
+                cached = (width, self._info_lines(width))
+                self._info_cache = cached
+        else:
+            cached = self._route_cache
+            if cached is None or cached[0] != width:
+                cached = (width, self._route_lines(width))
+                self._route_cache = cached
         lines.extend(cached[1])
 
         lines.append("")
@@ -638,16 +655,10 @@ class RecordScreen(Screen):
         self._scroll_total = max(1, len(lines))
         return lines
 
-    def _stats_lines(self, width: int) -> list[str]:
-        """The Stats tab above its action rows: the stat lanes, then the route two ways.
-
-        The tab is the page's title, so the stats open directly under the strip; the route
-        block is set apart under a body heading (THE form, widgets.body_heading) whose note
-        reads the graph's labels back.
-        """
+    def _info_lines(self, width: int) -> list[str]:
+        """The Info tab above its action rows: the record's identity, then its stats."""
         record = self._record
         lines: list[str] = []
-
         # The record's identity leads its stats: the spec that was walked and when it was
         # set, then what the walk measured.
         spec = Text(record.spec, style="brand")
@@ -657,15 +668,18 @@ class RecordScreen(Screen):
         when.append(f" · MeshTerm {record.app_version}", style="muted")
         lines.append(render_to_ansi(self._lane("recorded", when), width, no_wrap=True))
         lines.extend(render_to_ansi(lane, width, no_wrap=True) for lane in self._stat_lanes())
+        return lines
 
-        lines.append("")
-        heading = body_heading("Route", "you → … → you · labels = hash byte")
-        lines.append(render_to_ansi(heading, width, no_wrap=True))
-        lines.extend(self._graph_lines(width))
+    def _route_lines(self, width: int) -> list[str]:
+        """The Route tab above its action row: THE route graph, its key, then the route line."""
+        record = self._record
+        lines = self._graph_lines(width)
+        caption = Text("you → … → you · labels = hash byte", style="faint")
+        lines.append(render_to_ansi(caption, width, no_wrap=True))
         lines.append(render_to_ansi(node_type_legend(), width, no_wrap=True))
 
         # The walk itself, on THE path widget, across the card's whole width. No ``route``
-        # label lane: the line under a route graph headed "you → … → you" is the route,
+        # label lane: the line under a route graph captioned "you → … → you" is the route,
         # and the twelve cells a label would take are hops the reader came here for. It wraps
         # at hop boundaries (never mid-name, never mid-chip) rather than hanging under a lane.
         # Our two ends stand on the app-wide ★ rather than repeating our name and key — the
