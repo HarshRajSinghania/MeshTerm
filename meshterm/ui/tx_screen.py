@@ -1,11 +1,11 @@
 """The live TX-optimization screen: pick the link, arm the sweep, watch levels land.
 
 The interactive face of the ``tx-optimize`` tool (the scripted CLI keeps its one-shot
-table and HTML chart), rebuilt on the trace screen's armed-but-idle pattern. Two pickers
-in the tool choose the *link* — the admin node whose transmit power is tuned, then the
-target whose reception is optimized — and the screen opens idle: the route, the sweep
-parameters, and the login state read across the top, an action list drives everything,
-and nothing transmits until Sweep is committed.
+table and HTML chart), rebuilt on the trace screen's armed-but-idle pattern. One stepped
+dialog in the tool chooses the *link* — the admin node whose transmit power is tuned,
+then the target whose reception is optimized — and the screen opens idle over the main
+menu: the route, the sweep parameters, and the login state read across the top, an
+action list drives everything, and nothing transmits until Sweep is committed.
 
 * **Route** opens the trace screen's hop-by-hop path composer, pinned at the tuned
   node: compose how the measurement reaches it, each step suggested from observed
@@ -593,8 +593,9 @@ async def open_tx_optimize(
 ) -> dict[str, Any]:
     """Run the live TX-optimization session for one tuned link.
 
-    The tool's pickers have chosen the link; this wires the armed-idle screen to the
-    radio, the topology evidence, and the database, and runs it until dismissed. Login
+    The tool's dialog has chosen the link and is already gone; this wires the armed-idle
+    screen to the radio, the topology evidence, and the database, and runs it until
+    dismissed — and Esc lands on the main menu, the sweep being the whole visit. Login
     happens inside the first Sweep commit — a remembered password silently, otherwise
     one floating prompt (remembered on success, forgotten on rejection: the trace
     composer's convention). Each sweep opens its own ``runs`` row and records every

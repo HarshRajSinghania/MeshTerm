@@ -220,12 +220,13 @@ async def _screen_at(session: TuiSession, depth: int, timeout: float = 2.0):
     return session._stack[-1]
 
 
-async def test_the_tx_optimize_pickers_stay_pushed_under_the_sweep(monkeypatch) -> None:
-    """The two-picker entry flow is a stack: sweep over target list over node list.
+async def test_the_tx_optimize_link_is_one_dialog_gone_before_the_sweep(monkeypatch) -> None:
+    """The two picks are one box turning its page, and the sweep opens over the menu.
 
-    Both pickers used to be gathered in ``prompt_params`` and popped before the sweep
-    opened, so Esc from anywhere in the flow landed on the main menu — and picking a second
-    target meant reopening the tool and re-picking the node to tune.
+    The link used to be two pickers stacked one over the other, each kept pushed under
+    the sweep as a hub — three frames deep for a sweep, and two popups read as two places
+    to be. A popup is a question, not a place: the dialog is gone before the sweep screen
+    opens, so Esc from the sweep lands on the main menu.
     """
     from meshterm.core.models import NODE_TYPE_REPEATER, Contact
     from meshterm.tools.tx_optimize import TxOptimizeTool
@@ -247,6 +248,7 @@ async def test_the_tx_optimize_pickers_stay_pushed_under_the_sweep(monkeypatch) 
 
     ctx = _Ctx()
     swept: list[tuple[str, str, int]] = []
+    pages: list[str] = []
 
     with create_pipe_input() as inp:
         session = _session(inp)
@@ -259,24 +261,39 @@ async def test_the_tx_optimize_pickers_stay_pushed_under_the_sweep(monkeypatch) 
 
         monkeypatch.setattr("meshterm.ui.tx_screen.open_tx_optimize", fake_sweep)
 
+        async def turned_to(dialog, step: str) -> None:
+            """Spin until the one dialog shows ``step`` — the same object, a new page."""
+            while step not in dialog.title:
+                await asyncio.sleep(0)
+            pages.append(dialog.title)
+            assert session._stack == [dialog], "one box the whole way through"
+
         async def main() -> None:
             run = asyncio.ensure_future(TxOptimizeTool()._run_live(ctx))
-            node_list = await _screen_at(session, 1)
-            node_list.resolve("Hilltop-Repeater")
-            target_list = await _screen_at(session, 2)
-            target_list.resolve("Lakeside")
-            while not swept:
-                await asyncio.sleep(0)
-            # Esc from the sweep leaves the target list up; Esc there, the node list.
-            target_list.resolve(CANCEL)
-            node_list.resolve(CANCEL)
+            dialog = await _screen_at(session, 1)
+            await turned_to(dialog, "step 1 of 2")
+            dialog.resolve("Hilltop-Repeater")
+            await turned_to(dialog, "step 2 of 2")
+            assert [c.value for c in dialog._choices()] == ["Lakeside"], "the tuned node is out"
+            dialog.resolve(CANCEL)  # Esc on step 2 turns back, not out
+            await turned_to(dialog, "step 1 of 2")
+            assert dialog._current_choice().value == "Hilltop-Repeater", "still highlighted"
+            dialog.resolve("Hilltop-Repeater")
+            await turned_to(dialog, "step 2 of 2")
+            dialog.resolve("Lakeside")
             result = await asyncio.wait_for(run, timeout=2)
-            assert result.summary == {"best": 20}, "the last sweep's summary comes back"
+            assert result.summary == {"best": 20}, "the sweep's summary comes back"
 
         await asyncio.wait_for(session.run(main()), timeout=5)
 
-    assert swept == [("Hilltop-Repeater", "Lakeside", 2)], "both pickers under the sweep"
-    assert session._stack == [], "and both visits pop on the way out"
+    assert swept == [("Hilltop-Repeater", "Lakeside", 0)], "nothing floats under the sweep"
+    assert [p.split(" — ")[1] for p in pages] == [
+        "node to tune · step 1 of 2",
+        "measure at · step 2 of 2",
+        "node to tune · step 1 of 2",
+        "measure at · step 2 of 2",
+    ]
+    assert session._stack == [], "and the dialog is gone on the way out"
 
 
 # --- refreshing a visited list's rows ----------------------------------------
@@ -306,6 +323,138 @@ def test_replace_items_keeps_the_filter_and_follows_the_highlighted_row() -> Non
     assert screen.title == "Editor · 1 staged"
     assert screen._filter == "a", "the typed filter survives the swap"
     assert screen._current_choice().value == "b", "the highlight followed its row"
+
+
+def test_turn_page_drops_the_filter_and_highlights_the_named_row() -> None:
+    """A page turned is a new question, so nothing typed for the last one rides along.
+
+    The opposite claim from ``replace_items``: that one refreshes the same list, this one
+    shows a different one in the same box. The query typed to find the node to tune would
+    narrow the *measure at* list to nothing it was meant for, and the highlight lands on
+    the page's own default — its previous answer, when turned back to — never on a row
+    that happens to share a value with the one last highlighted.
+    """
+    screen = SelectScreen(
+        "Link — step 1 of 2",
+        [Choice("alpha", "a"), Choice("beta", "b"), Choice("gamma", "g")],
+    )
+    screen.handle("text", "b")
+    assert screen._current_choice().value == "b"
+
+    screen.turn_page(
+        [Choice("beta", "b"), Choice("gamma", "g")],
+        title="Link — step 2 of 2",
+        prompt="Now the other end:",
+        default="g",
+    )
+    assert screen.title == "Link — step 2 of 2"
+    assert screen._prompt == "Now the other end:"
+    assert screen._filter == "", "the last page's query is gone"
+    assert screen._current_choice().value == "g", "the page's own default, not the old row"
+
+    screen.turn_page([Choice("alpha", "a"), Choice("beta", "b")], title="Link — step 1 of 2")
+    assert screen._current_choice().value == "a", "no default: the first row"
+
+
+# --- a wizard is a stepped chain in one box ------------------------------------
+
+
+async def test_a_wizard_turns_one_box_between_its_steps() -> None:
+    """Esc on a later step turns back a page; the box is pushed once and popped once.
+
+    Two picks used to be two popups stacked, each a frame to walk back through. A popup
+    is a question, not a place: the chain is one list turning its page, and it is gone
+    before the caller opens whatever the answers were for.
+    """
+    from meshterm.ui.menus import WizardPage, run_wizard
+
+    shown: list[tuple[str, str]] = []
+
+    def first(values: list) -> WizardPage:
+        return WizardPage(
+            "Link — step 1 of 2", [Choice("alpha", "a"), Choice("beta", "b")], default=values[0]
+        )
+
+    def second(values: list) -> WizardPage:
+        return WizardPage(
+            f"Link — after {values[0]} · step 2 of 2",
+            [Choice("gamma", "g"), Choice("delta", "d")],
+            default=values[1],
+        )
+
+    with create_pipe_input() as inp:
+        session = _session(inp)
+
+        async def main() -> None:
+            run = asyncio.ensure_future(run_wizard(session, [first, second]))
+            box = await _screen_at(session, 1)
+            shown.append((box.title, box._current_choice().value))
+            box.resolve("b")
+            while "step 2" not in box.title:
+                await asyncio.sleep(0)
+            shown.append((box.title, box._current_choice().value))
+            box.resolve("d")
+            answers = await asyncio.wait_for(run, timeout=2)
+            assert answers == ["b", "d"]
+            assert session._stack == [], "popped before the answers come back"
+
+            # Turned back: step 2's Esc re-shows step 1 with its answer highlighted.
+            run = asyncio.ensure_future(run_wizard(session, [first, second]))
+            box = await _screen_at(session, 1)
+            box.resolve("a")
+            while "step 2" not in box.title:
+                await asyncio.sleep(0)
+            box.resolve(CANCEL)
+            while "step 1" not in box.title:
+                await asyncio.sleep(0)
+            shown.append((box.title, box._current_choice().value))
+            assert session._stack == [box], "the same box, turned back"
+            box.resolve(CANCEL)  # Esc on the first step abandons
+            assert await asyncio.wait_for(run, timeout=2) is None
+            assert session._stack == []
+
+        await asyncio.wait_for(session.run(main()), timeout=5)
+
+    assert shown == [
+        ("Link — step 1 of 2", "a"),
+        ("Link — after b · step 2 of 2", "g"),
+        ("Link — step 1 of 2", "a"),
+    ]
+
+
+async def test_a_wizard_step_may_float_its_own_prompt_over_the_box() -> None:
+    """A step with nothing to list (a typed value) runs as an awaitable above the box.
+
+    The box stays on its last page underneath — it is the backdrop the prompt floats over
+    — and ``None`` from the prompt steps back exactly as Esc on a page would.
+    """
+    from meshterm.ui.menus import WizardPage, run_wizard
+
+    typed = iter([None, "3d"])  # Esc the first time, then a hex prefix
+
+    def first(values: list) -> WizardPage:
+        return WizardPage("Pick — step 1 of 2", [Choice("alpha", "a")], default=values[0])
+
+    async def second(values: list) -> str | None:
+        return next(typed)
+
+    def second_step(values: list):
+        return second(values)
+
+    with create_pipe_input() as inp:
+        session = _session(inp)
+
+        async def main() -> None:
+            run = asyncio.ensure_future(run_wizard(session, [first, second_step]))
+            box = await _screen_at(session, 1)
+            box.resolve("a")  # step 2 backs out at once → step 1 is asked again
+            while box.future is None or box.future.done():
+                await asyncio.sleep(0)
+            assert session._stack == [box], "the box never left"
+            box.resolve("a")
+            assert await asyncio.wait_for(run, timeout=2) == ["a", "3d"]
+
+        await asyncio.wait_for(session.run(main()), timeout=5)
 
 
 def test_replace_items_clamps_to_the_position_when_the_row_is_gone() -> None:

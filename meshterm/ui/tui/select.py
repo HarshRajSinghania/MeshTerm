@@ -408,12 +408,45 @@ class SelectScreen(Screen):
         self._filter = ""
         # Index into the currently-selectable (filtered) choices.
         self._index = 0
-        if default is not None:
-            selectable = [it for it in items if isinstance(it, Choice)]
-            for i, choice in enumerate(selectable):
-                if choice.value == default:
-                    self._index = i
-                    break
+        self._highlight(default)
+
+    def _highlight(self, default: Any) -> None:
+        """Land the highlight on the choice whose value is ``default`` (first row otherwise)."""
+        self._index = 0
+        if default is None:
+            return
+        for i, choice in enumerate(self._choices()):
+            if choice.value == default:
+                self._index = i
+                return
+
+    def turn_page(self, items: list, *, title: str, prompt: str = "", default: Any = None) -> None:
+        """Show a *different* list in the same box — a stepped dialog's next page, or its last.
+
+        The other way a list's rows change under a reader, and the opposite claim from
+        :meth:`replace_items`: that one refreshes the *same* list (its rows are data that
+        moved), so the filter and the highlight ride along. A page turned is a new question
+        — pick the node to tune, now pick where to measure — so nothing rides along: the
+        query typed to find a row on the last page would narrow this one to nothing it was
+        meant for, the scroll starts at the top, and the highlight lands on ``default`` (a
+        page turned *back* to offers its previous answer, exactly as a step of
+        :func:`~meshterm.ui.menus.run_steps` does) or on the first row.
+
+        Args:
+            items: The new page's rows, in display order.
+            title: The new heading — the one place the reader sees which step this is.
+            prompt: The instruction above the rows, or ``""`` for none.
+            default: The choice value to highlight, if present.
+        """
+        self._items = items
+        if self._hscroll_auto:
+            self._hscroll = any(getattr(item, "hscroll_from", 0) > 0 for item in items)
+        self.title = title
+        self._prompt = prompt
+        self._filter = ""
+        self._hshift = 0
+        self.scroll_to_top()
+        self._highlight(default)
 
     def replace_items(
         self, items: list, *, title: str | None = None, prompt: str | None = None

@@ -74,6 +74,15 @@ and `prompt_params` returns only the marker for the interactive path. Trace's pi
 re-reads its `TRACED` lane after each walk (`ContactListScreen.update_rows`), because that
 is the column the list is sorted by and a returning trace changes it.
 
+*Revised 2026-09-12 — TX optimize.* Keeping both pickers pushed under the sweep was the
+wrong reading of the rule for a **popup**: a popup asks, confirms or informs, and then it is
+gone — it is not a place to walk back to, and two of them stacked read as two places. The
+two picks are now one floating list that turns its page (`menus.run_wizard`, `… · step 1
+of 2`): Esc on the second step turns back to the first with the picked node still
+highlighted, Esc on the first leaves, and the box is popped before the sweep opens — so Esc
+from the sweep lands on the main menu, the sweep being the whole visit. Trace's picker is a
+full-screen contact list (a place), and stays as it is.
+
 **I. An entry chain of prompts was not a stack.** Five flows asked two or more things in a
 row, and Esc on any of them abandoned the whole flow rather than stepping back one — a
 mistyped 32-hex channel key cost the name typed before it. `menus.run_steps` now runs a

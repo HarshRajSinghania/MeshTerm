@@ -23,6 +23,10 @@ construction:
 * :func:`confirm_discard` — the shared are-you-sure dialog for leaving staged changes.
 * :func:`run_steps` — an entry flow of two or more prompts, run as a stack: Esc on one
   step goes back to the step before it, with what was answered there still in hand.
+* :func:`run_wizard` — the same chain drawn in **one** floating list: each step is a
+  :class:`WizardPage` the box turns to in place (``… · step 1 of 2``), so a flow that
+  picks two things opens one dialog, not two stacked ones — and the dialog is gone
+  before the screen it was gathering for opens.
 
 House rules the helpers encode (see the UX standards in ``CLAUDE.md``): a list carries
 no exit row — Esc leaves, and a row repeating it earned nothing for its two lines; the
@@ -502,6 +506,86 @@ async def run_steps(steps: Sequence[Callable[[list], Awaitable[Any]]]) -> list |
         values[index] = answer
         index += 1
     return values
+
+
+@dataclass(frozen=True)
+class WizardPage:
+    """One step of :func:`run_wizard`: what the shared list shows while that step is asked.
+
+    Attributes:
+        title: The box's heading for this step — name the feature and the step
+            (``"TX optimize — node to tune · step 1 of 2"``), since the title is the one
+            thing that says which page the reader is on.
+        items: The rows to pick from (:class:`Choice` and :class:`Separator`).
+        prompt: The one-line question above the rows.
+        default: The value to highlight — a step come back to hands over its previous
+            answer here, the same convention :func:`run_steps` gives its steps.
+    """
+
+    title: str
+    items: list
+    prompt: str = ""
+    default: Any = None
+
+
+async def run_wizard(
+    session: Any,
+    pages: Sequence[Callable[[list], WizardPage | Awaitable[Any]]],
+) -> list | None:
+    """Ask a chain of picks in **one** floating list, turning its page between steps.
+
+    The dialog form of :func:`run_steps`, for a flow whose steps are lists to pick from:
+    the same stack semantics — Esc on a step goes back to the one before it, with its
+    answer still highlighted; Esc on the first step abandons — but drawn as a single box
+    that turns its page (:meth:`~meshterm.ui.tui.select.SelectScreen.turn_page`) rather
+    than as one popup pushed over another. Two stacked pickers read as two places to be,
+    and a popup is not a place: it informs, confirms, or chooses, and then it is gone.
+    So the box is pushed once for the whole chain and popped before the answers are
+    returned — whatever the caller opens with them (a full-screen sweep, a session) has
+    nothing floating under it, and Esc from *there* lands where the flow was launched.
+
+    A step is a callable handed the answers so far (index ``i`` reads ``values[i]``). It
+    returns a :class:`WizardPage` for the box to turn to, or — for a step that is not a
+    list (a typed value where there is nothing to list) — an awaitable that runs its own
+    prompt, floated over the box on its last page, and resolves to the answer or ``None``
+    to step back. The first step must be a page; there is no box yet for anything else to
+    float over.
+
+    Args:
+        session: The running :class:`~meshterm.ui.tui.session.TuiSession`.
+        pages: The steps, in order.
+
+    Returns:
+        The answers, positionally, or ``None`` if the flow was abandoned.
+    """
+    from .tui import SelectScreen
+    from .tui.screen import CANCEL
+
+    values: list = [None] * len(pages)
+    index = 0
+    step = pages[0](values)
+    if not isinstance(step, WizardPage):
+        raise TypeError("the first step of a wizard must be a WizardPage")
+    screen = SelectScreen(step.title, step.items, prompt=step.prompt, default=step.default)
+    async with session.stay(screen) as visit:
+        while True:
+            answer = await visit.result() if isinstance(step, WizardPage) else await step
+            if answer is CANCEL or answer is None:
+                index -= 1
+                if index < 0:
+                    return None
+            else:
+                values[index] = answer
+                index += 1
+                if index == len(pages):
+                    return values
+            # Whichever way it went, the box now shows the step being asked — a page
+            # turned back to is rebuilt too, so it opens on its previous answer.
+            step = pages[index](values)
+            if isinstance(step, WizardPage):
+                screen.turn_page(
+                    step.items, title=step.title, prompt=step.prompt, default=step.default
+                )
 
 
 def section_heading(label: str) -> Separator:
