@@ -533,6 +533,38 @@ def compose_startup(screen: Screen, cols: int, rows: int) -> str:
     return "\n".join(lines)
 
 
+def compose_bare(screen: Screen, cols: int, rows: int) -> str:
+    """Compose a bare frame: the screen's body on blank rows, and nothing else.
+
+    No header, no footer, no title bar, no box, no wordmark — the frame
+    :attr:`~meshterm.ui.tui.screen.Screen.bare` asks for. The body is drawn at the
+    terminal's full width (the screen lays its own rows out across it) and sits a little
+    above true centre when it is shorter than the frame, the optical placement everything
+    else here anchors to. A body taller than the frame is windowed from the top and
+    scrolls, so a code that does not fit is at least whole while the reader is at the top
+    of it, with the URL under it a page down.
+
+    Args:
+        screen: The bare base screen.
+        cols: Terminal width.
+        rows: Terminal height.
+
+    Returns:
+        An ANSI string of exactly ``rows`` lines, each within ``cols`` columns.
+    """
+    # The height is known here and nowhere else, and a bare screen may size its body
+    # to it (the share screen fits its code to the rows), so it is noted *before* the
+    # body is asked for rather than after, the way the framed composers record it.
+    screen.note_viewport(rows)
+    body_lines = screen.render_body(cols)
+    while body_lines and not _ansi_width(body_lines[-1]):
+        body_lines.pop()  # a trailing blank row would push the block off its anchor
+    visible, _more_above, _more_below = _visible_slice(screen, body_lines, rows)
+    top = max(0, (rows - len(body_lines)) * 2 // 5)
+    lines = [""] * top + visible[: rows - top]
+    return "\n".join(lines)
+
+
 def _dialog_layout(screen: Screen, cols: int, rows: int) -> tuple[int, int, int, list[str]]:
     """Size a floating dialog: ``(outer_width, vpad, viewport, body_lines)``."""
     # Most dialogs stretch to a generous cap; a screen may instead request a natural width

@@ -172,6 +172,21 @@ deliberately, one at a time, and say why in the code.
   the query in its footer hint draws the body line only where the footer isn't drawn
   (`Platform.footer_fkeys`), never both: the query must be visible on every platform, and
   twice on none.
+- **A QR code is white on black, and when it is the answer it is the whole screen.**
+  Modules are pure white ink on a pure black field whatever theme the terminal runs
+  (`qr._STYLE`, both ends named) — a camera reads contrast, light-on-dark is what a
+  scanner expects of a screen — and never black on white. A share screen
+  (`qr.share_screen` → `qr.QrScreen`: the channel share, the contact card, the CLI's
+  share commands in the menu) is a **bare frame**: `Screen.bare` / `frame.compose_bare`
+  draw the body alone on blank rows — no header, no footer, no title bar, no box, no
+  hint, no F-key lane, no instruction — with nothing on it but the code and the URL it
+  encodes, sat a little above centre; Esc leaves, as everywhere. The code **fits itself
+  to the frame every paint**, width and rows both: a lighter error level, then a
+  narrower quiet zone, before it would ever be cut (a contact card is 57 cells and 29
+  rows at the standard fit; the PicoCalc is 53 across and a regular terminal 24 tall),
+  and when code and URL can't share the frame the code is whole at the top and the URL
+  a page down. The one exception is a ` ```qr ` fence in a written page, where the code
+  is an illustration drawn in the prose where the fence is.
 
 ### Written pages
 
@@ -521,7 +536,7 @@ branch on the platform per frame, and never `from meshterm.platforms import PLAT
   base style into every span, so a silent one changes colour inside a selected row. Same
   trap outside the theme: `MapCanvas` drops emphasis entirely where bold is brightness,
   since its colours arrive quantized and it can't know which bank they landed in, and the
-  fold's quantizer (`theme._nearest_slot_sgr`) states intent for it — a dim slot leaves as
+  fold's quantizer (`theme._nearest_slot_params`) states intent for it — a dim slot leaves as
   `22;3N`, never a bare `3N`, because `9N` is *how* the console spells bright and adjacent
   art spans (the wordmark's bevels, a raster's neighbouring cells) reset nothing between
   them, so a bare one inherits the intensity bit and lands a bank too high mid-row.

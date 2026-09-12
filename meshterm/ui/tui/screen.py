@@ -81,6 +81,12 @@ class Screen:
         chrome: Whether, as the base screen, this layer is wrapped in the session's
             persistent header/footer frame. A startup splash sets this ``False`` so the
             session instead centers it under the :attr:`banner` with no status bars.
+        bare: Whether, as the base screen, this layer is the *whole frame*: its body on
+            blank rows with no header, no footer, no title bar, no box and no wordmark —
+            for a screen that is one thing a camera or a reader looks at (the share
+            screen's QR code, see :func:`~meshterm.ui.qr.share_screen`). Nothing is
+            advertised on it: Esc leaves, and Esc is on every keyboard. Read before
+            :attr:`chrome`; a bare screen is never floating.
         banner: Block-glyph art (one string per row) drawn, centered, above a chromeless
             base screen. Ignored while ``chrome`` is ``True``.
         footnote: A short line drawn muted and centered *below* a chromeless base screen's
@@ -93,6 +99,7 @@ class Screen:
     modal: bool = False
     grow_only: bool = False
     chrome: bool = True
+    bare: bool = False
     banner: Sequence[str] | None = None
     footnote: str | None = None
 

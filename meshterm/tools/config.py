@@ -303,7 +303,7 @@ async def apply_ops(
                     "the device reported no public key — the advert cadence was not saved"
                 )
         elif kind == "share":
-            report.append(_share_contact(ctx, snapshot))
+            report.append(await _share_contact(ctx, snapshot))
         elif kind == "sync_clock":
             import time as _time
             from datetime import datetime
@@ -479,20 +479,18 @@ def _script_value(spec: SettingSpec, value: Any) -> str:
     return str(value)
 
 
-def _share_contact(ctx: AppContext, snapshot: dict) -> Facts:
-    """State this node's contact card — with the QR code drawn in the menu.
+async def _share_contact(ctx: AppContext, snapshot: dict) -> Facts:
+    """State this node's contact card — with the QR code drawn in the menu, full-frame.
 
-    The QR is for a phone pointed at the screen. Redirected into a file it is a block of
+    The QR is for a phone pointed at the screen, and there it takes the whole screen
+    (:func:`~meshterm.ui.qr.share_screen`). Redirected into a file it is a block of
     block characters around the one thing that is the answer, so a scripted run states the
     link by itself. There is no machine face for the code either, and never will be: it is
     a second rendering of ``url``.
     """
-    from rich.console import Group
-    from rich.text import Text
-
     from ..ui import fields
     from ..ui.config_editor import contact_share_url
-    from ..ui.qr import qr_text
+    from ..ui.qr import share_screen
     from ..ui.report import BARE, Facts
     from ..ui.surface import TuiUi
 
@@ -503,7 +501,7 @@ def _share_contact(ctx: AppContext, snapshot: dict) -> Facts:
     adv_type = int(snapshot.get("adv_type") or 1)
     url = contact_share_url(name, public_key, adv_type)
     if isinstance(ctx.ui, TuiUi):
-        ctx.ui.show(Group(qr_text(url), Text(""), Text(url, style="accent")))
+        await share_screen(ctx, name=name, url=url)
     return Facts(
         key="share",
         fields=(

@@ -44,7 +44,7 @@ from meshterm.ui.channels import (
     _next_free_slot,
     read_channel_slots,
 )
-from meshterm.ui.qr import qr_text
+from meshterm.ui.qr import QrScreen, fit_qr, qr_text
 
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
@@ -203,17 +203,74 @@ def test_decrypt_channel_text_rejects_malformed_hex() -> None:
 # -- QR rendering -------------------------------------------------------------
 
 
-def test_qr_text_renders_square_with_quiet_zone() -> None:
-    """qr_text produces block rows framed by a light quiet zone, wider than the data."""
-    console = Console(force_terminal=True, width=120, file=__import__("io").StringIO())
+def test_qr_text_renders_white_on_black_with_a_quiet_zone() -> None:
+    """qr_text draws white ink on a black field, whatever the terminal's own theme.
+
+    A camera reads contrast, and pure white on pure black is the most a screen has;
+    light-on-dark is what a scanner expects of a screen. Both ends are named so the
+    surrounding palette can't dilute either.
+    """
+    from meshterm.ui.theme import MESH_THEME
+
+    console = Console(
+        force_terminal=True,
+        color_system="truecolor",
+        width=120,
+        file=__import__("io").StringIO(),
+        theme=MESH_THEME,
+    )
     console.print(qr_text("meshcore://channel/add?name=Test&secret=" + "ab" * 16))
-    plain = _ANSI.sub("", console.file.getvalue()).rstrip("\n")
+    raw = console.file.getvalue()
+    assert "38;2;255;255;255" in raw, "the ink isn't pure white"
+    assert "48;2;0;0;0" in raw, "the field isn't pure black"
+    plain = _ANSI.sub("", raw).rstrip("\n")
     lines = plain.splitlines()
     assert lines, "QR produced no output"
     # A version-appropriate QR for this URL is at least ~25 modules wide plus an 8-module
     # quiet zone; the finder pattern makes the code non-trivial.
     assert len(lines[0]) >= 30
     assert any("█" in line for line in lines)  # dark modules were drawn
+
+
+def test_a_code_fits_itself_to_the_frame_it_is_drawn_in() -> None:
+    """A contact card is 57 cells and 29 rows at the standard fit; frames are smaller.
+
+    Rather than be cut — a cut code scans as nothing — the code steps down: a lighter
+    error level first (a screen is never smudged), then the narrower quiet zone. The
+    PicoCalc panel is 53 across; a regular terminal is 24 rows.
+    """
+    from rich.cells import cell_len
+
+    url = "meshcore://contact/add?name=YUL-Cartierville&public_key=" + "ab" * 32 + "&type=2"
+    standard = qr_text(url).plain.splitlines()
+    assert len(standard[0]) > 53 and len(standard) > 24  # the standard fit overflows both
+    for width in (80, 53, 45):
+        fitted = fit_qr(url, width).plain.splitlines()
+        assert max(cell_len(line) for line in fitted) <= width, width
+    assert len(fit_qr(url, 80, 24).plain.splitlines()) <= 24
+
+
+def test_the_share_screen_refits_its_code_to_the_frame_every_paint() -> None:
+    """The screen fits code *and* link first, the code alone next, and centres the rows."""
+    from rich.cells import cell_len
+
+    url = "meshcore://contact/add?name=YUL-Cartierville&public_key=" + "ab" * 32 + "&type=2"
+    screen = QrScreen(url, title="Share YUL-Cartierville")
+    assert screen.bare and not screen.floating
+
+    def code_rows(width: int, rows: int) -> list[str]:
+        screen.note_viewport(rows)  # what compose_bare states before asking for the body
+        lines = [_ANSI.sub("", line) for line in screen.render_body(width)]
+        assert max(cell_len(line) for line in lines) <= width
+        assert url[:40] in "".join(lines), "the link is under the code"
+        blank = next(i for i in range(len(lines) - 1, -1, -1) if not lines[i].strip())
+        return lines[:blank]  # the code is everything above the row that separates it
+
+    roomy = code_rows(120, 40)
+    assert len(roomy) == 29  # the standard fit, where there is room for it
+    assert roomy[0].startswith(" " * 30), "centred across the whole width"
+    assert len(code_rows(72, 24)) <= 24  # a regular terminal: the code whole, link below
+    assert len(code_rows(53, 26)) <= 26  # the PicoCalc: likewise
 
 
 # -- channel slot model -------------------------------------------------------

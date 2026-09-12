@@ -792,6 +792,36 @@ def test_compose_startup_is_chromeless_and_shows_banner() -> None:
     assert all(len(line.rstrip()) < 80 for line in plain.split("\n"))
 
 
+def test_compose_bare_is_the_body_alone_on_blank_rows() -> None:
+    """A bare frame: no header, no footer, no title, no box — the body, sat a little high."""
+    body = Group(Text("CODE", justify="center"), Text("https://x", justify="center"))
+    screen = ScrollScreen(body, title="Share x", floating=False)
+    screen.bare = True
+    out = frame.compose_bare(screen, 53, 26)
+    rows = out.split("\n")
+    assert len(rows) == 26  # fills the terminal height exactly
+    plain = [Text.from_ansi(row).plain for row in rows]
+    assert not any("Share x" in row or "Esc" in row for row in plain)  # no title, no hint
+    assert not any("─" in row or "│" in row or "╭" in row for row in plain)  # no box
+    filled = [i for i, row in enumerate(plain) if row.strip()]
+    assert filled == [9, 10]  # two body rows, anchored at 2/5 of the blank space
+    assert plain[9].rstrip() == " " * 24 + "CODE"  # centred across the whole width
+    assert screen._scroll_viewport == 26  # the height, stated before the body was asked for
+
+
+def test_compose_bare_windows_a_body_taller_than_the_frame_from_the_top() -> None:
+    """Too tall to sit, the body scrolls: the top of it — the code — is whole first."""
+    body = Group(*(Text(f"row {i}") for i in range(40)))
+    screen = ScrollScreen(body, floating=False)
+    screen.bare = True
+    rows = Text.from_ansi(frame.compose_bare(screen, 53, 26)).plain.split("\n")
+    assert len(rows) == 26
+    assert rows[0].strip() == "row 0" and rows[25].strip() == "row 25"
+    screen.scroll_to_bottom()
+    rows = Text.from_ansi(frame.compose_bare(screen, 53, 26)).plain.split("\n")
+    assert rows[25].strip() == "row 39"
+
+
 def test_startup_splash_gives_rows_back_in_order_when_short() -> None:
     """A short terminal sheds the blank line first, then the top of the mark — never the box.
 
@@ -2840,6 +2870,22 @@ def test_a_dialog_frame_is_composed_here_not_handed_to_prompt_toolkit() -> None:
     body = "\n".join(rows)
     assert "Remove this contact?" in _plain(body)
     assert "the list beneath" in _plain(body), "the backdrop must show around the box"
+
+
+def test_a_bare_base_paints_no_chrome_at_all() -> None:
+    """The session draws a bare base through compose_bare: no bars, no lane, no box."""
+    screen = ScrollScreen(Text("CODE", justify="center"), title="Share x", floating=False)
+    screen.bare = True
+    session = _framed_session()
+    session.push(screen)
+    text = session._plain_frame()
+    assert text is not None
+    rows = text.split("\n")
+    assert len(rows) == 26
+    plain = _plain(text)
+    assert "CODE" in plain
+    for chrome in ("MeshTerm", "Share x", "Esc", "F1", "─", "│"):
+        assert chrome not in plain, f"a bare frame drew {chrome!r}"
 
 
 def test_the_busy_overlay_is_still_prompt_toolkits_to_place() -> None:

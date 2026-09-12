@@ -15,8 +15,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 import typer
-from rich.console import Group
-from rich.text import Text
 
 from ..context import AppContext
 from ..core import exitcodes
@@ -109,7 +107,7 @@ class ChannelsTool(Tool):
         else:
             secret = normalize_secret(params["secret"]) if params.get("secret") else random_secret()
             await write_channel(ctx, device, idx, name, secret)
-        self._show_qr(ctx, share_url(name, secret))
+        await self._show_qr(ctx, name, share_url(name, secret))
         return ToolResult(
             summary={"index": idx, "name": name},
             report=(_written(idx, name, secret),),
@@ -163,7 +161,7 @@ class ChannelsTool(Tool):
                 report=(_written(idx, None, None, shown=False),),
                 exit_code=exitcodes.NO_RESULT,
             )
-        self._show_qr(ctx, share_url(slot.name, slot.secret))
+        await self._show_qr(ctx, slot.name, share_url(slot.name, slot.secret))
         return ToolResult(
             summary={"index": idx, "shared": True},
             report=(_written(idx, slot.name, slot.secret),),
@@ -195,18 +193,19 @@ class ChannelsTool(Tool):
         )
 
     @staticmethod
-    def _show_qr(ctx: AppContext, url: str) -> None:
+    async def _show_qr(ctx: AppContext, name: str, url: str) -> None:
         """Draw a channel's share link as a QR code — in the menu, and only there.
 
-        The QR is for a phone pointed at the screen. Piped into a file it is a block of
-        block characters wrapped around the one thing that is actually the answer, so a
-        scripted run states the link and nothing else.
+        The QR is for a phone pointed at the screen, and there it takes the whole screen
+        (:func:`~meshterm.ui.qr.share_screen`). Piped into a file it is a block of block
+        characters wrapped around the one thing that is actually the answer, so a scripted
+        run states the link and nothing else.
         """
-        from ..ui.qr import qr_text
+        from ..ui.qr import share_screen
         from ..ui.surface import TuiUi
 
         if isinstance(ctx.ui, TuiUi):
-            ctx.ui.show(Group(qr_text(url), Text(""), Text(url, style="accent")))
+            await share_screen(ctx, name=name, url=url)
 
     def register_cli(self, app: typer.Typer) -> None:
         """Register the ``channels`` subcommand group.

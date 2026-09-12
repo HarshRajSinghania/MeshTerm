@@ -76,6 +76,10 @@ MESH_THEME = Theme(
         # A confirmed companion's name on the startup device picker: pure white so the
         # devices we've actually talked to before jump out above the merely-detected ports.
         "device.known": "bold #ffffff",
+        # A QR code's modules: pure white ink on a pure black field, both ends named so
+        # no palette can dilute the contrast a camera reads (see ui/qr.py). Never black
+        # on white — a light-on-dark code is what a scanner expects of a screen.
+        "qr": "#ffffff on #000000",
         # The picker's Bluetooth TYPE badge: a white rune on the official Bluetooth blue
         # (Pantone 300, #0057b8), echoing the real logo so BLE reads at a glance.
         "bluetooth": "bold #ffffff on #0057b8",
@@ -299,6 +303,7 @@ MESH_THEME_16 = Theme(
         "err.reverse": "reverse bold color(9)",
         "you": "bold color(15)",
         "device.known": "bold color(15)",
+        "qr": "bold color(15) on color(0)",
         "bluetooth": "bold color(15) on color(4)",
         "bluetooth.edge": "not bold color(4)",
         "ok": "bold color(10)",
@@ -771,8 +776,11 @@ _FOLD_TABLE: dict[int, str] | None = None
 #: console downsamples everything it renders itself, but the braille canvases
 #: (``ui.mapcanvas``) emit their own truecolor escapes which pass through Rich verbatim
 #: — the fold quantizes those to the 16 slots so the contract holds for every byte out.
-_SGR_RGB = _re.compile(r"\x1b\[([34])8;2;(\d+);(\d+);(\d+)m")
-_SGR_256 = _re.compile(r"\x1b\[([34])8;5;(\d+)m")
+#: Any SGR sequence, its parameter list captured whole. The quantizer walks the list
+#: rather than matching a colour standing alone: Rich writes a style's foreground and
+#: background as *one* sequence (``ESC[38;2;255;255;255;48;2;0;0;0m`` — a QR module),
+#: and a colour in the middle of such a list is no less a colour for having company.
+_SGR = _re.compile(r"\x1b\[([\d;]*)m")
 
 _SLOT_RGBS: tuple[tuple[int, int, int], ...] = tuple(
     (int(h.lstrip("#")[0:2], 16), int(h.lstrip("#")[2:4], 16), int(h.lstrip("#")[4:6], 16))
@@ -784,8 +792,11 @@ _SLOT_RGBS: tuple[tuple[int, int, int], ...] = tuple(
 _SLOT_CACHE: dict[tuple[bool, int, int, int], str] = {}
 
 
-def _nearest_slot_sgr(background: bool, r: int, g: int, b: int) -> str:
-    """The plain 16-colour SGR closest to ``(r, g, b)`` in the :data:`_VT_SLOTS` palette.
+def _nearest_slot_params(background: bool, r: int, g: int, b: int) -> str:
+    """The 16-colour SGR *parameters* closest to ``(r, g, b)`` in the :data:`_VT_SLOTS` palette.
+
+    ``22;31``, ``91``, ``40`` — without the ``ESC[…m`` around them, so the answer can be
+    spliced into a sequence that carries other parameters too (:func:`_quantize_sgr`).
 
     Foregrounds may land on any slot (30–37 / 90–97); backgrounds only on 0–7 (the VT has
     no bright backgrounds), so a bright colour used as a fill picks its dim-bank cousin.
@@ -812,11 +823,11 @@ def _nearest_slot_sgr(background: bool, r: int, g: int, b: int) -> str:
             ),
         )
         if background:
-            sgr = f"\x1b[{40 + slot}m"
+            sgr = f"{40 + slot}"
         elif slot < 8:
-            sgr = f"\x1b[22;{30 + slot}m"
+            sgr = f"22;{30 + slot}"
         else:
-            sgr = f"\x1b[{90 + slot - 8}m"
+            sgr = f"{90 + slot - 8}"
         cached = _SLOT_CACHE[key] = sgr
     return cached
 
@@ -834,19 +845,38 @@ def _rgb_of_256(index: int) -> tuple[int, int, int]:
 
 
 def _quantize_sgr(text: str) -> str:
-    """Fold any embedded truecolor / 256-colour SGR down to the 16 palette slots."""
-    if "[38;2;" not in text and "[48;2;" not in text and "8;5;" not in text:
+    """Fold any embedded truecolor / 256-colour SGR down to the 16 palette slots.
+
+    Every sequence's parameter list is walked (see :data:`_SGR`), so a colour folds
+    whether it stands alone or shares its sequence with a second colour or an attribute.
+    """
+    if "8;2;" not in text and "8;5;" not in text:
         return text
-    text = _SGR_RGB.sub(
-        lambda m: _nearest_slot_sgr(
-            m.group(1) == "4", int(m.group(2)), int(m.group(3)), int(m.group(4))
-        ),
-        text,
-    )
-    return _SGR_256.sub(
-        lambda m: _nearest_slot_sgr(m.group(1) == "4", *_rgb_of_256(int(m.group(2)))),
-        text,
-    )
+    return _SGR.sub(_quantize_params, text)
+
+
+def _quantize_params(match: _re.Match[str]) -> str:
+    """One SGR sequence with each ``38/48;2;r;g;b`` and ``38/48;5;n`` in it folded to a slot."""
+    params = match.group(1).split(";")
+    out: list[str] = []
+    i = 0
+    while i < len(params):
+        head = params[i]
+        if head in ("38", "48") and i + 1 < len(params):
+            background = head == "48"
+            mode = params[i + 1]
+            rgb = params[i + 2 : i + 5]
+            if mode == "2" and len(rgb) == 3 and all(x.isdigit() for x in rgb):
+                out.append(_nearest_slot_params(background, *(int(x) for x in rgb)))
+                i += 5
+                continue
+            if mode == "5" and i + 2 < len(params) and params[i + 2].isdigit():
+                out.append(_nearest_slot_params(background, *_rgb_of_256(int(params[i + 2]))))
+                i += 3
+                continue
+        out.append(head)
+        i += 1
+    return f"\x1b[{';'.join(out)}m"
 
 
 def _build_fold_table() -> dict[int, str]:

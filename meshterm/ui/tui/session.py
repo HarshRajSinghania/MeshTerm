@@ -1824,6 +1824,9 @@ class TuiSession:
         scrub = base.consume_edge_scrub()
         if scrub:
             self._scrub_right_columns(scrub)
+        # A bare base (the share screen's QR code) is its body on blank rows, nothing else.
+        if base.bare:
+            return self._emit(frame.compose_bare(base, cols, rows))
         # A chromeless base (the startup splash) forgoes the header/footer bars and is
         # centered under its banner instead of stretched across the terminal.
         if not base.chrome:

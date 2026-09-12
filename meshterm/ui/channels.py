@@ -75,7 +75,7 @@ from .menus import (
     run_steps,
     section_heading,
 )
-from .qr import share_popup
+from .qr import share_screen
 from .theme import glyph
 from .tui import CANCEL, Choice, SelectScreen, Separator
 from .widgets import _age_seconds, _format_age, channel_glyph, format_ago
@@ -990,7 +990,7 @@ async def _create_private(
         return 0
     secret = random_secret()
     await write_channel(ctx, device, idx, name.strip(), secret)
-    await _show_share(ctx, name.strip(), secret, intro="Share this channel:")
+    await _show_share(ctx, name.strip(), secret)
     return 1
 
 
@@ -1032,7 +1032,7 @@ async def _add_public(
         name = f"#{name}"
     secret = derive_secret(name)  # what the firmware will compute; kept for the QR/share
     await write_channel(ctx, device, idx, name, None)  # None => firmware derives the key from name
-    await _show_share(ctx, name, secret, intro="Share this channel:")
+    await _show_share(ctx, name, secret)
     return 1
 
 
@@ -1209,11 +1209,9 @@ async def _reorder_channels(ctx: AppContext, device: Device, slots: list[Channel
 # --- shared views ------------------------------------------------------------
 
 
-async def _show_share(
-    ctx: AppContext, name: str, secret: bytes, *, intro: str = "Scan to add this channel:"
-) -> None:
-    """Show the channel's QR code and its share URL in a dismissable window."""
-    await share_popup(ctx, name=name, url=share_url(name, secret), intro=intro)
+async def _show_share(ctx: AppContext, name: str, secret: bytes) -> None:
+    """Show the channel's QR code and its share URL, full-frame (see ``share_screen``)."""
+    await share_screen(ctx, name=name, url=share_url(name, secret))
 
 
 async def _show_key(ctx: AppContext, slot: ChannelSlot) -> None:

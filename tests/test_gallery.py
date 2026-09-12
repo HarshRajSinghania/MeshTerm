@@ -868,6 +868,14 @@ def _join_discord(cols: int, rows: int) -> Screen:
     return AboutPage("Join Discord", join_discord())
 
 
+def _share_qr(cols: int, rows: int) -> Screen:
+    """The share screen: a contact card's code and link on a bare frame (the widest QR)."""
+    from meshterm.ui.qr import QrScreen
+
+    url = "meshcore://contact/add?name=Lakeside&public_key=" + "ab" * 32 + "&type=2"
+    return QrScreen(url, title="Share Lakeside")
+
+
 _ENTRIES: list[_Entry] = [
     _Entry("dashboard", _dashboard),
     _Entry("contacts", _contacts),
@@ -902,6 +910,7 @@ _ENTRIES: list[_Entry] = [
     _Entry("about_author", _about_author),
     _Entry("join_discord", _join_discord),
     _Entry("support_project", _support_project),
+    _Entry("share_qr", _share_qr),
 ]
 
 #: (platform, cols, rows) combos every entry above renders under. PicoCalc gets both its

@@ -331,9 +331,11 @@ def _qr(data: str) -> RenderableType:
         data: The fence's body — the URL to encode.
 
     Returns:
-        The code, from :func:`~meshterm.ui.qr.qr_text` — the same black-on-white widget
-        the share popups draw, so a QR looks the same everywhere in MeshTerm and reads
-        the same whatever palette the terminal is running.
+        The code, from :func:`~meshterm.ui.qr.qr_text` — the same white-on-black widget
+        the share screen draws, so a QR looks the same everywhere in MeshTerm and reads
+        the same whatever palette the terminal is running. This is the one place a code
+        sits inside a page rather than taking the whole frame: it is an illustration in
+        the prose, drawn where the fence is.
     """
     from .qr import qr_text
 

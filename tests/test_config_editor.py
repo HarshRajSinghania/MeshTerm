@@ -370,27 +370,31 @@ def test_contact_share_url_defaults_to_companion_type() -> None:
     assert contact_share_url("n", "00" * 32).endswith("&type=1")
 
 
-async def test_show_contact_card_pops_the_qr_over_the_link() -> None:
-    """The contact card pops a QR code over its link, in one floating view.
+async def test_show_contact_card_is_the_qr_over_the_link_on_a_bare_frame() -> None:
+    """The contact card is a QR code over its link, and it takes the whole screen.
 
-    A scannable code above the raw ``meshcore://`` link, titled with the node's name.
+    A scannable code above the raw ``meshcore://`` link, on a bare frame — no header,
+    footer, title or box competes with the code for a camera's attention.
     """
     from types import SimpleNamespace
 
     from meshterm.ui.config_editor import show_contact_card
+    from meshterm.ui.qr import QrScreen
+    from meshterm.ui.surface import TuiUi
 
-    calls: list = []
+    pushed: list = []
 
-    class _Ui:
-        async def view(self, renderable: Any, **kwargs: Any) -> None:
-            calls.append((renderable, kwargs))
+    async def run_screen(screen: Any) -> None:
+        pushed.append(screen)
 
-    await show_contact_card(SimpleNamespace(ui=_Ui()), "Hub", "AB" * 32, node_type=2)
-    ((renderable, kwargs),) = calls
-    assert kwargs["title"] == "Share Hub"
-    console = Console(width=200, record=True)  # wide enough that the link never wraps
-    console.print(renderable)
-    out = console.export_text()
+    ui = TuiUi(SimpleNamespace(run_screen=run_screen))
+    await show_contact_card(SimpleNamespace(ui=ui), "Hub", "AB" * 32, node_type=2)
+    (screen,) = pushed
+    assert isinstance(screen, QrScreen)
+    assert screen.title == "Share Hub"
+    assert screen.bare and not screen.floating, "a QR code is full-screen, never a popup"
+    screen.note_viewport(60)
+    out = _plain(screen.render_body(200))  # wide: the link never wraps
     assert f"meshcore://contact/add?name=Hub&public_key={'ab' * 32}&type=2" in out
     assert "█" in out  # the QR actually drew its modules
 

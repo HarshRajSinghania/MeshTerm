@@ -243,6 +243,37 @@ def test_fold_quantizes_embedded_truecolor_to_the_slots() -> None:
     assert "38;5;" not in eight_bit
 
 
+def test_fold_quantizes_a_colour_that_shares_its_sequence_with_another() -> None:
+    """Rich writes a style's fg and bg as one sequence; each colour in it folds on its own.
+
+    The QR module's white-on-black is the case that found it: ``ESC[38;2;…;48;2;…m`` is
+    two colours in one list, and a matcher for a colour standing alone saw neither.
+    """
+    set_platform(PICOCALC)
+    folded = fold_text("\x1b[38;2;255;255;255;48;2;0;0;0m█\x1b[0m")
+    assert "8;2;" not in folded, folded
+    assert folded.startswith("\x1b[97;40m"), folded  # bright white ink, black field
+    with_attribute = fold_text("\x1b[1;38;5;201;48;2;94;234;212mX\x1b[0m")
+    assert "8;5;" not in with_attribute and "8;2;" not in with_attribute
+    assert with_attribute.startswith("\x1b[1;"), with_attribute  # the bold survives, in place
+
+
+def test_the_qr_style_is_white_on_black_on_both_themes() -> None:
+    """A code is white ink on a black field on every platform — the PicoCalc's own slots."""
+    from rich.style import Style
+
+    regular = (
+        Style.parse(MESH_THEME.styles["qr"])
+        if isinstance(MESH_THEME.styles["qr"], str)
+        else MESH_THEME.styles["qr"]
+    )
+    assert regular.color and regular.color.triplet.hex == "#ffffff"
+    assert regular.bgcolor and regular.bgcolor.triplet.hex == "#000000"
+    console = MESH_THEME_16.styles["qr"]
+    assert console.color and console.color.number == 15
+    assert console.bgcolor and console.bgcolor.number == 0
+
+
 def test_fold_drops_zero_width_machinery() -> None:
     """Variation selectors and zero-width joiners are dropped — they have no cell to occupy."""
     set_platform(PICOCALC)

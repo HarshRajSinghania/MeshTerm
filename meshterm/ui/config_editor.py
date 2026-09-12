@@ -1238,9 +1238,9 @@ def contact_share_url(name: str, public_key: str, node_type: int = 1) -> str:
 async def show_contact_card(
     ctx: AppContext, name: str, public_key: str, node_type: int = 1
 ) -> None:
-    """Pop up a node's contact card: a scannable QR code over the raw share link.
+    """Show a node's contact card: a scannable QR code over the raw share link, full-frame.
 
-    THE share-a-contact popup, used both for our own node (the advert menu's
+    THE share-a-contact screen, used both for our own node (the advert menu's
     ``Share QR / URI``) and for any full-keyed contact (the node detail page's
     ``Share contact``): a phone scans the code — or the link is passed along as text —
     and the companion app adds the node as a contact.
@@ -1252,14 +1252,9 @@ async def show_contact_card(
         node_type: The MeshCore advert type byte (1 companion, 2 repeater, 3 room,
             4 sensor).
     """
-    from .qr import share_popup
+    from .qr import share_screen
 
-    await share_popup(
-        ctx,
-        name=name,
-        url=contact_share_url(name, public_key, node_type),
-        intro="Scan to add this node as a contact:",
-    )
+    await share_screen(ctx, name=name, url=contact_share_url(name, public_key, node_type))
 
 
 async def _show_contact_card(ctx: AppContext, snapshot: dict) -> None:
