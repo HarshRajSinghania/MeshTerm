@@ -6,12 +6,15 @@ Credentialed nodes lead the list in their own 🔑 section (those are the nodes 
 administered, the likeliest picks), repeaters and room servers follow, then everything
 else; each section orders by how recently the node was heard. Any contact with a public
 key is offerable, since holding a password is a fact about the *user*, not the node.
+
+The pick is a **popup**: a question asked on the way into a tool, drawn as a box and gone
+the moment it is answered — never a frame kept under the tool's own page for Esc to land
+back on. It used to be held pushed as a hub for the whole visit, so leaving the admin page
+landed on the list it was picked from; that read as two places where there is one.
 """
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
 
 from rich.text import Text
@@ -25,11 +28,10 @@ if TYPE_CHECKING:
 def admin_picker_rows(ctx: AppContext, contacts: list[Contact]) -> tuple[list, list[Contact]]:
     """Build the admin-node picker's grouped rows and the contacts they map to.
 
-    Shared so the pick and any later redraw are guaranteed identical: :func:`pick_admin_node`
-    runs these rows, and a caller can rebuild the same list as a static backdrop to float a
-    follow-up dialog (the admin login) over the very list the node was picked from. Rows carry
-    ``value = contact.name``, so a picked name (or a backdrop's ``default``) resolves through
-    ``candidates``.
+    Shared so every surface that offers the pick draws the same list: :func:`pick_admin_node`
+    runs these rows as a one-shot popup, and TX optimize turns them as the first page of its
+    stepped dialog. Rows carry ``value = contact.name``, so a picked name (or a ``default``)
+    resolves through ``candidates``.
 
     Args:
         ctx: Shared application context (for the admin store, which sorts remembered nodes up).
@@ -92,18 +94,21 @@ async def pick_admin_node(
     *,
     title: str,
     prompt: str,
+    default: Contact | None = None,
 ) -> Contact | None:
     """Pick a remote node to administer, credentialed and infrastructure nodes first.
 
-    The one-shot form: the list comes down as soon as a node is picked. A caller whose next
-    step belongs *over* the list — the admin login, which asks about the node just picked —
-    wants :func:`admin_node_visit` instead.
+    A floating popup that comes down as soon as a node is picked. A caller that asks again
+    — the login it tried was refused — hands the last pick back as ``default`` so the list
+    reopens on it, the way a step of :func:`~meshterm.ui.menus.run_steps` offers its
+    previous answer.
 
     Args:
         ctx: Shared application context (for the UI surface and the admin store).
         contacts: The device's known contacts.
         title: The select screen's heading (names the calling feature).
         prompt: One line above the list saying what the pick is for.
+        default: The node to open highlighted on, if any.
 
     Returns:
         The chosen contact, or ``None`` if cancelled (or there is nothing to pick).
@@ -113,64 +118,14 @@ async def pick_admin_node(
         await _note_nothing_to_pick(ctx, title)
         return None
 
-    choice = await ctx.ui.select(title, items, prompt=prompt)
+    choice = await ctx.ui.select(
+        title,
+        items,
+        prompt=prompt,
+        default=default.name if default is not None else None,
+        floating=True,
+    )
     return _resolve(candidates, choice)
-
-
-@asynccontextmanager
-async def admin_node_visit(
-    ctx: AppContext,
-    contacts: list[Contact],
-    *,
-    title: str,
-    prompt: str,
-) -> AsyncIterator[_AdminNodePicker | None]:
-    """Keep the node picker pushed for a whole visit, yielding a picker to draw from.
-
-    The list stays on the stack for the duration of the block, so everything the caller does
-    with a picked node — the password prompt, a rejection, the admin session itself — nests
-    *above* the very list the pick came from, with the picked node still highlighted, instead
-    of floating over a blank frame or being drawn again as a lookalike backdrop. Esc from any
-    of it is one pop back onto the list.
-
-    Yields ``None`` when there is nothing to pick (the caller has already been told).
-
-    Args:
-        ctx: Shared application context (for the UI surface and the admin store).
-        contacts: The device's known contacts.
-        title: The select screen's heading (names the calling feature).
-        prompt: One line above the list saying what the pick is for.
-    """
-    from .surface import TuiUi
-    from .tui import SelectScreen
-
-    items, candidates = admin_picker_rows(ctx, contacts)
-    if not candidates or not isinstance(ctx.ui, TuiUi):
-        if not candidates:
-            await _note_nothing_to_pick(ctx, title)
-        yield None
-        return
-    screen = SelectScreen(title, items, prompt=prompt)
-    async with ctx.ui.session.stay(screen) as visit:
-        yield _AdminNodePicker(visit, candidates)
-
-
-class _AdminNodePicker:
-    """The visited node list: :meth:`pick` is one round of it, resolved to a contact."""
-
-    __slots__ = ("_visit", "_candidates")
-
-    def __init__(self, visit: Any, candidates: list[Contact]) -> None:
-        """Bind the picker to the list's visit and the contacts its rows stand for."""
-        self._visit = visit
-        self._candidates = candidates
-
-    async def pick(self) -> Contact | None:
-        """Await one pick: the chosen contact, or ``None`` on Esc."""
-        from .tui.screen import CANCEL
-
-        choice = await self._visit.result()
-        return _resolve(self._candidates, None if choice is CANCEL else choice)
 
 
 async def _note_nothing_to_pick(ctx: AppContext, title: str) -> None:

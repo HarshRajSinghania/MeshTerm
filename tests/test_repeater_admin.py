@@ -387,30 +387,30 @@ def test_picker_rows_hue_each_name_by_its_own_key(tui_ctx) -> None:
     assert len(hues) == 2  # two repeaters, two identities — not one violet block
 
 
-async def test_login_password_floats_over_the_node_picker(tui_ctx) -> None:
-    """The admin-login password prompt floats over the picker itself, not a lookalike.
+async def test_the_node_picker_is_a_popup_gone_before_the_login(tui_ctx) -> None:
+    """The node pick is a floating question, answered and gone; a refused login re-asks it.
 
-    Regression: ``_login`` ran on an empty stack (the picker was popped when it returned),
-    so ``session.text`` pushed a *blank* base and the password box floated over an erased
-    frame. That was patched by redrawing a second, identical ``SelectScreen`` as a static
-    backdrop; the picker now simply never leaves the stack, so the base under the prompt is
-    the list the pick came from — the same object, still highlighted on the row the reader
-    chose — and Esc out of the prompt is one pop back onto it rather than out of the flow.
+    The picker used to stay pushed as a hub under the password prompt and the admin page,
+    so Esc from the page landed on the list it was picked from — two places where there
+    is one. Now it draws as a box over a blank base (a popup that is the only frame on the
+    stack would otherwise be painted full-frame), comes down on Enter, the password prompt
+    floats on its own, and Esc out of the prompt asks the question again with the same node
+    highlighted rather than dropping the reader on a list that never left.
     """
     ctx = tui_ctx
     session = ctx.ui.session
     pick_title = "Repeater admin — node to manage"
 
+    def picker_up() -> SelectScreen | None:
+        top = session.top
+        return top if isinstance(top, SelectScreen) and top.title == pick_title else None
+
     task = asyncio.ensure_future(open_repeater_admin(ctx))
     try:
-        picker = await _step_until(
-            lambda: (
-                session.top
-                if isinstance(session.top, SelectScreen) and session.top.title == pick_title
-                else None
-            )
-        )
+        picker = await _step_until(picker_up)
         assert picker is not None, "the node picker never opened"
+        assert picker.floating and session._has_float(), "drawn as a box…"
+        assert not session._base_screen().floating, "…over a blank base"
 
         # Walk to the repeater's row and commit it, the way a reader does.
         for _ in range(len(picker._items)):
@@ -420,24 +420,24 @@ async def test_login_password_floats_over_the_node_picker(tui_ctx) -> None:
             picker.handle("down")
         picker.handle("enter")
         prompt = await _step_until(
-            lambda: session._float_layers()[0] if session._has_float() else None
+            lambda: session.top if isinstance(session.top, TextScreen) else None
         )
-        assert isinstance(prompt, TextScreen)  # the password box floats
-
-        assert session._base_screen() is picker  # the very list, not a redrawn stand-in
-        current = picker._current_choice()  # still highlighted on the node being logged into
-        assert current is not None and current.value == "Yagi-Repeater"
+        assert prompt.floating and session._has_float(), "the password box floats"
+        assert picker not in session._stack, "the pick is answered, so the popup is gone"
 
         prompt.resolve(CANCEL)  # Esc — abandon the login…
-        again = await _step_until(lambda: session.top if session.top is picker else None)
-        assert again is picker, "…and land back on the list, one pop, place kept"
-        picker.handle("escape")  # Esc again leaves the flow
+        again = await _step_until(picker_up)
+        assert again is not picker, "…and the question is asked again, a fresh popup"
+        current = again._current_choice()
+        assert current is not None and current.value == "Yagi-Repeater", "same node highlighted"
+        again.handle("escape")  # Esc on the question leaves the flow
         result = await task
     finally:
         if not task.done():
             task.cancel()
 
     assert result is None  # no node was ever administered
+    assert session._stack == []
 
 
 # --- reading and applying against the simulator ----------------------------------------

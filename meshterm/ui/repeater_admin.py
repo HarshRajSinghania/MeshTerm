@@ -174,21 +174,24 @@ class AdminMenu(SelectScreen):
 async def open_repeater_admin(ctx: AppContext) -> dict[str, Any] | None:
     """Run the repeater-admin flow: pick a node, log in, and administer it.
 
-    The picker stays up for the whole flow, so leaving a node's admin session lands back on
-    the list rather than on the main menu — administering two repeaters in a row is one Esc
-    and a pick, not a round trip through the menu.
+    The pick is a popup — a question on the way in, gone once answered — so the admin page
+    opens over the main menu and Esc from it lands there: the page is the whole visit. A
+    login the node refuses (or never answers) re-asks the question with the same node
+    highlighted, so a mistyped password is one Enter and a retry, not a round trip. The
+    list used to stay pushed under the page as a hub, which read as two places where
+    there is one.
 
     Args:
         ctx: The shared application context (must be running the interactive TUI surface).
 
     Returns:
-        A summary of the last node administered (for the tool's log), or ``None`` if the
-        reader left the picker without ever getting into a session.
+        A summary of the node administered (for the tool's log), or ``None`` if the reader
+        left the picker without ever getting into a session.
 
     Raises:
         RuntimeError: If called outside the interactive menu (no full-screen session).
     """
-    from .admin_picker import admin_node_visit
+    from .admin_picker import pick_admin_node
     from .surface import TuiUi
 
     if not isinstance(ctx.ui, TuiUi):  # pragma: no cover - guarded by the menu-only caller
@@ -200,27 +203,19 @@ async def open_repeater_admin(ctx: AppContext) -> dict[str, Any] | None:
     # :class:`~meshterm.services.device_state.DeviceState`); the device handle below is still
     # needed for the admin login and the CLI session that follow.
     contacts = await ctx.devstate.contacts()
-    # The node list stays pushed for the whole flow, so the password prompt (and any
-    # rejection) floats over the very list the pick came from, and the admin session opens
-    # above it: Esc out of the session lands back on the list, ready to manage another node,
-    # and Esc again leaves. It used to draw a second, identical SelectScreen as a static
-    # backdrop for the login and then drop the list entirely before the session.
-    async with admin_node_visit(
-        ctx,
-        contacts,
-        title="Repeater admin — node to manage",
-        prompt="The remote node to set up (you need its admin password):",
-    ) as picker:
-        if picker is None:  # nothing offerable; the reader has been told
+    node: Contact | None = None
+    while True:
+        node = await pick_admin_node(
+            ctx,
+            contacts,
+            title="Repeater admin — node to manage",
+            prompt="The remote node to set up (you need its admin password):",
+            default=node,
+        )
+        if node is None:
             return None
-        summary: dict[str, Any] | None = None
-        while True:
-            node = await picker.pick()
-            if node is None:
-                return summary
-            if not await _login(ctx, device, node):
-                continue
-            summary = await _admin_session(ctx, device, node)
+        if await _login(ctx, device, node):
+            return await _admin_session(ctx, device, node)
 
 
 async def _login(ctx: AppContext, device: Device, node: Contact) -> bool:
@@ -241,8 +236,8 @@ async def _login(ctx: AppContext, device: Device, node: Contact) -> bool:
             f"Admin password for {node.name}",
             prompt="The node ignores admin commands without a login.",
             password=True,
-            # Floats over the picker backdrop the caller keeps pushed; the flag is the
-            # belt-and-suspenders so it never fills the frame even if that backdrop is absent.
+            # The picker popup is gone by now, so this is the only frame: the flag is what
+            # keeps it a box over a blank base rather than a full-frame prompt.
             floating=True,
         )
         if not password:

@@ -87,6 +87,13 @@ of the two pickers never looked like a question at all. `stay(dialog=True)` now 
 blank base under a popup's visit that `_run_dialog_screen` puts under a one-shot. Trace's
 picker is a full-screen contact list (a place), and stays as it is.
 
+*Same day — Repeater admin.* The same shape, one popup instead of two: the node picker was
+a hub under the password prompt and the admin page. It is now a floating one-shot
+(`session.select(floating=True)`, `admin_picker.pick_admin_node`), gone once answered; the
+admin page opens over the main menu and Esc from it lands there. A refused login re-asks
+the question with the same node highlighted. `admin_node_visit` is deleted — nothing keeps
+a popup pushed any more.
+
 **I. An entry chain of prompts was not a stack.** Five flows asked two or more things in a
 row, and Esc on any of them abandoned the whole flow rather than stepping back one — a
 mistyped 32-hex channel key cost the name typed before it. `menus.run_steps` now runs a

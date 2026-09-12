@@ -871,6 +871,7 @@ class TuiSession:
         filterable: bool = True,
         footer_hint: str | None = None,
         delete_hint: str = "",
+        floating: bool = False,
     ) -> Any:
         """Show a select screen; return the chosen value or ``None`` if cancelled.
 
@@ -879,7 +880,10 @@ class TuiSession:
         want no type-to-filter and a tailored hint. ``delete_hint`` (with rows marked
         :attr:`~meshterm.ui.tui.select.Choice.deletable`) surfaces the Delete key's atom
         while the highlight sits on such a row; Delete then resolves a
-        :class:`~meshterm.ui.tui.select.DeleteRequest` the caller unwraps.
+        :class:`~meshterm.ui.tui.select.DeleteRequest` the caller unwraps. ``floating``
+        is :meth:`text`'s: the list is a *question* asked on the way into a tool (which
+        node to administer) rather than the tool's own page, so it must draw as a box
+        even when it is the only frame on the stack — see :meth:`_floated`.
         """
         kwargs: dict[str, Any] = dict(
             prompt=prompt,
@@ -889,7 +893,8 @@ class TuiSession:
         )
         if footer_hint is not None:
             kwargs["footer_hint"] = footer_hint
-        result = await self.run_screen(SelectScreen(title, items, **kwargs))
+        runner = self._run_dialog_screen if floating else self.run_screen
+        result = await runner(SelectScreen(title, items, **kwargs))
         return None if result is CANCEL else result
 
     async def select_startup(
