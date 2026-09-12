@@ -150,6 +150,12 @@ def discipline_lane() -> int:
     return max(cell_len(glyph(category.icon)) for category in CATEGORIES)
 
 
+def _ordinal(n: int) -> str:
+    """``1 → "1st"``, ``2 → "2nd"``, ``11 → "11th"``, … for a record's standing."""
+    suffix = {1: "st", 2: "nd", 3: "rd"}.get(n if n < 20 else n % 10, "th")
+    return f"{n}{suffix}"
+
+
 def record_score(category: Category, record: DiscoveredPath) -> str:
     """A record's score in its discipline's unit, bounded where the walk was partial.
 
@@ -278,7 +284,10 @@ class RecordScreen(Screen):
                 (``▲`` repeater, …) on the graph; ``None`` falls back to generic dots.
         """
         super().__init__()
-        self.title = f"Record — {category.title} #{rank}"
+        # The bar says what kind of page this is; the header line under it names the
+        # record — its discipline, its standing, its metric.
+        self.title = "Record"
+        self._rank = rank
         self._record = record
         self._category = category
         self._resolve = resolve
@@ -403,16 +412,18 @@ class RecordScreen(Screen):
         return self._cursor if self._follow else None
 
     def _header(self) -> Text:
-        """The one-line identity above the strip: the discipline's mark, then the metric.
+        """The one-line identity above the strip: the discipline, the standing, the metric.
 
-        The record page's counterpart to the node page's identity header. The mark is the
-        discipline's own (the same one its board heading wears), the metric is the score in
-        the discipline's unit (:func:`record_score`), and that is the whole line: the
-        title bar already names the discipline and the standing, so the header spends its
-        cells on the one thing the record *is* — its number.
+        The record page's counterpart to the node page's identity header, read as one
+        sentence — ``🛣 Longest distance — 5th place: 112.0 km``. The discipline is written
+        the way its board heading writes it (:func:`discipline_label`, the mark padded to
+        the measured lane so ``🛣`` and ``🎯`` start their titles in the same cell), the
+        standing is the record's rank on that board, and the metric is the score in the
+        discipline's unit (:func:`record_score`). The title bar says only ``Record``: this
+        line is where the record is named.
         """
-        line = Text(glyph(self._category.icon))
-        line.append(" ")
+        line = Text(discipline_label(self._category, discipline_lane()))
+        line.append(f" — {_ordinal(self._rank)} place: ", style="muted")
         line.append(record_score(self._category, self._record), style="accent bold")
         return line
 

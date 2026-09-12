@@ -189,8 +189,12 @@ def test_record_graph_collapses_a_revisited_route_to_distinct_nodes() -> None:
 
 
 def test_record_dialog_title_names_the_discipline_and_rank() -> None:
-    """The title uses the plain discipline name and the board standing."""
-    assert _dialog(_record(), rank=3).title == "Record — Most nodes #3"
+    """The bar says only what kind of page this is; the header line names the record."""
+    screen = _dialog(_record(), rank=3)
+    assert screen.title == "Record"
+    assert (
+        _plain(screen.render_body(60)).splitlines()[0].endswith("Most nodes — 3rd place: 2 nodes")
+    )
 
 
 def test_record_dialog_marks_incomplete_distance_as_a_lower_bound() -> None:
@@ -340,31 +344,39 @@ def test_record_opens_on_info_with_route_and_area_tabs_beside_it() -> None:
     assert "Far" in "\n".join(body)  # the far-point name is a stat, not a drawing label
 
 
-def test_record_header_is_the_disciplines_mark_and_the_metric_above_the_strip() -> None:
-    """One line above the tabs: the discipline's own mark, then the score in its unit.
+def test_record_header_names_the_discipline_the_standing_and_the_metric() -> None:
+    """One line above the tabs: ``<mark> <discipline> — <nth> place: <score>``.
 
-    The node page's identity header, for a record: the title bar names the discipline
-    and the standing, so the header spends its cells on the number the record *is* —
-    and the score lane that used to repeat it on Info is gone.
+    The node page's identity header, for a record. The discipline is written the way its
+    board heading writes it — the mark padded to the measured lane, so a one-cell ``🛣``
+    and a two-cell ``🎯`` start their titles in the same cell — and the score lane that
+    used to repeat the metric on Info is gone.
     """
-    from meshterm.ui.theme import glyph
+    from meshterm.ui.records_screen import discipline_label, discipline_lane
 
     screen = _dialog(_record(), shape=_loop_shape())
     lines = _plain(screen.render_body(58)).splitlines()
-    mark = glyph(CATEGORY_BY_ID["grand_tour"].icon)
-    assert lines[0] == f"{mark} 2 nodes"  # the very first row, before the strip's air
+    grand_tour = CATEGORY_BY_ID["grand_tour"]
+    expected = f"{discipline_label(grand_tour, discipline_lane())} — 1st place: 2 nodes"
+    assert lines[0] == expected  # the very first row, before the strip's air
     assert "score" not in _plain(screen.render_body(58))
     for _ in range(3):  # the header stays put whichever tab is up
         screen.handle("tab")
-        assert _plain(screen.render_body(58)).splitlines()[0] == f"{mark} 2 nodes"
+        assert _plain(screen.render_body(58)).splitlines()[0] == expected
 
     partial = _record(
         category="long_haul",
         score=8.4,
         stats={"km_travelled": 8.4, "km_complete": False, "hop_count": 3, "distinct_nodes": 3},
     )
-    head = _plain(_dialog(partial).render_body(58)).splitlines()[0]
-    assert head.endswith("≥ 8.4 km")  # the board's bounded spelling, and no other
+    head = _plain(_dialog(partial, rank=5).render_body(58)).splitlines()[0]
+    assert head.endswith("Longest distance — 5th place: ≥ 8.4 km")  # the board's bounded spelling
+
+    # The mark lane is the board heading's: the two marks' titles start in one cell.
+    long_haul = CATEGORY_BY_ID["long_haul"]
+    assert cell_len(discipline_label(long_haul, discipline_lane()).split("Longest")[0]) == cell_len(
+        discipline_label(grand_tour, discipline_lane()).split("Most")[0]
+    )
 
 
 def test_record_route_tab_draws_the_walk_and_enter_traces_it() -> None:
