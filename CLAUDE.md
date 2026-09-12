@@ -85,11 +85,26 @@ deliberately, one at a time, and say why in the code.
   refreshes in place with `SelectScreen.replace_items`, which follows the highlighted row
   by value and keeps the filter. Rebuilding the screen is for when the rows it was holding
   a place in are genuinely gone (a purge, a delete) — and then say so.
+- **A popup is not a place.** The stack is for *places* — full-frame screens the reader
+  is *in* (a menu, a map, a list that is the tool's own page, an editor). A popup
+  *informs, confirms, or asks*, and then it is gone: it is never kept pushed as a hub
+  under the screen it was gathering for, so Esc from that screen lands where the tool
+  was launched from, not on a picker. The test is whether the reader is in it or being
+  asked something — a `SelectScreen` can be either (Channels is a place; "node to
+  manage" is a question). A question **draws as a box** even when it is the only frame
+  on the stack (the main menu is popped while a tool runs, and a lone floating screen
+  would otherwise be painted full-frame): `session.select(floating=True)`,
+  `session.text(floating=True)`, `session.stay(screen, dialog=True)` — all through
+  `TuiSession._floated`, which puts a blank base under it.
 - **An entry chain is a stack too.** A flow that asks two or more things in a row runs
   through `menus.run_steps`: each step gets the answers so far (to label itself, and to
   offer its own previous answer as its default) and returns `None` to step back, so Esc
   undoes one step instead of the whole flow. A trailing Cancel/verb confirm is still a
-  decision, not a step — its Cancel abandons.
+  decision, not a step — its Cancel abandons. Where the steps are *lists to pick from*,
+  the chain is **one popup that turns its page** — `menus.run_wizard` over `WizardPage`s
+  (`SelectScreen.turn_page`; title `Feature — subject · step 1 of 2`), never two popups
+  stacked. Esc on a later page turns back one, with that page's previous answer
+  highlighted; the box is popped before whatever the answers were for opens.
 - **Esc peels before it leaves.** A screen carrying a find-as-you-type filter treats the
   typed query as the most recent thing the reader entered: the first Esc clears it and the
   screen stays, the second leaves. One rule on all four (`SelectScreen` and everything
