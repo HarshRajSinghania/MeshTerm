@@ -907,6 +907,11 @@ async def open_records(ctx: AppContext) -> dict:
             footer_hint="↑↓ move · Enter open · Esc back",
             hscroll=True,  # a long walk slides under ←→ instead of dying at the fold
         )
+        # A place, not a question: the trophy case is the tool's own page, so it fills the
+        # frame whichever way in — from the menu, where it is the only screen and would be
+        # drawn full-frame anyway, and from a trace, where it opens over the still-pushed
+        # trace screen and used to come up as a content-sized box.
+        browser.floating = False
         # The browser stays pushed for the whole visit, so every dialog that belongs *over*
         # the trophy case — the discipline picker, the delete confirms, a record's floating
         # story — already has it drawn full-frame behind them, and the cursor is still on the

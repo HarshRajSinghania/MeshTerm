@@ -380,6 +380,36 @@ def _trophy_case(session, *, other_than=None):
     return None
 
 
+async def test_the_trophy_case_fills_the_frame_over_a_trace_too(tui_ctx) -> None:
+    """The trophy case is a place, so it is full-frame whichever way in.
+
+    From the menu it is the only screen and was drawn full-frame by the compositor's
+    fallback; opened from a trace — over the still-pushed trace screen — the same list
+    came up as a content-sized box, because a bare ``SelectScreen`` floats by default.
+    """
+    from meshterm.ui.tui.screen import ScrollScreen
+
+    ctx = tui_ctx
+    session = ctx.ui.session
+    trace = ScrollScreen("", title="Trace — Lakeside", floating=False)
+    session.push(trace)
+
+    task = asyncio.ensure_future(open_records(ctx))
+    try:
+        browser = await _step_until(lambda: _trophy_case(session))
+        assert browser is not None, "the trophy case list never opened"
+        assert not browser.floating
+        assert session._base_screen() is browser, "the page fills the frame, not a box over it"
+        assert not session._has_float()
+        browser.handle("escape")
+        await task
+        assert session._base_screen() is trace, "and Esc lands back on the trace"
+    finally:
+        if not task.done():
+            task.cancel()
+        session.pop(trace)
+
+
 async def test_delete_all_confirm_floats_over_the_browser(tui_ctx) -> None:
     """The trophy case stays drawn full-frame behind the "Delete all records" confirm.
 

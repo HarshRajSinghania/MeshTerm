@@ -100,6 +100,10 @@ so what shows around it is the page it was reached from: `TuiSession._floated` n
 the **root** (the main menu, popped while a tool runs but still declared for ^W), and the
 reconnect dialog draws over it too. A blank base survives only for a session with no root.
 
+*Same day — the trophy case is a place.* A bare `SelectScreen` floats by default, and the
+browser was full-frame from the menu only by the compositor's fallback; opened from a
+trace it came up as a box. It declares `floating = False` now, like the contact list.
+
 **I. An entry chain of prompts was not a stack.** Five flows asked two or more things in a
 row, and Esc on any of them abandoned the whole flow rather than stepping back one — a
 mistyped 32-hex channel key cost the name typed before it. `menus.run_steps` now runs a
