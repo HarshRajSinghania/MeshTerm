@@ -150,6 +150,18 @@ def discipline_lane() -> int:
     return max(cell_len(glyph(category.icon)) for category in CATEGORIES)
 
 
+def record_score(category: Category, record: DiscoveredPath) -> str:
+    """A record's score in its discipline's unit, bounded where the walk was partial.
+
+    THE spelling of the metric wherever it is written — the board's score lane and the
+    record page's header — so a partial Longest-distance walk reads ``≥`` in both.
+    """
+    score = category.format_score(record.score)
+    if category.id == "long_haul" and not record.stats.get("km_complete", True):
+        score = "≥ " + score
+    return score
+
+
 def _drawn_rows(lines: list[str]) -> list[str]:
     """``lines`` with the rows nothing actually landed on stripped from either end.
 
@@ -204,7 +216,9 @@ class RecordScreen(Screen):
     reads *back*. It used to float as a 62-column card, which read as a question over the
     list rather than as the page it is.
 
-    A **tabbed stage**, organized like the node page (:func:`~meshterm.ui.widgets.tab_strip`,
+    Organized like the node page: a one-line **header** above the strip — the discipline's
+    mark and the record's metric, the score in the discipline's unit — then a **tabbed
+    stage** (:func:`~meshterm.ui.widgets.tab_strip`,
     ``Tab``/``Shift+Tab`` to switch): **Info** is the record's stats with the page's
     action rows at its foot; **Route** is the walk two ways — THE route graph over the
     route line — with *Trace this path* under it, so Enter there walks the route on show;
@@ -388,6 +402,20 @@ class RecordScreen(Screen):
         """Keep the selected action visible while arrowing; scroll free once paging."""
         return self._cursor if self._follow else None
 
+    def _header(self) -> Text:
+        """The one-line identity above the strip: the discipline's mark, then the metric.
+
+        The record page's counterpart to the node page's identity header. The mark is the
+        discipline's own (the same one its board heading wears), the metric is the score in
+        the discipline's unit (:func:`record_score`), and that is the whole line: the
+        title bar already names the discipline and the standing, so the header spends its
+        cells on the one thing the record *is* — its number.
+        """
+        line = Text(glyph(self._category.icon))
+        line.append(" ")
+        line.append(record_score(self._category, self._record), style="accent bold")
+        return line
+
     @staticmethod
     def _label(label: str) -> Text:
         """The card's muted label lane, padded to :data:`_LABEL_W` cells."""
@@ -455,14 +483,10 @@ class RecordScreen(Screen):
         longest-leg lane the link it spanned; a record set before a stat existed simply has
         no lane for it.
         """
-        record, category = self._record, self._category
+        record = self._record
         stats = record.stats
         lanes: list[Text] = []
-
-        score = category.format_score(record.score)
-        if category.id == "long_haul" and not stats.get("km_complete", True):
-            score = "≥ " + score
-        lanes.append(self._lane("score", Text(score, style="accent bold")))
+        # No score lane: the metric is the page's header, above the strip (see _header).
 
         if self._reliability is not None:
             rate, ok, total = self._reliability
@@ -607,8 +631,10 @@ class RecordScreen(Screen):
         for the drawing, the rows), so it is composed once and cached; only the
         cursor-bearing action rows re-render per repaint.
         """
-        # The pinned chrome every tab opens under: the strip in its air (see widgets.tab_air).
-        lines: list[str] = [""] * tab_air()
+        # The pinned chrome every tab opens under: the metric line, then the strip in its
+        # air (see widgets.tab_air) — the node page's identity header and strip.
+        lines: list[str] = [render_to_ansi(self._header(), width, no_wrap=True)]
+        lines.extend([""] * tab_air())
         lines.extend(render_lines(tab_strip(self._tabs, self._tab_index, width), width))
         lines.extend([""] * tab_air())
         if self._tab == _TAB_AREA:
@@ -877,13 +903,6 @@ async def open_records(ctx: AppContext) -> dict:
             rows.append(Separator(f"   {line}", style="muted"))
         return rows
 
-    def scored(category: Category, record: DiscoveredPath) -> str:
-        """A record's score in its discipline's unit, bounded where the walk was partial."""
-        score = category.format_score(record.score)
-        if category.id == "long_haul" and not record.stats.get("km_complete", True):
-            score = "≥ " + score
-        return score
-
     def browser_lanes(
         rank: int,
         category: Category,
@@ -904,7 +923,7 @@ async def open_records(ctx: AppContext) -> dict:
         row = Text(f"#{rank} ", style="muted")
         row.append(record.discovered_at.astimezone().strftime("%b %d"), style="muted")
         row.append("  ")
-        row.append(fit_cells(scored(category, record), score_w), style="accent")
+        row.append(fit_cells(record_score(category, record), score_w), style="accent")
         if show_width:
             row.append(f" {record.width_bytes} B", style="muted")
         row.append("  ")
@@ -995,7 +1014,7 @@ async def open_records(ctx: AppContext) -> dict:
             # The score lane is this board's own widest score — "3 nodes" and "+6.0 dB"
             # measure differently, and a lane sized for the worst case everywhere would
             # spend the difference on padding in front of every route.
-            score_w = max((cell_len(scored(category, r)) for r in board), default=0)
+            score_w = max((cell_len(record_score(category, r)) for r in board), default=0)
             for rank, record in enumerate(board, start=1):
                 lanes = browser_lanes(
                     rank,

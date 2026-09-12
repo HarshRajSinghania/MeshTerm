@@ -333,11 +333,38 @@ def test_record_opens_on_info_with_route_and_area_tabs_beside_it() -> None:
     assert "Info" in strip and "Route" in strip and "Area" in strip, "all three boxed"
     body = [line for line in lines[_strip_end(lines) :] if line]
     assert body[0].startswith("spec") and body[1].startswith("recorded")  # identity first
-    assert body[2].startswith("score")
+    assert body[2].startswith("walk")  # the score is the header, not a lane
     assert "Trace this path" in "\n".join(body) and "Delete record" in "\n".join(body)
     assert not any(_is_braille(ch) for line in body for ch in line), "no drawing here"
     assert "Hilltop-Repeater" not in "\n".join(body), "the route has a tab of its own"
     assert "Far" in "\n".join(body)  # the far-point name is a stat, not a drawing label
+
+
+def test_record_header_is_the_disciplines_mark_and_the_metric_above_the_strip() -> None:
+    """One line above the tabs: the discipline's own mark, then the score in its unit.
+
+    The node page's identity header, for a record: the title bar names the discipline
+    and the standing, so the header spends its cells on the number the record *is* —
+    and the score lane that used to repeat it on Info is gone.
+    """
+    from meshterm.ui.theme import glyph
+
+    screen = _dialog(_record(), shape=_loop_shape())
+    lines = _plain(screen.render_body(58)).splitlines()
+    mark = glyph(CATEGORY_BY_ID["grand_tour"].icon)
+    assert lines[0] == f"{mark} 2 nodes"  # the very first row, before the strip's air
+    assert "score" not in _plain(screen.render_body(58))
+    for _ in range(3):  # the header stays put whichever tab is up
+        screen.handle("tab")
+        assert _plain(screen.render_body(58)).splitlines()[0] == f"{mark} 2 nodes"
+
+    partial = _record(
+        category="long_haul",
+        score=8.4,
+        stats={"km_travelled": 8.4, "km_complete": False, "hop_count": 3, "distinct_nodes": 3},
+    )
+    head = _plain(_dialog(partial).render_body(58)).splitlines()[0]
+    assert head.endswith("≥ 8.4 km")  # the board's bounded spelling, and no other
 
 
 def test_record_route_tab_draws_the_walk_and_enter_traces_it() -> None:
