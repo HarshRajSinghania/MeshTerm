@@ -121,25 +121,25 @@ def test_catalog_carries_the_repeater_only_knobs() -> None:
     """TX delay and Direct TX delay — the reason this feature exists — are first-class."""
     txdelay = get_setting("txdelay")
     direct = get_setting("direct.txdelay")
-    assert txdelay is not None and txdelay.set_command("0.50") == "set txdelay 0.50"
+    assert txdelay is not None and txdelay.set_command("0.5") == "set txdelay 0.5"
     assert direct is not None and direct.get_command == "get direct.txdelay"
     assert any(s.key == "af" for s in REPEATER_SETTINGS)
     assert any(s.key == "advert.interval" for s in REPEATER_SETTINGS)
 
 
-def test_delays_are_floats_rounded_to_two_places() -> None:
-    """TX, Direct TX and RX delay read, validate and send as two-decimal floats.
+def test_delays_are_floats_rounded_to_one_place() -> None:
+    """TX, Direct TX and RX delay read, validate and send as one-decimal floats.
 
     Regression: they were typed ``int``, so a firmware ``0.5`` showed as ``0`` and typing
     ``0.5`` back was refused as "not a whole number".
     """
     for key in ("txdelay", "direct.txdelay", "rxdelay"):
         spec = get_setting(key)
-        assert spec.kind == "float" and spec.decimals == 2
-        assert parse_reply_value(spec, "> 0.5") == "0.50"
-        assert parse_reply_value(spec, "> 1.2345678") == "1.23"
+        assert spec.kind == "float" and spec.decimals == 1
+        assert parse_reply_value(spec, "> 0.5") == "0.5"
+        assert parse_reply_value(spec, "> 1.2345678") == "1.2"
         assert validate_value(spec, "0.5") is True
-        assert normalize_value(spec, "0.3333") == "0.33"
+        assert normalize_value(spec, "0.3333") == "0.3"
     assert "≤ 2" in validate_value(get_setting("txdelay"), "2.5")
     assert validate_value(get_setting("rxdelay"), "12.5") is True  # RX delay runs to 20
 
@@ -481,7 +481,7 @@ async def test_read_settings_reads_every_setting_asking_each_question_once(
     assert len(sent) == len(set(sent)) == len(read_plan(REPEATER_SETTINGS))
     cache = tui_ctx.remote_store.settings(NODE)
     assert set(cache) == {s.key for s in REPEATER_SETTINGS}
-    assert cache["txdelay"].value == "0.50" and cache["direct.txdelay"].value == "0.20"
+    assert cache["txdelay"].value == "0.5" and cache["direct.txdelay"].value == "0.2"
     assert (cache["freq"].value, cache["bw"].value, cache["sf"].value) == ("910.525", "62.5", "7")
     assert cache["path.hash.mode"].value == "0"
     assert cache["dutycycle"].value == "50.0"
@@ -521,7 +521,7 @@ async def test_apply_reads_the_radio_first_then_sends_one_line(tui_ctx, admin_de
     ctx = tui_ctx
     session = ctx.ui.session
     ctx.remote_store.remember_setting(NODE, "af", "1.00")
-    pending = {"sf": "9", "txdelay": "1.25", "dutycycle": "40.0"}
+    pending = {"sf": "9", "txdelay": "1.5", "dutycycle": "40.0"}
 
     task = asyncio.ensure_future(repeater_admin._apply(ctx, admin_device, NODE, pending))
     summary = await _step_until(
@@ -539,12 +539,12 @@ async def test_apply_reads_the_radio_first_then_sends_one_line(tui_ctx, admin_de
     assert admin_device.sent == [
         "get radio",
         "set radio 910.525,62.5,9,5",
-        "set txdelay 1.25",
+        "set txdelay 1.5",
         "set dutycycle 40.0",
     ]
     assert applied == 3 and pending == {}
     cache = ctx.remote_store.settings(NODE)
-    assert cache["sf"].value == "9" and cache["txdelay"].value == "1.25"
+    assert cache["sf"].value == "9" and cache["txdelay"].value == "1.5"
     assert "af" not in cache  # the other spelling of the duty cycle is stale now
 
 
@@ -554,13 +554,13 @@ async def test_apply_reads_the_radio_first_then_sends_one_line(tui_ctx, admin_de
 def test_value_lane_shows_the_value_without_its_age() -> None:
     """The value lane is the value: no age stamp, and its own word for each absence."""
     cache = {
-        "txdelay": CachedValue("0.50", utcnow() - timedelta(hours=3)),
+        "txdelay": CachedValue("0.5", utcnow() - timedelta(hours=3)),
         "bridge.delay": CachedValue("", utcnow(), supported=False),
         "guest.password": CachedValue("", utcnow()),
         "path.hash.mode": CachedValue("1", utcnow()),
     }
     lane = repeater_admin._value_text
-    assert lane(get_setting("txdelay"), cache, {}).plain == "0.50"
+    assert lane(get_setting("txdelay"), cache, {}).plain == "0.5"
     assert lane(get_setting("bridge.delay"), cache, {}).plain == "n/a"
     assert lane(get_setting("guest.password"), cache, {}).plain == "empty"
     assert lane(get_setting("rxdelay"), cache, {}).plain == "?"

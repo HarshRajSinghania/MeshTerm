@@ -1264,6 +1264,14 @@ def test_tuning_fields_are_floats_with_firmware_ranges() -> None:
         parse_value(get_spec("airtime_factor"), "1000")
 
 
+def test_rx_delay_is_rounded_to_one_place() -> None:
+    """RX delay shows and applies at one decimal, matching the repeater admin's delays."""
+    spec = get_spec("rx_delay")
+    assert parse_value(spec, "0.3333") == 0.3
+    assert format_value(spec, 0.123) == "0.1"
+    assert format_value(spec, 0.0) == "0.0"
+
+
 def test_tx_delay_factors_are_not_companion_settings() -> None:
     """The repeater-only TX delay factors must not appear as (no-op) device settings.
 

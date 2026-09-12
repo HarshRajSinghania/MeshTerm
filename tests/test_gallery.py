@@ -823,10 +823,10 @@ def _repeater_admin(cols: int, rows: int) -> Screen:
     now = utcnow()
     cache = {
         "name": CachedValue("Hilltop-Repeater", now),
-        "txdelay": CachedValue("0.50", now),
+        "txdelay": CachedValue("0.5", now),
         "bridge.delay": CachedValue("", now, supported=False),
     }
-    title, items = _admin_menu_items(hub, cache, {"txdelay": "1.25"})
+    title, items = _admin_menu_items(hub, cache, {"txdelay": "1.5"})
     return AdminMenu(title, items, footer_hint="↑↓ move · type to filter · Enter select · Esc back")
 
 

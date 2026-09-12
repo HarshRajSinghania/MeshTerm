@@ -328,7 +328,7 @@ REPEATER_SETTINGS: tuple[RemoteSetting, ...] = (
         label="TX delay",
         category="Repeating",
         kind="float",
-        decimals=2,
+        decimals=1,
         minimum=0,
         maximum=2,
         help="Delay factor before rebroadcasting a flood packet",
@@ -338,7 +338,7 @@ REPEATER_SETTINGS: tuple[RemoteSetting, ...] = (
         label="Direct TX delay",
         category="Repeating",
         kind="float",
-        decimals=2,
+        decimals=1,
         minimum=0,
         maximum=2,
         help="Delay factor before forwarding a directed packet",
@@ -348,7 +348,7 @@ REPEATER_SETTINGS: tuple[RemoteSetting, ...] = (
         label="RX delay",
         category="Repeating",
         kind="float",
-        decimals=2,
+        decimals=1,
         minimum=0,
         maximum=20,
         help="Base delay before acting on a received packet",
@@ -748,7 +748,7 @@ def _format_number(spec: RemoteSetting, value: float) -> str:
 def normalize_value(spec: RemoteSetting, raw: str) -> str:
     """A validated typed value in the form the cache stores and the firmware is sent.
 
-    TX delay entered as ``0.5`` becomes ``0.50``: rounded to the setting's decimals, and
+    TX delay entered as ``0.33`` becomes ``0.3``: rounded to the setting's decimals, and
     spelled exactly as a read of the same value would be, so staging what the node already
     holds unstages rather than queueing a no-op ``set``.
     """

@@ -53,6 +53,9 @@ class SettingSpec:
             the connected hardware actually supports.
         max_length: For ``str`` values, the longest accepted string (protocol field
             widths, e.g. the flood scope's 31-byte name slot).
+        decimals: For ``float`` values, the fixed decimal places a value is shown with and
+            rounded to on parse, so what is applied is what the row showed; ``None`` keeps
+            the value as given.
         validate: A last rule for a typed, in-range value, given the snapshot when there
             is one: it returns the complaint, or ``None``. For what a bound can't state —
             the PIN's "zero or six digits", relaying only on an allowed frequency.
@@ -73,6 +76,7 @@ class SettingSpec:
     strict_choices: bool = True
     max_key: str | None = None
     max_length: int | None = None
+    decimals: int | None = None
     validate: Callable[[Any, dict | None], str | None] | None = None
 
 
@@ -137,6 +141,8 @@ def _parse_typed(spec: SettingSpec, raw: Any, snapshot: dict | None) -> Any:
     try:
         if spec.value_type == "float":
             value: Any = float(text)
+            if spec.decimals is not None:
+                value = round(value, spec.decimals)
         else:  # int or enum
             value = int(text, 0) if isinstance(raw, str) else int(raw)
     except (ValueError, TypeError) as exc:
@@ -199,6 +205,8 @@ def format_value(spec: SettingSpec, value: Any) -> str:
         return "true" if value else "false"
     if spec.value_type == "enum" and spec.choices is not None and value in spec.choices:
         return f"{value} ({spec.choices[value]})"
+    if spec.value_type == "float" and spec.decimals is not None:
+        return f"{float(value):.{spec.decimals}f}"
     return str(value)
 
 
@@ -694,6 +702,7 @@ DEVICE_SETTINGS: list[SettingSpec] = [
         "float",
         minimum=0.0,
         maximum=20.0,
+        decimals=1,
         getter=_get("rx_delay"),
         apply=_tuning_apply("rx_delay"),
     ),
