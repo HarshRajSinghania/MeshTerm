@@ -83,7 +83,7 @@ from meshterm.ui.node_detail_screen import NodeDetailScreen, _Action, _RoutesVie
 from meshterm.ui.packet_viewer import PacketEntry, PacketViewer
 from meshterm.ui.path_composer import PathComposerScreen
 from meshterm.ui.preferences import _menu_items as _preference_items
-from meshterm.ui.records_screen import RecordDialog
+from meshterm.ui.records_screen import RecordScreen
 from meshterm.ui.remote_cli import RemoteCliScreen
 from meshterm.ui.repeater_admin import AdminMenu
 from meshterm.ui.repeater_admin import _menu_items as _admin_menu_items
@@ -663,7 +663,7 @@ def _record(**over) -> DiscoveredPath:
 
 def _record_dialog(cols: int, rows: int) -> Screen:
     record = _record()
-    return RecordDialog(
+    return RecordScreen(
         record,
         CATEGORY_BY_ID[record.category],
         1,

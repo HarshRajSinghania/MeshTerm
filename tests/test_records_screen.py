@@ -24,7 +24,7 @@ from meshterm.core.device_store import DeviceStore
 from meshterm.persistence.repository import DiscoveredPath, Repository
 from meshterm.services.records import CATEGORIES, CATEGORY_BY_ID
 from meshterm.ui.records_screen import (
-    RecordDialog,
+    RecordScreen,
     WalkVertex,
     discipline_label,
     discipline_lane,
@@ -83,8 +83,8 @@ def _record(**kw) -> DiscoveredPath:
     return DiscoveredPath(**defaults)
 
 
-def _dialog(record: DiscoveredPath, rank: int = 1, **kw) -> RecordDialog:
-    return RecordDialog(
+def _dialog(record: DiscoveredPath, rank: int = 1, **kw) -> RecordScreen:
+    return RecordScreen(
         record,
         CATEGORY_BY_ID[record.category],
         rank,
@@ -104,7 +104,7 @@ def test_record_dialog_shows_stats_route_and_the_trace_action() -> None:
     assert "Trace this path" in body  # the renamed action (was "Walk again")
     assert "Walk again" not in body
     assert "Delete record" in body
-    assert "Back" not in body  # no exit row: Esc closes the story
+    assert "Back" not in body  # no exit row: Esc leaves the page
 
 
 def test_record_dialog_draws_the_walk_as_a_route_graph() -> None:
@@ -642,9 +642,9 @@ async def test_trace_this_path_nests_above_the_browser_and_comes_back_to_it(
         record = ctx.repo.discoveries("grand_tour")[0]
         browser.resolve(("open", CATEGORY_BY_ID["grand_tour"], 1, record))
         dialog = await _step_until(
-            lambda: session._float_layers()[0] if session._has_float() else None
+            lambda: session.top if isinstance(session.top, RecordScreen) else None
         )
-        assert isinstance(dialog, RecordDialog)
+        assert session._base_screen() is dialog, "the record is a page, full-frame"
         dialog.resolve("trace")  # "Trace this path"
         # The trace ran and the browser is back on top — the same object, not a rebuild.
         again = await _step_until(lambda: _trophy_case(session))

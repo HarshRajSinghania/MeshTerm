@@ -111,6 +111,10 @@ opens over the menu, Esc from it lands there; tracing another node is opening th
 again. The typed fallback floats the same way. `ContactListScreen` stays a full-screen place
 everywhere else.
 
+*Same day — a record is a page.* `RecordDialog` floated a 62-column card over the trophy
+case; the reader is *in* a record (reading, scrolling, arming a trace), so it is
+`RecordScreen`, full-frame, Esc back onto the browser.
+
 **I. An entry chain of prompts was not a stack.** Five flows asked two or more things in a
 row, and Esc on any of them abandoned the whole flow rather than stepping back one — a
 mistyped 32-hex channel key cost the name typed before it. `menus.run_steps` now runs a

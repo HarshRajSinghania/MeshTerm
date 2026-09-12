@@ -13,7 +13,8 @@ opened from the main menu. Every successful trace — a *Trace target* boomerang
   path widget with both ends bare (every record is a boomerang, so the cells go to the
   hops). A discipline holding records at more than one hash width tags each row with its
   width, since the widths are genuinely different games;
-* opening a record floats :class:`RecordDialog` — every stat the walk was measured by
+* opening a record pushes :class:`RecordScreen`, a full-screen page — every stat the walk
+  was measured by
   (the far point named with the node it reached, the longest leg with the link it spanned),
   the walk drawn two ways: on THE route graph (the Message paths dialog's shape, us at both
   ends, drawn no taller than one lane
@@ -180,8 +181,13 @@ class WalkVertex:
     is_self: bool
 
 
-class RecordDialog(Screen):
-    """One record's full story, floating over the screen beneath.
+class RecordScreen(Screen):
+    """One record's full story, a full-screen page pushed over the trophy case.
+
+    A place rather than a popup: the reader is *in* the record — reading, scrolling,
+    arming a trace from it — so it fills the frame like the browser under it, and Esc
+    reads *back*. It used to float as a 62-column card, which read as a question over the
+    list rather than as the page it is.
 
     Every stat the walk was measured by — a reliability read from the far node's trace
     history, the far point named with the node it reached, the longest leg drawn as the
@@ -197,6 +203,8 @@ class RecordDialog(Screen):
     prefilled (propagation shifts; a record is a claim worth re-testing), and *Delete…*
     removes this one record behind a red Cancel/Delete data-loss confirm.
     """
+
+    floating = False
 
     def __init__(
         self,
@@ -254,11 +262,6 @@ class RecordDialog(Screen):
         # The card opens at the top, reading down; the arrows drive (and follow) the action
         # cursor, while PgUp/PgDn/Home/End scroll the body free of it (see cursor_line).
         self._follow = False
-
-    @property
-    def dialog_width(self) -> int:
-        """A comfortable reading width; the compositor still caps it to the frame."""
-        return 62
 
     def handle(self, action: str, data: str = "") -> None:
         """Move the action cursor, scroll the card, commit the selection, or dismiss."""
@@ -913,10 +916,11 @@ async def open_records(ctx: AppContext) -> dict:
         # trace screen and used to come up as a content-sized box.
         browser.floating = False
         # The browser stays pushed for the whole visit, so every dialog that belongs *over*
-        # the trophy case — the discipline picker, the delete confirms, a record's floating
-        # story — already has it drawn full-frame behind them, and the cursor is still on the
-        # record just read when they close. The loop only leaves (and the list only rebuilds,
-        # losing that place) when the record set itself has changed under it.
+        # the trophy case — the discipline picker, the delete confirms — already has it
+        # drawn full-frame behind them, and a record's page (full-frame itself) pops back
+        # onto it with the cursor still on the record just read. The loop only leaves (and
+        # the list only rebuilds, losing that place) when the record set itself has changed
+        # under it.
         async with session.stay(browser) as visit:
             while True:
                 picked = await visit.result()
@@ -937,7 +941,7 @@ async def open_records(ctx: AppContext) -> dict:
                     _verb, category, rank, record = picked
                     far_label, far_id, shape = walk_drawing(record)
                     action = await session.run_screen(
-                        RecordDialog(
+                        RecordScreen(
                             record,
                             category,
                             rank,
