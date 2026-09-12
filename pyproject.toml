@@ -1,5 +1,8 @@
 [build-system]
-requires = ["hatchling"]
+# 1.26 is where hatchling started writing the PEP 639 fields below (`License-Expression`,
+# `License-File`) into the metadata; an older one builds a wheel that says nothing about
+# the licence at all, silently.
+requires = ["hatchling>=1.26"]
 build-backend = "hatchling.build"
 
 [project]
@@ -73,6 +76,25 @@ path = "meshterm/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["meshterm"]
+
+# The sdist is the package's source, not the repository's: what someone needs to build
+# and test the wheel. Hatchling's default is everything git does not ignore, which swept
+# in the Claude skills, the GitHub configuration, the PyInstaller spec, the device-side
+# shell scripts (one of which carries data under another licence) and the developer
+# environment template — none of which builds, tests, or documents the package. Kept:
+# the package, the tests and their fixture, the manual, and the files a build reads.
+[tool.hatch.build.targets.sdist]
+exclude = [
+    "/.claude",
+    "/.github",
+    "/.dev.env.example",
+    "/.git-blame-ignore-revs",
+    "/.gitattributes",
+    "/CLAUDE.md",
+    "/docs/survey-*.md",
+    "/packaging",
+    "/scripts",
+]
 
 [tool.ruff]
 line-length = 100

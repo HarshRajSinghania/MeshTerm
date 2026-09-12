@@ -18,7 +18,7 @@ permissions:
   contents: read
 
 # A second push while the first is still running makes the first answer obsolete.
-# Cancel it — on a private repo those are metered minutes spent on a stale commit.
+# Cancel it — a run on a stale commit is a queue slot and a wait spent on nothing.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -54,13 +54,11 @@ jobs:
       # and one red leg cancelling its siblings hides the rest until the next push.
       fail-fast: false
       matrix:
-        # Shaped for a *private* repo, where minutes are metered and billed by a
-        # multiplier: Linux 1x, Windows 2x, macOS 10x. So Linux carries the full
-        # Python range and the costly runners cover the ends of it, which is where a
-        # version-dependent break actually shows up.
-        #
-        # Once the repo is public, standard runners are unmetered: widen this to every
-        # OS times every version and stop thinking about it.
+        # Linux carries the full Python range and the slower-to-schedule runners
+        # cover the ends of it, which is where a version-dependent break actually
+        # shows up. It was shaped this way when the repository was private and
+        # minutes were metered; on a public one they are not, so this can widen to
+        # every OS times every version whenever the wait for a full run is worth it.
         include:
           - { os: ubuntu-latest, python: "3.10" }
           - { os: ubuntu-latest, python: "3.11" }

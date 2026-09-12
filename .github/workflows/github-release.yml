@@ -1,8 +1,8 @@
 # Puts the downloadable builds on the repository's Releases page.
 #
-# Nothing here leaves GitHub. While the repository is private the release is private too,
-# visible and downloadable only by people who can see the repo. This is *not* the PyPI
-# publish — that is `release.yml`, it is a separate act, and it does not run from here.
+# Nothing here leaves GitHub: a release is exactly as visible as the repository it sits
+# on. This is *not* the PyPI publish — that is `release.yml`, it is a separate act, and it
+# does not run from here.
 #
 # Triggered by pushing a version tag, which is the moment a release exists in git anyway:
 #

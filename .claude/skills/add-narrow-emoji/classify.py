@@ -4,7 +4,10 @@ Given an emoji on the command line, report its codepoints and how the three widt
 authorities measure it (wcwidth, Rich, prompt_toolkit), then classify it and print the
 exact action the `add-narrow-emoji` skill should take. Run from the repo root:
 
-    d:\\vibe\\MeshTerm\\.venv\\Scripts\\python.exe .claude\\skills\\add-narrow-emoji\\classify.py 👋
+    $DEV_VENV_PYTHON .claude/skills/add-narrow-emoji/classify.py 👋
+
+(``$DEV_VENV_PYTHON`` is the interpreter named in ``.dev.env``; ``.dev.env.example`` shows
+the shape.)
 
 The point is to remove the guesswork the skill's judgement call depends on: a lone wide
 codepoint gets an allowlist entry, a flag is already handled by category, and a ZWJ /

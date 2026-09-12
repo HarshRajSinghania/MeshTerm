@@ -12,6 +12,7 @@ dist/
 # planning that names hardware and unshipped ideas.
 !.claude/
 .claude/settings.local.json
+.claude/scheduled_tasks.lock
 .claude/plans/
 .claude/housekeeping.md
 # ...and except the GitHub configuration, which only works where GitHub looks for
