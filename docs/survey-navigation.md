@@ -94,6 +94,12 @@ admin page opens over the main menu and Esc from it lands there. A refused login
 the question with the same node highlighted. `admin_node_visit` is deleted — nothing keeps
 a popup pushed any more.
 
+*Same day — the base under a popup.* The blank `ScrollScreen` that `_run_dialog_screen`
+pushed on an empty stack showed nothing behind the box. A dialog is smaller than the frame,
+so what shows around it is the page it was reached from: `TuiSession._floated` now pushes
+the **root** (the main menu, popped while a tool runs but still declared for ^W), and the
+reconnect dialog draws over it too. A blank base survives only for a session with no root.
+
 **I. An entry chain of prompts was not a stack.** Five flows asked two or more things in a
 row, and Esc on any of them abandoned the whole flow rather than stepping back one — a
 mistyped 32-hex channel key cost the name typed before it. `menus.run_steps` now runs a
