@@ -109,11 +109,13 @@ def test_record_dialog_shows_stats_route_and_the_trace_action() -> None:
 
 def test_record_dialog_draws_the_walk_as_a_route_graph() -> None:
     """The walk is drawn on THE route graph — us starred at both ends, over a caption."""
-    body = _plain(_dialog(_record()).render_body(60))
-    graph = body[: body.index("labels = hash byte")]
+    lines = _plain(_dialog(_record()).render_body(60)).splitlines()
+    heading = next(i for i, line in enumerate(lines) if line.startswith("Route"))
+    assert "you → … → you" in lines[heading] and "labels = hash byte" in lines[heading]
+    legend = next(i for i, line in enumerate(lines) if "▲ repeater" in line)
+    graph = "\n".join(lines[heading + 1 : legend])  # the drawing, up to its legend
     assert graph.count("★") == 2  # our node marks both endpoints of the round trip
-    assert "labels = hash byte" in body  # the graph's caption
-    assert any("⠀" <= ch <= "⣿" for ch in body)  # braille edges are drawn
+    assert any("⠀" <= ch <= "⣿" for ch in graph)  # braille edges are drawn
 
 
 def test_record_graph_is_only_as_tall_as_one_lane_needs() -> None:
@@ -138,17 +140,17 @@ def test_record_dialog_route_runs_unlabelled_across_the_whole_card() -> None:
     """
     dialog = _dialog(_record(route=tuple([HUB_ID, FAR_ID] * 4)))
     body = _plain(dialog.render_body(60)).splitlines()
-    spec_at = next(i for i, line in enumerate(body) if line.startswith("spec"))
-    # The route's own first line: the last one before the spec that isn't a hanging fold.
-    route_at = next(i for i in range(spec_at - 1, 0, -1) if not body[i].startswith("  "))
-    route = body[route_at:spec_at]
+    # The route closes the Route section: it runs from under the graph's legend to the
+    # blank line before the action rows.
+    legend_at = next(i for i, line in enumerate(body) if "▲ repeater" in line)
+    route = body[legend_at + 1 : body.index("", legend_at)]
     assert not route[0].startswith("route")  # no label lane
     assert route[0].startswith("★")  # our end opens the walk on the app-wide star…
     assert route[-1].endswith("★")  # …and closes it on the same
     assert "Homestead" not in "".join(route)  # never our name, and never our key
     assert "Hilltop-Repeater" in "".join(route)  # the hops themselves are named in full
     assert len(route) > 1  # it folded rather than truncating…
-    # …every fold hanging under the step, and the labelled lanes resume at the spec.
+    # …every fold hanging under the step.
     assert all(line.startswith("  ") for line in route[1:])
 
 
@@ -310,26 +312,49 @@ def test_record_draws_the_enclosed_area_under_the_stats_with_hash_byte_pins() ->
     ).splitlines()
     first_blank = lines.index("")
     stats = lines[:first_blank]
-    assert stats[0].startswith("score")
+    assert stats[0] == "Stats"  # under its own heading…
+    assert stats[1].startswith("spec") and stats[2].startswith("recorded")  # …identity first
+    assert stats[3].startswith("score")
     assert not any(_is_braille(ch) for ch in "\n".join(stats)), "no drawing beside the lanes"
     assert "Far" in "\n".join(stats)  # the far-point name is a stat, not a drawing label
 
     area = lines[first_blank + 1 : lines.index("", first_blank + 1)]
-    block = "\n".join(area)
+    assert area[0].startswith("Area walked") and "labels = hash byte" in area[0]  # heading
+    block = "\n".join(area[1:])
     assert any(_is_braille(ch) for ch in block)  # the area, in braille
     assert "★" in block  # us pinned at the origin
     assert "▲" in block  # the repeater vertex, in its map glyph
     assert HUB_ID[:2] in block and FAR_ID[:2] in block  # each hop's hash byte beside its pin
-    assert area[-1].startswith("area walked")  # the caption closes the block
-    graph_caption = next(i for i, line in enumerate(lines) if line.startswith("you → … → you"))
-    assert graph_caption > lines.index(area[-1]), "the route graph follows the drawing"
+    assert len(area) - 1 >= 8, "the drawing spends the rows it is given"
+    # The three section headings, in reading order: each opens its block right after a
+    # blank line, so a page this tall can be skimmed by its landmarks.
+    at = {
+        name: next(i for i, line in enumerate(lines) if line.split("  ·  ")[0] == name)
+        for name in ("Stats", "Area walked", "Route")
+    }
+    assert at["Stats"] < at["Area walked"] < at["Route"]
+    assert all(lines[i - 1] == "" for name, i in at.items() if name != "Stats")
+    assert at["Route"] > lines.index(area[-1]), "the route graph follows the drawing"
+
+
+def test_record_area_drawing_spends_the_width_it_is_given() -> None:
+    """The drawing is as wide as the page: a wider page is a bigger, not a padded, shape."""
+    narrow = _plain(_dialog(_record(), shape=_loop_shape()).render_body(40)).splitlines()
+    wide = _plain(_dialog(_record(), shape=_loop_shape()).render_body(72)).splitlines()
+
+    def drawn_width(lines: list[str]) -> int:
+        start = next(i for i, line in enumerate(lines) if line.startswith("Area walked")) + 1
+        block = lines[start : lines.index("", start)]
+        return max(len(line.rstrip()) for line in block)
+
+    assert drawn_width(wide) > drawn_width(narrow)
 
 
 def test_record_drops_the_area_drawing_when_too_narrow() -> None:
     """Below the drawing's floor the block is left out; the far name stays in the stats."""
     body = _plain(_dialog(_record(), far_label="Far", shape=_loop_shape()).render_body(14))
     lines = body.splitlines()
-    assert "area walked" not in body  # no drawing, no caption for one
+    assert "Area walked" not in body  # no drawing, no heading for one
     # The stats run straight into the blank line before the route graph; nothing pinned.
     assert "★" not in "\n".join(lines[: lines.index("")])
     assert "Far" in body  # the far-point name survives the drop

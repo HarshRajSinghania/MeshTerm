@@ -52,6 +52,7 @@ from .widgets import (
     ContactsSort,
     _age_seconds,
     _recency_style,
+    body_heading,
     format_ago,
     highlighted_hash,
 )
@@ -211,13 +212,6 @@ def _quarter_axis(frac: float) -> str:
     return f"{round(frac * 24)} h"
 
 
-def _heading(title: str, note: str) -> Text:
-    """A section heading in the dashboard's voice: accent title, muted note."""
-    text = Text(title, style="accent")
-    text.append(f"  ·  {note}", style="muted")
-    return text
-
-
 class TimeMachineScreen(Screen):
     """One subject's history page: scrollable sections, ``w`` cycles the window."""
 
@@ -363,7 +357,7 @@ def _node_sections(
     volume = bucketize(stamps, start, now, buckets)
 
     out: list[RenderableType] = []
-    out.append(_heading("Volume", f"{len(observations)} receptions"))
+    out.append(body_heading("Volume", f"{len(observations)} receptions"))
     out.extend(
         axis_chart(
             timeline_rows(volume, rows=_CHART_ROWS),
@@ -379,7 +373,7 @@ def _node_sections(
         lo, hi = chart_span(medians)
         rows = timeline_rows(medians, rows=_SNR_ROWS, style=_snr_cell_style)
         out.append(Text())
-        out.append(_heading("SNR", "median dB per slice · grey line = 0"))
+        out.append(body_heading("SNR", "median dB per slice · grey line = 0"))
         out.extend(
             axis_chart(
                 rows,
@@ -393,7 +387,7 @@ def _node_sections(
 
     out.append(Text())
     out.append(
-        _heading("Rhythm", f"receptions by local time of day · {_slice_note(slice_minutes)}")
+        body_heading("Rhythm", f"receptions by local time of day · {_slice_note(slice_minutes)}")
     )
     out.extend(
         axis_chart(
@@ -406,7 +400,7 @@ def _node_sections(
     )
 
     out.append(Text())
-    out.append(_heading("Record", "this window"))
+    out.append(body_heading("Record", "this window"))
     first, last = observations[0].observed_at, observations[-1].observed_at
     line = Text("heard    ", style="muted")
     line.append(f"first {_when_label(first)} · last {_when_label(last)}")
@@ -486,7 +480,7 @@ def _self_sections(ctx: AppContext, window: timedelta | None, width: int) -> lis
     volume = bucketize(stamps, start, now, buckets)
 
     out: list[RenderableType] = []
-    out.append(_heading("Activity", f"{len(stamps)} sent · traces + messages"))
+    out.append(body_heading("Activity", f"{len(stamps)} sent · traces + messages"))
     out.extend(
         axis_chart(
             timeline_rows(volume, rows=_CHART_ROWS),
@@ -502,7 +496,7 @@ def _self_sections(ctx: AppContext, window: timedelta | None, width: int) -> lis
         lo, hi = chart_span(medians)
         rows = timeline_rows(medians, rows=_SNR_ROWS, style=_snr_cell_style)
         out.append(Text())
-        out.append(_heading("Reach", "trace bottleneck dB per slice · grey line = 0"))
+        out.append(body_heading("Reach", "trace bottleneck dB per slice · grey line = 0"))
         out.extend(
             axis_chart(
                 rows,
@@ -516,7 +510,7 @@ def _self_sections(ctx: AppContext, window: timedelta | None, width: int) -> lis
 
     out.append(Text())
     out.append(
-        _heading("Rhythm", f"transmissions by local time of day · {_slice_note(slice_minutes)}")
+        body_heading("Rhythm", f"transmissions by local time of day · {_slice_note(slice_minutes)}")
     )
     out.extend(
         axis_chart(
@@ -529,7 +523,7 @@ def _self_sections(ctx: AppContext, window: timedelta | None, width: int) -> lis
     )
 
     out.append(Text())
-    out.append(_heading("Ledger", "this window"))
+    out.append(body_heading("Ledger", "this window"))
     first, last = stamps[0], stamps[-1]
     line = Text("active   ", style="muted")
     line.append(f"first {_when_label(first)} · last {_when_label(last)}")
@@ -996,7 +990,7 @@ def _mesh_sections(
     pkt_title, node_title = (
         ("Packets per hour", "Nodes per hour") if hourly else ("Packets per day", "Nodes per day")
     )
-    out.append(_heading(pkt_title, "local hours" if hourly else "local days"))
+    out.append(body_heading(pkt_title, "local hours" if hourly else "local days"))
     out.extend(
         axis_chart(
             timeline_rows(_day_columns(packets, chars), rows=_CHART_ROWS),
@@ -1009,7 +1003,7 @@ def _mesh_sections(
 
     nodes = [d[2] for d in shown]
     out.append(Text())
-    out.append(_heading(node_title, "distinct nodes heard"))
+    out.append(body_heading(node_title, "distinct nodes heard"))
     out.extend(
         axis_chart(
             timeline_rows(_day_columns(nodes, chars), rows=_CHART_ROWS),
@@ -1024,7 +1018,9 @@ def _mesh_sections(
     # keep their own finer width but share the day charts' gutter, so this chart's left
     # edge lines up with the two above it.
     out.append(Text())
-    out.append(_heading("Rhythm", f"packets by local time of day · {_slice_note(slice_minutes)}"))
+    out.append(
+        body_heading("Rhythm", f"packets by local time of day · {_slice_note(slice_minutes)}")
+    )
     out.extend(
         axis_chart(
             timeline_rows(slots, rows=_CHART_ROWS),
@@ -1040,7 +1036,7 @@ def _mesh_sections(
     # below (every heard node *is* a first-seen node, so the counts agree).
     heard = ctx.repo.heard_nodes()
     out.append(Text())
-    out.append(_heading("Arrivals", "nodes heard for the first time ever"))
+    out.append(body_heading("Arrivals", "nodes heard for the first time ever"))
     if not arrivals:
         out.append(Text("none in this window", style="muted"))
     else:
@@ -1095,7 +1091,7 @@ def _mesh_sections(
     total_nodes = sum(1 for n in heard if n.node)
     busiest = max(all_days, key=lambda d: d[1])
     out.append(Text())
-    out.append(_heading("Ledger", "everything ever recorded"))
+    out.append(body_heading("Ledger", "everything ever recorded"))
     out.append(
         Text.assemble(
             ("history  ", "muted"),

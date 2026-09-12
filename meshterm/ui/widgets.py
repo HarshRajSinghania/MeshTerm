@@ -917,6 +917,28 @@ def _format_age(secs: float | None) -> str:
     return f"{int(secs // 604800)}w"
 
 
+def body_heading(title: str, note: str = "") -> Text:
+    """A section heading inside a screen's body: accent title, optional muted ``  ·  note``.
+
+    THE form for a heading that sits *in* a page's prose or drawings (the Time Machine's
+    Volume / SNR / Rhythm, a record's Stats / Area walked / Route), as opposed to a grouped
+    list's ``── Label ──`` landmark (:func:`~meshterm.ui.menus.section_heading`), which
+    pins and is jumped to. The note reads the block back — its unit, its window, what its
+    labels mean — and is muted so the title stays the landmark.
+
+    Args:
+        title: The section's name, sentence case.
+        note: An aside after the roomy separator, or ``""`` for none.
+
+    Returns:
+        The heading as one styled line.
+    """
+    text = Text(title, style="accent")
+    if note:
+        text.append(f"  ·  {note}", style="muted")
+    return text
+
+
 def format_ago(secs: float | None) -> str:
     """The relative-age *phrase* — ``now``, ``5m ago``, ``never`` — for running prose.
 

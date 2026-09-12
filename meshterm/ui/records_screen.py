@@ -58,6 +58,7 @@ from .tui.screen import Screen
 from .widgets import (
     NodeResolver,
     TypeOf,
+    body_heading,
     name_rgb,
     node_marker,
     node_type_legend,
@@ -88,14 +89,16 @@ _GRAPH_ROWS = 3
 #: colour, so the shape reads as one flat silhouette rather than two brightnesses.
 _AREA_TONE: RGB = (148, 163, 184)
 
-#: The area drawing's cell box, a block of its own under the stats: as wide as the page up
-#: to a cap (proportions are kept, so past it a shape only gains blank canvas), a fixed
-#: number of rows, and a floor of columns below which it is dropped rather than squeezed
-#: into illegibility. It used to ride beside the stats in a third of the width, which left
-#: no room for a label on any pin.
-_AREA_MAX_W = 40
+#: The area drawing's cell box, a block of its own under the stats: the page's whole width
+#: (proportions are kept, so a wider page is a bigger shape, never a padded one), rows in
+#: step with the width — a quarter of the columns, which in braille dots is a box half as
+#: tall as it is wide — with a floor on the rows, and a width below which the drawing is
+#: dropped rather than squeezed into illegibility. Rows a flat shape leaves blank are
+#: trimmed (:func:`_drawn_rows`), so a tall box costs a flat shape nothing. It used to ride
+#: beside the stats in a third of the width, which left no room for a label on any pin.
 _AREA_MIN_W = 16
-_AREA_ROWS = 8
+_AREA_MIN_ROWS = 8
+_AREA_ROWS_PER_COL = 4
 #: Dots kept clear inside the box's edges — wider on the sides than above and below, so a
 #: pin at the eastern or western extreme still has the cells its hash-byte label needs.
 _AREA_PAD_X = 8.0
@@ -438,17 +441,18 @@ class RecordScreen(Screen):
         """The walk's ground, as a block of its own between the stats and the route graph.
 
         Empty when there is no drawable shape, or the page is too narrow for one to be
-        legible. Otherwise a blank line, the drawing trimmed to the rows something landed
-        on (:func:`_drawn_rows`), and a faint caption reading the drawing back the way the
-        graph's does. It used to ride beside the stats in a third of the width, which
-        squeezed the shape and left no cell for a label on any pin.
+        legible. Otherwise a blank line, the section's heading (its note reading the
+        drawing back the way the route graph's does), and the drawing itself — the page's
+        whole width, rows in step with it, trimmed to the rows something landed on
+        (:func:`_drawn_rows`). It used to ride beside the stats in a third of the width,
+        which squeezed the shape and left no cell for a label on any pin.
         """
         if not self._shape or width < _AREA_MIN_W:
             return []
-        lines = [""]
-        lines.extend(_drawn_rows(self._shape_lines(min(width, _AREA_MAX_W), _AREA_ROWS)))
-        caption = Text("area walked · north up · labels = hash byte", style="faint")
-        lines.append(render_to_ansi(caption, width, no_wrap=True))
+        heading = body_heading("Area walked", "north up · labels = hash byte")
+        lines = ["", render_to_ansi(heading, width, no_wrap=True)]
+        rows = max(_AREA_MIN_ROWS, width // _AREA_ROWS_PER_COL)
+        lines.extend(_drawn_rows(self._shape_lines(width, rows)))
         return lines
 
     def _shape_lines(self, cell_w: int, cell_h: int) -> list[str]:
@@ -550,18 +554,30 @@ class RecordScreen(Screen):
         record = self._record
         lines: list[str] = []
 
+        # Three sections, each under a body heading (THE form, widgets.body_heading): the
+        # stats, the ground the walk covered, and the route two ways. The headings are what
+        # lets a page this tall be skimmed — a reader after the route scrolls to "Route"
+        # rather than reading down through the drawing to find it.
+        lines.append(render_to_ansi(body_heading("Stats"), width, no_wrap=True))
+        # The record's identity leads its stats: the spec that was walked and when it was
+        # set, then what the walk measured.
+        spec = Text(record.spec, style="brand")
+        spec.append(f"  ({record.width_bytes}-byte hops)", style="muted")
+        lines.extend(render_hanging(self._label("spec"), spec, width, indent=_LABEL_W))
+        when = Text(record.discovered_at.astimezone().strftime("%b %d %Y %H:%M"))
+        when.append(f" · MeshTerm {record.app_version}", style="muted")
+        lines.append(render_to_ansi(self._lane("recorded", when), width, no_wrap=True))
         lines.extend(render_to_ansi(lane, width, no_wrap=True) for lane in self._stat_lanes())
         lines.extend(self._area_lines(width))
 
         lines.append("")
+        heading = body_heading("Route", "you → … → you · labels = hash byte")
+        lines.append(render_to_ansi(heading, width, no_wrap=True))
         lines.extend(self._graph_lines(width))
-        caption = Text("you → … → you · labels = hash byte", style="faint")
-        lines.append(render_to_ansi(caption, width, no_wrap=True))
         lines.append(render_to_ansi(node_type_legend(), width, no_wrap=True))
 
-        lines.append("")
         # The walk itself, on THE path widget, across the card's whole width. No ``route``
-        # label lane: the line under a route graph captioned "you → … → you" is the route,
+        # label lane: the line under a route graph headed "you → … → you" is the route,
         # and the twelve cells a label would take are hops the reader came here for. It wraps
         # at hop boundaries (never mid-name, never mid-chip) rather than hanging under a lane.
         # Our two ends stand on the app-wide ★ rather than repeating our name and key — the
@@ -580,14 +596,6 @@ class RecordScreen(Screen):
             dim_self=False,
         )
         lines.extend(render_to_ansi(line, width, no_wrap=True) for line in route.wrapped(width))
-        spec = Text(record.spec, style="brand")
-        spec.append(f"  ({record.width_bytes}-byte hops)", style="muted")
-        lines.extend(render_hanging(self._label("spec"), spec, width, indent=_LABEL_W))
-
-        stamp = record.discovered_at.astimezone().strftime("%b %d %Y %H:%M")
-        when = Text(stamp)
-        when.append(f" · MeshTerm {record.app_version}", style="muted")
-        lines.append(render_to_ansi(self._lane("recorded", when), width, no_wrap=True))
         return lines
 
 
