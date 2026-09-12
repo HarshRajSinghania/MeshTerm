@@ -49,8 +49,8 @@ def _loop_shape() -> list[WalkVertex]:
     nglyph, ncolor = node_marker(1)  # a plain node
     return [
         WalkVertex(0.0, 0.0, sglyph, scolor, True),
-        WalkVertex(2.0, 1.0, hglyph, hcolor, False),
-        WalkVertex(1.0, 3.0, nglyph, ncolor, False),
+        WalkVertex(2.0, 1.0, hglyph, hcolor, False, label=HUB_ID[:2]),
+        WalkVertex(1.0, 3.0, nglyph, ncolor, False, label=FAR_ID[:2]),
     ]
 
 
@@ -294,26 +294,44 @@ def test_record_dialog_shows_reliability_when_the_far_node_has_history() -> None
     assert "reliability" not in without
 
 
-def test_record_dialog_draws_the_enclosed_area_beside_the_stats() -> None:
-    """A drawable walk pins its area, with node markers and no labels, right of the stats."""
+def _is_braille(ch: str) -> bool:
+    return chr(0x2800) <= ch <= chr(0x28FF)
+
+
+def test_record_draws_the_enclosed_area_under_the_stats_with_hash_byte_pins() -> None:
+    """A drawable walk pins its ground under the stats, each hop labelled with its hash byte.
+
+    The drawing used to ride beside the stats in a third of the width, unlabelled — there
+    was no cell for a label. It is a block of its own now, between the stats and the route
+    graph, so a pin and the graph node under it can be matched by their shared byte.
+    """
     lines = _plain(
         _dialog(_record(), far_label="Far", shape=_loop_shape()).render_body(58)
     ).splitlines()
-    stats_block = lines[: lines.index("")]  # the lanes, up to the blank before the graph
-    block = "\n".join(stats_block)
-    assert stats_block[0].startswith("score")  # the drawing rides beside the stats
-    assert any(chr(0x2800) <= ch <= chr(0x28FF) for ch in block)  # the area, in braille
+    first_blank = lines.index("")
+    stats = lines[:first_blank]
+    assert stats[0].startswith("score")
+    assert not any(_is_braille(ch) for ch in "\n".join(stats)), "no drawing beside the lanes"
+    assert "Far" in "\n".join(stats)  # the far-point name is a stat, not a drawing label
+
+    area = lines[first_blank + 1 : lines.index("", first_blank + 1)]
+    block = "\n".join(area)
+    assert any(_is_braille(ch) for ch in block)  # the area, in braille
     assert "★" in block  # us pinned at the origin
     assert "▲" in block  # the repeater vertex, in its map glyph
-    assert "Far" in block  # the far-point name (in the stats, not a drawing label)
+    assert HUB_ID[:2] in block and FAR_ID[:2] in block  # each hop's hash byte beside its pin
+    assert area[-1].startswith("area walked")  # the caption closes the block
+    graph_caption = next(i for i, line in enumerate(lines) if line.startswith("you → … → you"))
+    assert graph_caption > lines.index(area[-1]), "the route graph follows the drawing"
 
 
-def test_record_dialog_drops_the_area_drawing_when_too_narrow() -> None:
-    """Below the side-by-side floor the stats reclaim the width; the far name stays."""
-    body = _plain(_dialog(_record(), far_label="Far", shape=_loop_shape()).render_body(40))
+def test_record_drops_the_area_drawing_when_too_narrow() -> None:
+    """Below the drawing's floor the block is left out; the far name stays in the stats."""
+    body = _plain(_dialog(_record(), far_label="Far", shape=_loop_shape()).render_body(14))
     lines = body.splitlines()
-    score_row = next(line for line in lines if line.startswith("score"))
-    assert not any(chr(0x2800) <= ch <= chr(0x28FF) for ch in score_row)  # no drawing
+    assert "area walked" not in body  # no drawing, no caption for one
+    # The stats run straight into the blank line before the route graph; nothing pinned.
+    assert "★" not in "\n".join(lines[: lines.index("")])
     assert "Far" in body  # the far-point name survives the drop
 
 

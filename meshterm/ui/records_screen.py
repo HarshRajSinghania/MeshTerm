@@ -16,10 +16,10 @@ opened from the main menu. Every successful trace — a *Trace target* boomerang
 * opening a record pushes :class:`RecordScreen`, a full-screen page — every stat the walk
   was measured by
   (the far point named with the node it reached, the longest leg with the link it spanned),
-  the walk drawn two ways: on THE route graph (the Message paths dialog's shape, us at both
-  ends, drawn no taller than one lane
-  needs) and, beside the stats, as the enclosed area it swept on a braille mini-map (us and
-  every positioned hop, coloured node pins, no labels); then the full route — the path
+  the walk drawn two ways: under the stats, as the enclosed area it swept on a braille
+  mini-map (north up, us and every positioned hop as coloured node pins, each hop labelled
+  with its hash byte) and, under that, on THE route graph (the Message paths dialog's
+  shape, us at both ends, drawn no taller than one lane needs); then the full route — the path
   widget again, unlabelled across the card's whole width, wrapping at hop boundaries — and
   the spec, and when/by which app version it was
   set. The card scrolls (PgUp/PgDn/Home/End) when it outgrows the terminal. From there
@@ -88,14 +88,18 @@ _GRAPH_ROWS = 3
 #: colour, so the shape reads as one flat silhouette rather than two brightnesses.
 _AREA_TONE: RGB = (148, 163, 184)
 
-#: The area drawing's cell box, to the right of the stats: a width that scales with the
-#: dialog but stays inside these bounds, extra rows spent below the stats so the shape has
-#: room, and a floor of columns below which it is dropped (the stats reclaim the full
-#: width) rather than squeezed into illegibility.
-_POLY_MIN_W = 16
-_POLY_MAX_W = 28
-_POLY_EXTRA_ROWS = 2
-_SIDE_BY_SIDE_MIN = 44
+#: The area drawing's cell box, a block of its own under the stats: as wide as the page up
+#: to a cap (proportions are kept, so past it a shape only gains blank canvas), a fixed
+#: number of rows, and a floor of columns below which it is dropped rather than squeezed
+#: into illegibility. It used to ride beside the stats in a third of the width, which left
+#: no room for a label on any pin.
+_AREA_MAX_W = 40
+_AREA_MIN_W = 16
+_AREA_ROWS = 8
+#: Dots kept clear inside the box's edges — wider on the sides than above and below, so a
+#: pin at the eastern or western extreme still has the cells its hash-byte label needs.
+_AREA_PAD_X = 8.0
+_AREA_PAD_Y = 2.0
 
 #: Cells the record card's label lane spans. Every labelled row on the card — the stat
 #: lanes, the spec row's hanging indent, the recorded line — shares this one column, so
@@ -142,13 +146,13 @@ def discipline_lane() -> int:
 def _drawn_rows(lines: list[str]) -> list[str]:
     """``lines`` with the rows nothing actually landed on stripped from either end.
 
-    Both blocks the card stacks are drawn on a canvas sized for the worst case and then
-    filled: the stats' area drawing keeps :data:`_POLY_EXTRA_ROWS` in hand for a tall shape,
-    and the route graph pads a row either side of its markers for the labels. A shape that
-    comes out flat, or labels that all seat on one side, leave those rows empty — and an
-    empty row still costs a line of card, stacking up as a gap the layout never intended
-    (three blank lines between the stats and the graph where one was meant). Trimming happens
-    *after* the drawing, so nothing placed is ever lost: only rows that stayed blank go.
+    Both drawn blocks the card stacks are rendered on a canvas sized for the worst case and
+    then filled: the area drawing has :data:`_AREA_ROWS` for a tall shape, and the route
+    graph pads a row either side of its markers for the labels. A shape that comes out
+    flat, or labels that all seat on one side, leave those rows empty — and an empty row
+    still costs a line of card, stacking up as a gap the layout never intended (three blank
+    lines between the stats and the graph where one was meant). Trimming happens *after*
+    the drawing, so nothing placed is ever lost: only rows that stayed blank go.
     """
     kept = list(lines)
     while kept and not Text.from_ansi(kept[-1]).plain.strip():
@@ -172,6 +176,9 @@ class WalkVertex:
         glyph: The node-type marker to pin at this point.
         color: The marker's truecolour.
         is_self: Whether this vertex is our own node (the yellow star at the origin).
+        label: The hop's hash byte, written beside its pin — the same label the route
+            graph gives the node, so the two drawings are read against each other. Empty
+            for our own node: the star already says who that is.
     """
 
     x: float
@@ -179,6 +186,7 @@ class WalkVertex:
     glyph: str
     color: RGB
     is_self: bool
+    label: str = ""
 
 
 class RecordScreen(Screen):
@@ -191,9 +199,9 @@ class RecordScreen(Screen):
 
     Every stat the walk was measured by — a reliability read from the far node's trace
     history, the far point named with the node it reached, the longest leg drawn as the
-    link it spanned (our own end on the app-wide ★) — with the walk's enclosed area
-    drawn beside them on a braille mini-map (us at the origin, every positioned hop pinned
-    in its own name hue, no labels) when the terminal has the room; below, the walk on THE
+    link it spanned (our own end on the app-wide ★); under them the walk's enclosed area
+    on a braille mini-map (north up, us at the origin, every positioned hop pinned in its
+    own name hue and labelled with its hash byte); below that, the walk on THE
     route graph (us at both ends, relays wearing their map marker over a node-type key),
     the route in full on THE path widget — no label lane, the card's whole width, wrapped
     at hop boundaries and never truncated — and the
@@ -426,41 +434,35 @@ class RecordScreen(Screen):
             lanes.append(self._lane("round trip", Text(f"{rtt:.0f} ms")))
         return lanes
 
-    def _compose_stats(self, lanes: list[Text], width: int) -> list[str]:
-        """Lay the stat lanes out, the area drawing pinned to their right when it fits.
+    def _area_lines(self, width: int) -> list[str]:
+        """The walk's ground, as a block of its own between the stats and the route graph.
 
-        With a drawable walk and room to spare, the polygon takes a fixed cell box on the
-        right and the lanes are cropped to the column beside it; too narrow, or no shape,
-        and the lanes reclaim the whole width and the drawing is dropped. The block is
-        trimmed to the rows something landed on (:func:`_drawn_rows`), so a shape that comes
-        out flat hands its unused rows back instead of leaving the card gaping under the
-        last stat.
+        Empty when there is no drawable shape, or the page is too narrow for one to be
+        legible. Otherwise a blank line, the drawing trimmed to the rows something landed
+        on (:func:`_drawn_rows`), and a faint caption reading the drawing back the way the
+        graph's does. It used to ride beside the stats in a third of the width, which
+        squeezed the shape and left no cell for a label on any pin.
         """
-        if not self._shape or width < _SIDE_BY_SIDE_MIN:
-            return [render_to_ansi(lane, width, no_wrap=True) for lane in lanes]
-        poly_w = min(_POLY_MAX_W, max(_POLY_MIN_W, width // 3))
-        left_w = width - poly_w - 2
-        # Spend a couple of rows beyond the stat lanes so the shape has room; the extra
-        # rows hang just below the last stat, in the air above the route graph.
-        poly = self._shape_lines(poly_w, len(lanes) + _POLY_EXTRA_ROWS)
-        out: list[str] = []
-        for i in range(len(poly)):
-            row = lanes[i].copy() if i < len(lanes) else Text()
-            row.no_wrap = True
-            row.truncate(left_w, overflow="ellipsis", pad=True)
-            row.append("  ")
-            row.append_text(Text.from_ansi(poly[i]))
-            out.append(render_to_ansi(row, width, no_wrap=True))
-        return _drawn_rows(out)
+        if not self._shape or width < _AREA_MIN_W:
+            return []
+        lines = [""]
+        lines.extend(_drawn_rows(self._shape_lines(min(width, _AREA_MAX_W), _AREA_ROWS)))
+        caption = Text("area walked · north up · labels = hash byte", style="faint")
+        lines.append(render_to_ansi(caption, width, no_wrap=True))
+        return lines
 
     def _shape_lines(self, cell_w: int, cell_h: int) -> list[str]:
-        """Draw the walk's enclosed area on a braille canvas: fill, loop, coloured pins.
+        """Draw the walk's enclosed area on a braille canvas: fill, loop, labelled pins.
 
         The projected circuit (us at the origin, every positioned hop around it) is scaled
         to the cell box preserving true proportions — braille dots are square, so equal x/y
         scaling keeps the geography honest — then filled as a shaded region, outlined as the
-        walked loop, and pinned with each node's map marker. No labels: the pins carry the
-        node types and the stats beside them carry the numbers.
+        walked loop, and pinned with each node's map marker. The shape sits against the
+        box's left edge (the stats above it are left-aligned, and a shape centred in a
+        page-wide box would float off on its own) and is centred vertically. Each hop's pin
+        carries its hash byte, placed the way the map places a node's name: beside the pin,
+        clear of the drawn lines where a spot allows and over them where it doesn't, and
+        dropped rather than overprinting another pin or label.
         """
         verts = self._shape or []
         canvas = MapCanvas(cell_w, cell_h)
@@ -468,12 +470,11 @@ class RecordScreen(Screen):
         ys = [v.y for v in verts]
         span_x = (max(xs) - min(xs)) or 1e-6
         span_y = (max(ys) - min(ys)) or 1e-6
-        pad = 2.0
-        avail_w = max(1.0, canvas.dot_w - 1 - 2 * pad)
-        avail_h = max(1.0, canvas.dot_h - 1 - 2 * pad)
+        avail_w = max(1.0, canvas.dot_w - 1 - 2 * _AREA_PAD_X)
+        avail_h = max(1.0, canvas.dot_h - 1 - 2 * _AREA_PAD_Y)
         scale = min(avail_w / span_x, avail_h / span_y)
-        origin_x = pad + (avail_w - span_x * scale) / 2
-        origin_y = pad + (avail_h - span_y * scale) / 2
+        origin_x = _AREA_PAD_X
+        origin_y = _AREA_PAD_Y + (avail_h - span_y * scale) / 2
         min_x, max_y = min(xs), max(ys)
         # Flip y so north points up: the northernmost point lands at the top dot row.
         ring = [(origin_x + (v.x - min_x) * scale, origin_y + (max_y - v.y) * scale) for v in verts]
@@ -485,16 +486,28 @@ class RecordScreen(Screen):
         canvas.draw_line(closed, _AREA_TONE, priority=0)
         # Hops first, then our own node last, so the star always wins its cell — a hop that
         # projects onto the same cell can never hide us.
-        for v, (dx, dy) in zip(verts, ring, strict=True):
+        pins = [
+            (v, int(round(dx)), int(round(dy))) for v, (dx, dy) in zip(verts, ring, strict=True)
+        ]
+        for v, px, py in pins:
             if not v.is_self:
-                canvas.marker(int(round(dx)), int(round(dy)), v.glyph, v.color)
-        for v, (dx, dy) in zip(verts, ring, strict=True):
+                canvas.marker(px, py, v.glyph, v.color)
+        for v, px, py in pins:
             if v.is_self:
-                canvas.marker(int(round(dx)), int(round(dy)), v.glyph, v.color)
+                canvas.marker(px, py, v.glyph, v.color)
+        # Labels once every pin is down, so none is written over a pin placed later. Two
+        # sweeps, the map's way: a spot clear of the dots first, then any free spot.
+        unlabelled = [(v, px, py) for v, px, py in pins if v.label and not v.is_self]
+        for avoid_dots in (True, False):
+            unlabelled = [
+                (v, px, py)
+                for v, px, py in unlabelled
+                if not canvas.marker_label(px, py, v.label, v.color, avoid_dots=avoid_dots)
+            ]
         return canvas.to_ansi_lines()
 
     def render_body(self, width: int) -> list[str]:
-        """Stats lanes, the route graph, the full route, provenance, then the actions."""
+        """Stat lanes, the area drawing, the route graph, the route, provenance, actions."""
         # Everything above the action rows — the stat lanes, the area drawing, the
         # route graph and the provenance — is a pure function of the frozen record
         # and the width, so it is composed once per width; only the cursor-bearing
@@ -537,7 +550,8 @@ class RecordScreen(Screen):
         record = self._record
         lines: list[str] = []
 
-        lines.extend(self._compose_stats(self._stat_lanes(), width))
+        lines.extend(render_to_ansi(lane, width, no_wrap=True) for lane in self._stat_lanes())
+        lines.extend(self._area_lines(width))
 
         lines.append("")
         lines.extend(self._graph_lines(width))
@@ -700,7 +714,10 @@ async def open_records(ctx: AppContext) -> dict:
             name = resolve(node_id)
             hop_glyph = node_marker(ntype)[0]
             hop_color = name_rgb(name, node_id) if name and name != node_id else _AREA_TONE
-            verts.append(WalkVertex(east, north, hop_glyph, hop_color, False))
+            # The pin's label is the hop's first hash byte — what the route graph under the
+            # drawing labels the same node with, so a pin and a graph node match by eye.
+            byte = node_id.lower().removeprefix("0x")[:2]
+            verts.append(WalkVertex(east, north, hop_glyph, hop_color, False, label=byte))
             dist = haversine_km(self_pos[0], self_pos[1], pos[0], pos[1])
             if dist > far_dist:
                 far_dist = dist
