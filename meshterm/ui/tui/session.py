@@ -511,7 +511,8 @@ class TuiSession:
         # another screen — see :meth:`request_pop_all`.
         self._unwinding = False
         # The screen the unwind lands on (the main menu), so ^W can no-op when it is already
-        # the top rather than pointlessly rebuilding it. ``None`` until the menu declares it.
+        # the top rather than pointlessly rebuilding it — and what a popup floats over when
+        # nothing else is pushed (see :meth:`_floated`). ``None`` until the menu declares it.
         self._root: Screen | None = None
 
     # --- stack ---------------------------------------------------------------
@@ -580,12 +581,19 @@ class TuiSession:
 
         The main menu calls this with its own list. Only two things depend on it: ^W is a
         no-op while the root is already the top screen (you cannot go back to where you
-        are), and nothing else in the app needs to know which screen is the menu.
+        are), and a popup with nothing under it floats over the root rather than over an
+        empty frame (:meth:`_floated`). Nothing else in the app needs to know which screen
+        is the menu.
 
         Args:
-            screen: The root screen, or ``None`` to forget it (the menu on its way out).
+            screen: The root screen, or ``None`` to forget it.
         """
         self._root = screen
+
+    @property
+    def root(self) -> Screen | None:
+        """The declared navigation root (the main menu), or ``None`` before it is declared."""
+        return self._root
 
     def request_pop_all(self) -> bool:
         """Arm the unwind to the navigation root (the ^W key). Returns whether it fired.
@@ -1273,14 +1281,18 @@ class TuiSession:
         """Guarantee that whatever is pushed inside the block draws as a box, not full-frame.
 
         On an empty stack a lone floating screen is drawn *as* the background — framed
-        chrome filling the terminal, no popup (see :meth:`_base_index`) — so a blank base
-        is pushed first (the trick the reconnect dialog and the message popup already use)
-        and popped once the block ends. With a background already present there is nothing
-        to do: the dialog simply floats over it.
+        chrome filling the terminal, no popup (see :meth:`_base_index`) — so a base is
+        pushed first and popped once the block ends. The base is the **root** (the main
+        menu, popped while a tool runs but still the screen the reader chose the tool
+        from), so a question asked on the way into a tool floats over the menu it came
+        from: a dialog is smaller than the frame, and what shows around it should be the
+        page behind it, never an empty frame. A blank base is the fallback for a session
+        with no root declared. With a background already present there is nothing to do:
+        the dialog simply floats over it.
         """
-        backdrop: ScrollScreen | None = None
+        backdrop: Screen | None = None
         if not self._stack:
-            backdrop = ScrollScreen("", floating=False, footer_hint="")
+            backdrop = self._root or ScrollScreen("", floating=False, footer_hint="")
             self.push(backdrop)
         try:
             yield

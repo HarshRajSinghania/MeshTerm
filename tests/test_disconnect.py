@@ -706,6 +706,7 @@ class _FakeSession:
 
     def __init__(self) -> None:
         self.stack: list = []
+        self.root = None  # no menu ever declared itself: the dialog gets a blank base
 
     def push(self, screen) -> None:
         self.stack.append(screen)

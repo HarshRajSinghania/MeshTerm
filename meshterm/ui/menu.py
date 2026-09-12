@@ -588,7 +588,11 @@ async def _menu_loop(ctx: AppContext, session: TuiSession) -> None:
     The menu is still *popped* while a full-screen tool runs (only a ``popup`` tool floats
     over it). That is presentation, not navigation — the tool would hide it anyway — and the
     screen object outliving the pop is what makes returning feel like a pop rather than a
-    rebuild.
+    rebuild. It is also what a tool's lead-in question floats over: declared as the
+    session's root, the menu is the base pushed under any popup that would otherwise be
+    the only frame (``TuiSession._floated``), so a dialog always shows the page it was
+    reached from around it. The root is left declared on the way out for the same reason
+    — the reconnect dialog draws over it — and the next menu simply declares itself.
 
     Args:
         ctx: The shared application context.
@@ -607,20 +611,17 @@ async def _menu_loop(ctx: AppContext, session: TuiSession) -> None:
     )
     session.set_root(menu)
     loop = asyncio.get_running_loop()
-    try:
-        while True:
-            try:
-                await _menu_round(ctx, session, menu, tools, loop)
-            except _Quit as chosen:
-                ctx.unpair_on_exit = chosen.unpair
-                return
-            except PopToMenu:
-                # ^W from somewhere deep. Every frame between there and here has already
-                # popped itself on the way out; nothing is left to do but disarm and redraw
-                # the menu the user asked for.
-                session.unwound()
-    finally:
-        session.set_root(None)
+    while True:
+        try:
+            await _menu_round(ctx, session, menu, tools, loop)
+        except _Quit as chosen:
+            ctx.unpair_on_exit = chosen.unpair
+            return
+        except PopToMenu:
+            # ^W from somewhere deep. Every frame between there and here has already
+            # popped itself on the way out; nothing is left to do but disarm and redraw
+            # the menu the user asked for.
+            session.unwound()
 
 
 class _Quit(Exception):
@@ -1059,10 +1060,13 @@ async def _handle_disconnect(ctx: AppContext, session: TuiSession) -> bool:
         dialog = ReconnectDialog("Waiting for your device — reconnect it to resume.")
     dialog.future = asyncio.get_running_loop().create_future()
     # The session stack was cleared before we were called (see _session_loop), so push a
-    # clean, empty base frame for the popup to float over. A lone floating screen with nothing
-    # beneath it is drawn as the *base* (framed chrome, no centered panel) rather than as a
-    # window — the base gives it something to center over, both horizontally and vertically.
-    base = ScrollScreen("", floating=False, footer_hint="")
+    # base frame for the popup to float over. A lone floating screen with nothing beneath it
+    # is drawn as the *base* (framed chrome, no centered panel) rather than as a window —
+    # the base gives it something to center over, both horizontally and vertically. The
+    # base is the menu the reader was working from (still declared as the root), so the
+    # dialog reads as an interruption of the page rather than as a blank slate; a session
+    # that never reached the menu gets an empty frame.
+    base = session.root or ScrollScreen("", floating=False, footer_hint="")
     session.push(base)
     session.push(dialog)
     animator = asyncio.ensure_future(_animate_dialog(session, dialog))

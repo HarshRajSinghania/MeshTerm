@@ -107,11 +107,13 @@ async def test_present_clears_the_buffer_either_way() -> None:
 
 
 async def test_message_dialog_floats_over_a_blank_backdrop_end_to_end() -> None:
-    """On an empty stack the popup pushes a blank base beneath itself, then pops both.
+    """On an empty stack the popup pushes a base beneath itself, then pops both.
 
     This is the main-menu tool path: the menu is popped while a tool runs, so without
-    the backdrop the lone dialog would be drawn as the base (full-frame). Driving a
-    real session with piped keys proves Enter (OK) dismisses it and the stack unwinds.
+    the backdrop the lone dialog would be drawn as the base (full-frame). The base is
+    the menu itself once one has declared itself the root; a session that never reached
+    one, like this bare session, gets a blank frame. Driving a real session with piped
+    keys proves Enter (OK) dismisses it and the stack unwinds.
     """
     from prompt_toolkit.input.defaults import create_pipe_input
     from prompt_toolkit.output import DummyOutput

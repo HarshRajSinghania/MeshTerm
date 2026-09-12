@@ -427,6 +427,37 @@ async def test_a_wizard_turns_one_box_between_its_steps() -> None:
     ]
 
 
+async def test_a_popup_with_nothing_under_it_floats_over_the_menu() -> None:
+    """A question asked on the way into a tool shows the menu around it, never an empty frame.
+
+    The menu is popped while a tool runs, so a lead-in picker used to be the only frame and
+    was drawn full-frame — and the blank base that fixed that showed nothing behind the
+    box. A dialog is smaller than the frame, so what shows around it is the page it was
+    reached from: the root the menu declared is the base pushed under it, and popped with
+    it, so the tool's own page opens over nothing.
+    """
+    menu = SelectScreen("What would you like to do?", [Choice("TX optimize", "tx")])
+    seen: list = []
+
+    with create_pipe_input() as inp:
+        session = _session(inp)
+        session.set_root(menu)
+
+        async def main() -> None:
+            ask = asyncio.ensure_future(
+                session.select("Node to manage", [Choice("Hilltop", "h")], floating=True)
+            )
+            box = await _screen_at(session, 2)
+            seen.append((session._base_screen(), box.floating, session._has_float()))
+            box.resolve("h")
+            assert await asyncio.wait_for(ask, timeout=2) == "h"
+            assert session._stack == [], "the menu is the tool's to re-push, not the popup's"
+
+        await asyncio.wait_for(session.run(main()), timeout=5)
+
+    assert seen == [(menu, True, True)], "drawn as a box over the menu"
+
+
 async def test_a_wizard_step_may_float_its_own_prompt_over_the_box() -> None:
     """A step with nothing to list (a typed value) runs as an awaitable above the box.
 
