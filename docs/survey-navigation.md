@@ -104,6 +104,13 @@ reconnect dialog draws over it too. A blank base survives only for a session wit
 browser was full-frame from the menu only by the compositor's fallback; opened from a
 trace it came up as a box. It declares `floating = False` now, like the contact list.
 
+*Same day — Trace target.* The third of the three pickers finding H kept pushed, and the
+one the previous note said would stay: JP's call is that it is a question too. The contact
+list floats over the menu as a one-shot (`session.run_dialog`, public now), the trace screen
+opens over the menu, Esc from it lands there; tracing another node is opening the tool
+again. The typed fallback floats the same way. `ContactListScreen` stays a full-screen place
+everywhere else.
+
 **I. An entry chain of prompts was not a stack.** Five flows asked two or more things in a
 row, and Esc on any of them abandoned the whole flow rather than stepping back one — a
 mistyped 32-hex channel key cost the name typed before it. `menus.run_steps` now runs a

@@ -702,7 +702,7 @@ class TuiSession:
             dialog: The visit is a *popup's* — a stepped dialog turning its pages
                 (:func:`~meshterm.ui.menus.run_wizard`) rather than a hub — so it must draw
                 as a box even when it is the only thing on the stack: a blank base goes under
-                it for the visit, exactly as :meth:`_run_dialog_screen` does for a one-shot.
+                it for the visit, exactly as :meth:`run_dialog` does for a one-shot.
 
         Yields:
             A :class:`Visit` whose :meth:`~Visit.result` awaits one round of the screen.
@@ -901,7 +901,7 @@ class TuiSession:
         )
         if footer_hint is not None:
             kwargs["footer_hint"] = footer_hint
-        runner = self._run_dialog_screen if floating else self.run_screen
+        runner = self.run_dialog if floating else self.run_screen
         result = await runner(SelectScreen(title, items, **kwargs))
         return None if result is CANCEL else result
 
@@ -1212,11 +1212,10 @@ class TuiSession:
         """Show a text prompt; return the string or ``None`` if cancelled.
 
         ``floating`` guarantees the prompt draws as a centered popup even on an empty stack
-        — a modal step mid-flow (a remote-admin password) rather than a tool's full-frame
-        entry screen. It then floats over a blank base the way :meth:`button_dialog` and
-        :meth:`typed_confirm` do (see :meth:`_run_dialog_screen`); with a screen already
-        beneath it there is no difference, so leave it ``False`` for a prompt that is itself
-        a tool's primary screen (the Trace target's typed fallback).
+        — a question asked on the way in (a remote-admin password, a typed trace target)
+        rather than a tool's own page. It then floats over the menu the way
+        :meth:`button_dialog` and :meth:`typed_confirm` do (see :meth:`run_dialog`); with
+        a screen already beneath it there is no difference.
 
         ``byte_limit`` puts the shared UTF-8 byte gauge on the field and blocks submission
         past it — for a field that feeds a size-capped packet (see :class:`TextScreen`).
@@ -1230,7 +1229,7 @@ class TuiSession:
             password=password,
             byte_limit=byte_limit,
         )
-        runner = self._run_dialog_screen if floating else self.run_screen
+        runner = self.run_dialog if floating else self.run_screen
         result = await runner(screen)
         return None if result is CANCEL else result
 
@@ -1273,7 +1272,7 @@ class TuiSession:
             button_idle_style=button_idle_style,
             border_style=border_style,
         )
-        result = await self._run_dialog_screen(screen)
+        result = await self.run_dialog(screen)
         return None if result is CANCEL else result
 
     @asynccontextmanager
@@ -1300,7 +1299,7 @@ class TuiSession:
             if backdrop is not None:
                 self.pop(backdrop)
 
-    async def _run_dialog_screen(self, screen: Screen) -> Any:
+    async def run_dialog(self, screen: Screen) -> Any:
         """Run a floating dialog as a one-shot, drawn as a centered box (see :meth:`_floated`)."""
         async with self._floated():
             return await self.run_screen(screen)
@@ -1312,7 +1311,7 @@ class TuiSession:
         collapses its result to a plain bool: ``True`` only when the user typed the word,
         ``False`` when they backed out with Esc.
         """
-        result = await self._run_dialog_screen(TypedConfirmDialog(warning, word, title=title))
+        result = await self.run_dialog(TypedConfirmDialog(warning, word, title=title))
         return result is True
 
     async def autocomplete(
@@ -1325,7 +1324,7 @@ class TuiSession:
         validate: Validator | None = None,
     ) -> str | None:
         """Show a free-text prompt with suggestions; return text or ``None`` if cancelled."""
-        result = await self._run_dialog_screen(
+        result = await self.run_dialog(
             AutocompleteScreen(title, choices, prompt=prompt, default=default, validate=validate)
         )
         return None if result is CANCEL else result
@@ -1494,7 +1493,7 @@ class TuiSession:
         screen = BusyDialog(message, title=title)
         # A lone floating screen on an empty stack is drawn *as* the background, framed and
         # full-frame rather than as a box, so it gets the same blank backdrop every other
-        # dialog uses (see :meth:`_run_dialog_screen`).
+        # dialog uses (see :meth:`run_dialog`).
         backdrop = None
         if not self._stack:
             backdrop = ScrollScreen("", floating=False, footer_hint="")

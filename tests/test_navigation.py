@@ -139,13 +139,15 @@ async def test_a_visited_screen_is_armed_from_the_moment_it_is_pushed() -> None:
         await asyncio.wait_for(session.run(main()), timeout=5)
 
 
-async def test_the_trace_target_picker_stays_pushed_under_the_live_screen(monkeypatch) -> None:
-    """Esc out of a trace is one pop, back onto the picker — not a drop to the menu.
+async def test_the_trace_target_picker_is_a_popup_gone_before_the_live_screen(
+    monkeypatch,
+) -> None:
+    """The target pick is a floating question, answered and gone; the trace opens over the menu.
 
-    The picker used to be a one-shot prompt gathered in ``prompt_params``: it resolved and
-    popped *before* the live screen opened, so the trace screen sat straight on the menu and
-    a single Esc skipped the list it was launched from. Now the tool keeps the picker for the
-    whole visit and the live screen nests above it.
+    The picker was kept pushed as a hub under the trace screen, so Esc out of a trace landed
+    on the list — two places where the trace is the whole visit. It draws as a box now (over
+    a base, since the menu is popped while a tool runs), comes down on Enter, and the trace
+    screen has nothing under it.
     """
     from meshterm.core.models import Contact
     from meshterm.tools.trace import TraceTool
@@ -181,9 +183,8 @@ async def test_the_trace_target_picker_stays_pushed_under_the_live_screen(monkey
         ctx.ui = TuiUi(session)
 
         async def fake_open_trace(_ctx, target: str, *, initial_spec: str = "") -> int:
-            """Stand in for the live screen: note the stack under it, then Esc out of it."""
+            """Stand in for the live screen: note what is under it."""
             depths.append(len(session._stack))
-            inp.send_text(ESC)  # the Esc that used to land on the main menu
             return 2
 
         monkeypatch.setattr("meshterm.ui.trace_screen.open_trace", fake_open_trace)
@@ -194,15 +195,17 @@ async def test_the_trace_target_picker_stays_pushed_under_the_live_screen(monkey
             # and lost about one full-suite run in six. `_screen_at` exists for exactly
             # this — wait until the picker is on the stack, *then* press Enter on it.
             running = asyncio.create_task(TraceTool()._run_live(ctx))
-            await _screen_at(session, 1)
+            picker = await _screen_at(session, 2)
+            assert picker.floating and session._has_float(), "a box…"
+            assert not session._base_screen().floating, "…over a base"
             inp.send_text(ENTER)  # Enter on the leading row commits it as the target
             result = await running
             assert result.summary == {"sessions": 1, "traces": 2}
 
         await asyncio.wait_for(session.run(main()), timeout=5)
 
-    assert depths == [1], "the picker is still on the stack while the trace screen runs"
-    assert session._stack == [], "and the visit pops it on the way out"
+    assert depths == [0], "the picker is gone before the trace screen opens"
+    assert session._stack == []
 
 
 async def _screen_at(session: TuiSession, depth: int, timeout: float = 2.0):

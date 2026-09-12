@@ -432,8 +432,9 @@ class ContactListScreen(SelectScreen):
     KEY``. Pair the set with a ``sort`` whose ring spans it. The lanes anchor to the left:
     the name lane is sized to its widest name (not the terminal), so the columns stay put
     as the window widens and the freed width flows to the key lane, which shows each key as
-    fully as it fits (see :meth:`_lane_widths`). It is a full-screen list, not a floating
-    popup.
+    fully as it fits (see :meth:`_lane_widths`). It is a full-screen list — a place — by
+    default; the one instance that is a *question* (the trace target picker) sets
+    ``floating`` on itself and is drawn as a popup over the menu.
 
     The sort rides the Ctrl+arrows, leaving the plain arrows for the highlight and the
     letters for type-to-filter: **Ctrl+←/→** pick the column (each adopting its natural
