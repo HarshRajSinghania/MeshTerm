@@ -80,8 +80,12 @@ gone — it is not a place to walk back to, and two of them stacked read as two 
 two picks are now one floating list that turns its page (`menus.run_wizard`, `… · step 1
 of 2`): Esc on the second step turns back to the first with the picked node still
 highlighted, Esc on the first leaves, and the box is popped before the sweep opens — so Esc
-from the sweep lands on the main menu, the sweep being the whole visit. Trace's picker is a
-full-screen contact list (a place), and stays as it is.
+from the sweep lands on the main menu, the sweep being the whole visit. It also *draws* as
+a popup: the menu is popped while a tool runs, and a floating screen that is the only frame
+on the stack used to be painted as the full-frame background (`_base_index`), so the first
+of the two pickers never looked like a question at all. `stay(dialog=True)` now puts the
+blank base under a popup's visit that `_run_dialog_screen` puts under a one-shot. Trace's
+picker is a full-screen contact list (a place), and stays as it is.
 
 **I. An entry chain of prompts was not a stack.** Five flows asked two or more things in a
 row, and Esc on any of them abandoned the whole flow rather than stepping back one — a

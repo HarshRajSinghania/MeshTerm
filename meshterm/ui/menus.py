@@ -543,6 +543,9 @@ async def run_wizard(
     So the box is pushed once for the whole chain and popped before the answers are
     returned — whatever the caller opens with them (a full-screen sweep, a session) has
     nothing floating under it, and Esc from *there* lands where the flow was launched.
+    And it *is* a box: a popup that happens to be the only frame on the stack (the menu is
+    popped while a tool runs) would otherwise be drawn full-frame, so the visit floats over
+    a blank base the way every one-shot dialog does.
 
     A step is a callable handed the answers so far (index ``i`` reads ``values[i]``). It
     returns a :class:`WizardPage` for the box to turn to, or — for a step that is not a
@@ -567,7 +570,7 @@ async def run_wizard(
     if not isinstance(step, WizardPage):
         raise TypeError("the first step of a wizard must be a WizardPage")
     screen = SelectScreen(step.title, step.items, prompt=step.prompt, default=step.default)
-    async with session.stay(screen) as visit:
+    async with session.stay(screen, dialog=True) as visit:
         while True:
             answer = await visit.result() if isinstance(step, WizardPage) else await step
             if answer is CANCEL or answer is None:

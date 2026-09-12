@@ -15,7 +15,7 @@ import asyncio
 import os
 import sys
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 from typing import Any
 
 from prompt_toolkit.application import Application
@@ -667,7 +667,7 @@ class TuiSession:
         return result
 
     @asynccontextmanager
-    async def stay(self, screen: Screen) -> AsyncIterator[Visit]:
+    async def stay(self, screen: Screen, *, dialog: bool = False) -> AsyncIterator[Visit]:
         """Keep ``screen`` pushed for a whole visit while its sub-screens come and go.
 
         The counterpart to :meth:`run_screen`, and the shape every screen that *owns a loop*
@@ -691,16 +691,21 @@ class TuiSession:
 
         Args:
             screen: The screen to keep pushed for the duration of the block.
+            dialog: The visit is a *popup's* — a stepped dialog turning its pages
+                (:func:`~meshterm.ui.menus.run_wizard`) rather than a hub — so it must draw
+                as a box even when it is the only thing on the stack: a blank base goes under
+                it for the visit, exactly as :meth:`_run_dialog_screen` does for a one-shot.
 
         Yields:
             A :class:`Visit` whose :meth:`~Visit.result` awaits one round of the screen.
         """
         self._check_unwind()
-        self.push(screen)
-        try:
-            yield Visit(self, screen)
-        finally:
-            self.pop(screen)
+        async with self._floated() if dialog else nullcontext():
+            self.push(screen)
+            try:
+                yield Visit(self, screen)
+            finally:
+                self.pop(screen)
 
     def invalidate(self) -> None:
         """Request a repaint if the application is running."""
@@ -1258,23 +1263,30 @@ class TuiSession:
         result = await self._run_dialog_screen(screen)
         return None if result is CANCEL else result
 
-    async def _run_dialog_screen(self, screen: Screen) -> Any:
-        """Run a floating dialog, guaranteeing it draws as a centered box, not full-frame.
+    @asynccontextmanager
+    async def _floated(self) -> AsyncIterator[None]:
+        """Guarantee that whatever is pushed inside the block draws as a box, not full-frame.
 
         On an empty stack a lone floating screen is drawn *as* the background — framed
-        chrome filling the terminal, no popup — so a blank base is pushed beneath it first
-        (the trick the reconnect dialog and the message popup already use) and popped once
-        it closes. With a background already present the dialog simply floats over it.
+        chrome filling the terminal, no popup (see :meth:`_base_index`) — so a blank base
+        is pushed first (the trick the reconnect dialog and the message popup already use)
+        and popped once the block ends. With a background already present there is nothing
+        to do: the dialog simply floats over it.
         """
         backdrop: ScrollScreen | None = None
         if not self._stack:
             backdrop = ScrollScreen("", floating=False, footer_hint="")
             self.push(backdrop)
         try:
-            return await self.run_screen(screen)
+            yield
         finally:
             if backdrop is not None:
                 self.pop(backdrop)
+
+    async def _run_dialog_screen(self, screen: Screen) -> Any:
+        """Run a floating dialog as a one-shot, drawn as a centered box (see :meth:`_floated`)."""
+        async with self._floated():
+            return await self.run_screen(screen)
 
     async def typed_confirm(self, warning: str, word: str, *, title: str = "Are you sure?") -> bool:
         """Gate a destructive action behind typing ``word``; return whether it was typed.

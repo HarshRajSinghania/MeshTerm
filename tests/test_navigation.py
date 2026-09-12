@@ -266,11 +266,13 @@ async def test_the_tx_optimize_link_is_one_dialog_gone_before_the_sweep(monkeypa
             while step not in dialog.title:
                 await asyncio.sleep(0)
             pages.append(dialog.title)
-            assert session._stack == [dialog], "one box the whole way through"
+            assert session._stack[-1] is dialog, "one box the whole way through"
+            assert len(session._stack) == 2, "floating over a blank base — it is a popup"
+            assert not session._stack[0].floating and dialog.floating
 
         async def main() -> None:
             run = asyncio.ensure_future(TxOptimizeTool()._run_live(ctx))
-            dialog = await _screen_at(session, 1)
+            dialog = await _screen_at(session, 2)
             await turned_to(dialog, "step 1 of 2")
             dialog.resolve("Hilltop-Repeater")
             await turned_to(dialog, "step 2 of 2")
@@ -286,7 +288,7 @@ async def test_the_tx_optimize_link_is_one_dialog_gone_before_the_sweep(monkeypa
 
         await asyncio.wait_for(session.run(main()), timeout=5)
 
-    assert swept == [("Hilltop-Repeater", "Lakeside", 0)], "nothing floats under the sweep"
+    assert swept == [("Hilltop-Repeater", "Lakeside", 0)], "nothing at all under the sweep"
     assert [p.split(" — ")[1] for p in pages] == [
         "node to tune · step 1 of 2",
         "measure at · step 2 of 2",
@@ -364,7 +366,9 @@ async def test_a_wizard_turns_one_box_between_its_steps() -> None:
 
     Two picks used to be two popups stacked, each a frame to walk back through. A popup
     is a question, not a place: the chain is one list turning its page, and it is gone
-    before the caller opens whatever the answers were for.
+    before the caller opens whatever the answers were for. And it draws as a popup even
+    on an empty stack — a blank base under it for the visit — where a lone floating
+    screen would otherwise be painted as the full-frame background.
     """
     from meshterm.ui.menus import WizardPage, run_wizard
 
@@ -387,7 +391,8 @@ async def test_a_wizard_turns_one_box_between_its_steps() -> None:
 
         async def main() -> None:
             run = asyncio.ensure_future(run_wizard(session, [first, second]))
-            box = await _screen_at(session, 1)
+            box = await _screen_at(session, 2)
+            assert not session._stack[0].floating, "a blank base, so the box floats"
             shown.append((box.title, box._current_choice().value))
             box.resolve("b")
             while "step 2" not in box.title:
@@ -400,7 +405,7 @@ async def test_a_wizard_turns_one_box_between_its_steps() -> None:
 
             # Turned back: step 2's Esc re-shows step 1 with its answer highlighted.
             run = asyncio.ensure_future(run_wizard(session, [first, second]))
-            box = await _screen_at(session, 1)
+            box = await _screen_at(session, 2)
             box.resolve("a")
             while "step 2" not in box.title:
                 await asyncio.sleep(0)
@@ -408,7 +413,7 @@ async def test_a_wizard_turns_one_box_between_its_steps() -> None:
             while "step 1" not in box.title:
                 await asyncio.sleep(0)
             shown.append((box.title, box._current_choice().value))
-            assert session._stack == [box], "the same box, turned back"
+            assert session._stack[-1] is box, "the same box, turned back"
             box.resolve(CANCEL)  # Esc on the first step abandons
             assert await asyncio.wait_for(run, timeout=2) is None
             assert session._stack == []
@@ -446,11 +451,11 @@ async def test_a_wizard_step_may_float_its_own_prompt_over_the_box() -> None:
 
         async def main() -> None:
             run = asyncio.ensure_future(run_wizard(session, [first, second_step]))
-            box = await _screen_at(session, 1)
+            box = await _screen_at(session, 2)
             box.resolve("a")  # step 2 backs out at once → step 1 is asked again
             while box.future is None or box.future.done():
                 await asyncio.sleep(0)
-            assert session._stack == [box], "the box never left"
+            assert session._stack[-1] is box, "the box never left"
             box.resolve("a")
             assert await asyncio.wait_for(run, timeout=2) == ["a", "3d"]
 
