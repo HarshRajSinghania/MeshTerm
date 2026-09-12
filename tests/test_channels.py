@@ -269,6 +269,12 @@ def test_the_share_screen_refits_its_code_to_the_frame_every_paint() -> None:
     roomy = code_rows(120, 40)
     assert len(roomy) == 29  # the standard fit, where there is room for it
     assert roomy[0].startswith(" " * 30), "centred across the whole width"
+    # Centred as a block, never per row: every row carries the same indent and the same
+    # width, so the finder squares stack square. Per-row centring stripped each row's
+    # trailing light modules before padding it, and skewed the bottom finder a cell.
+    assert len({len(row) for row in roomy}) == 1, "rows differ in width — a skewed code"
+    finder = "█▀▀▀▀▀█"
+    assert len({row.index(finder) for row in roomy if finder in row}) == 1, "a finder is skewed"
     assert len(code_rows(72, 24)) <= 24  # a regular terminal: the code whole, link below
     assert len(code_rows(53, 26)) <= 26  # the PicoCalc: likewise
 

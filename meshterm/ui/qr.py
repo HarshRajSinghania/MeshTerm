@@ -59,8 +59,15 @@ _STYLE = "qr"
 _FITS: tuple[tuple[str, int], ...] = (("m", 4), ("l", 4), ("m", 2), ("l", 2))
 
 
-def _draw(code: segno.QRCode, border: int) -> Text:
-    """Draw a segno code as half-block rows, ``border`` light modules around it."""
+def _draw(code: segno.QRCode, border: int, *, indent: int = 0) -> Text:
+    """Draw a segno code as half-block rows, ``border`` light modules around it.
+
+    ``indent`` is the one way a code is ever moved across a line: the same run of bare
+    cells in front of *every* row. A code must never be justified — Rich's centring
+    strips each row's trailing spaces before it pads, so a row whose right edge is light
+    modules loses cells and lands a column off its neighbours, and a finder square one
+    row skewed is a code no camera can lock on to.
+    """
     rows = [[bool(v) for v in row] for row in code.matrix_iter(border=border)]
     # Pair rows top-to-bottom; pad an odd final row with light modules so the last
     # half-block cell renders cleanly.
@@ -71,6 +78,8 @@ def _draw(code: segno.QRCode, border: int) -> Text:
     for i, (top, bottom) in enumerate(zip(rows[0::2], rows[1::2], strict=True)):
         if i:
             text.append("\n")
+        if indent:
+            text.append(" " * indent)
         line = "".join(_GLYPH[(t, b)] for t, b in zip(top, bottom, strict=True))
         text.append(line, style=_STYLE)
     return text
@@ -93,8 +102,8 @@ def qr_text(data: str, *, error: str = "m", border: int = _BORDER) -> Text:
     return _draw(segno.make(data, error=error), border)
 
 
-def _fit(data: str, width: int, height: int | None) -> Text | None:
-    """The code at the first of :data:`_FITS` within ``width`` cells and ``height`` rows.
+def _fit(data: str, width: int, height: int | None) -> tuple[segno.QRCode, int] | None:
+    """The first of :data:`_FITS` within ``width`` cells and ``height`` rows, as (code, border).
 
     ``None`` when no fit is that small — the caller decides what to relax.
     """
@@ -104,8 +113,16 @@ def _fit(data: str, width: int, height: int | None) -> Text | None:
         code = segno.make(data, error=error)
         modules = code.symbol_size(border=border)[0]
         if modules <= width and (height is None or (modules + 1) // 2 <= height):
-            return _draw(code, border)
+            return code, border
     return None
+
+
+def _smallest(data: str) -> tuple[segno.QRCode, int]:
+    """The last of :data:`_FITS` — what a frame too small for any fit gets anyway."""
+    import segno
+
+    error, border = _FITS[-1]
+    return segno.make(data, error=error), border
 
 
 def fit_qr(data: str, width: int, height: int | None = None) -> Text:
@@ -122,11 +139,8 @@ def fit_qr(data: str, width: int, height: int | None = None) -> Text:
     Returns:
         The code, as :func:`qr_text` draws it.
     """
-    fitted = _fit(data, width, height)
-    if fitted is None:
-        error, border = _FITS[-1]
-        fitted = qr_text(data, error=error, border=border)
-    return fitted
+    code, border = _fit(data, width, height) or _smallest(data)
+    return _draw(code, border)
 
 
 class QrScreen(ScrollScreen):
@@ -166,13 +180,15 @@ class QrScreen(ScrollScreen):
         rows = self._scroll_viewport
         link = Text(self.url, style="accent", justify="center")
         link_rows = len(render_lines(link, width))
-        code = (
+        code, border = (
             _fit(self.url, width, rows - 1 - link_rows)
             or _fit(self.url, width, rows)
-            or fit_qr(self.url, width)
+            or _fit(self.url, width, None)
+            or _smallest(self.url)
         )
-        code.justify = "center"
-        self.replace_content(Group(code, Text(""), link))
+        # Centred as a block — one indent for every row (see _draw), never justified.
+        indent = max(0, (width - code.symbol_size(border=border)[0]) // 2)
+        self.replace_content(Group(_draw(code, border, indent=indent), Text(""), link))
         return super().render_body(width)
 
 
