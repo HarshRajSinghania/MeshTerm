@@ -300,64 +300,116 @@ def _is_braille(ch: str) -> bool:
     return chr(0x2800) <= ch <= chr(0x28FF)
 
 
-def test_record_draws_the_enclosed_area_under_the_stats_with_hash_byte_pins() -> None:
-    """A drawable walk pins its ground under the stats, each hop labelled with its hash byte.
+def _strip_end(lines: list[str]) -> int:
+    """The index just past the tab strip's rows.
+
+    A two-tab strip closes on its bottom rule — the one row that turns up into the active
+    tab's wall (``╯``); a lone tab collapses to a ``── Stats ──`` heading, one row.
+    """
+    for i, line in enumerate(lines):
+        if "╯" in line or "── " in line:
+            return i + 1
+    raise AssertionError(f"no tab strip in {lines[:5]}")
+
+
+def test_record_opens_on_the_stats_tab_with_the_area_tab_beside_it() -> None:
+    """A drawable walk gets two tabs — Stats, then Area — and opens on Stats.
+
+    The node page's shape: the strip is the page's title, so the stats open directly
+    under it (identity first), the route follows under its own heading, and nothing of the
+    ground is drawn on this tab — the drawing has a tab of its own.
+    """
+    screen = _dialog(_record(), far_label="Far", shape=_loop_shape())
+    lines = _plain(screen.render_body(58)).splitlines()
+    strip = "\n".join(lines[: _strip_end(lines)])
+    assert "Stats" in strip and "Area" in strip, "both tabs boxed in the strip"
+    body = [line for line in lines[_strip_end(lines) :] if line]
+    assert body[0].startswith("spec") and body[1].startswith("recorded")  # identity first
+    assert body[2].startswith("score")
+    assert any(line.startswith("Route") for line in body)  # the route, under its heading
+    assert "Trace this path" in "\n".join(body)  # the actions close the Stats tab
+    assert not any(
+        _is_braille(ch)
+        for line in body[: body.index("Route  ·  you → … → you · labels = hash byte")]
+        for ch in line
+    )
+    assert "Far" in "\n".join(body)  # the far-point name is a stat, not a drawing label
+
+
+def test_record_area_tab_fills_the_stage_with_hash_byte_pins() -> None:
+    """Tab turns to the Area tab: the ground, pinned and labelled, sized to the viewport.
 
     The drawing used to ride beside the stats in a third of the width, unlabelled — there
-    was no cell for a label. It is a block of its own now, between the stats and the route
-    graph, so a pin and the graph node under it can be matched by their shared byte.
+    was no cell for a label. It has a tab of its own now and spends every row the strip
+    leaves, so a pin and the graph node on the Stats tab can be matched by their shared
+    byte, and a taller terminal is a bigger shape.
     """
-    lines = _plain(
-        _dialog(_record(), far_label="Far", shape=_loop_shape()).render_body(58)
-    ).splitlines()
-    first_blank = lines.index("")
-    stats = lines[:first_blank]
-    assert stats[0] == "Stats"  # under its own heading…
-    assert stats[1].startswith("spec") and stats[2].startswith("recorded")  # …identity first
-    assert stats[3].startswith("score")
-    assert not any(_is_braille(ch) for ch in "\n".join(stats)), "no drawing beside the lanes"
-    assert "Far" in "\n".join(stats)  # the far-point name is a stat, not a drawing label
-
-    area = lines[first_blank + 1 : lines.index("", first_blank + 1)]
-    assert area[0].startswith("Area walked") and "labels = hash byte" in area[0]  # heading
-    block = "\n".join(area[1:])
+    screen = _dialog(_record(), far_label="Far", shape=_loop_shape())
+    screen.note_metrics(40, 24)
+    screen.handle("tab")
+    lines = _plain(screen.render_body(58)).splitlines()
+    stage = [line for line in lines[_strip_end(lines) :] if line]
+    block = "\n".join(stage)
     assert any(_is_braille(ch) for ch in block)  # the area, in braille
     assert "★" in block  # us pinned at the origin
     assert "▲" in block  # the repeater vertex, in its map glyph
     assert HUB_ID[:2] in block and FAR_ID[:2] in block  # each hop's hash byte beside its pin
-    assert len(area) - 1 >= 8, "the drawing spends the rows it is given"
-    # The three section headings, in reading order: each opens its block right after a
-    # blank line, so a page this tall can be skimmed by its landmarks.
-    at = {
-        name: next(i for i, line in enumerate(lines) if line.split("  ·  ")[0] == name)
-        for name in ("Stats", "Area walked", "Route")
-    }
-    assert at["Stats"] < at["Area walked"] < at["Route"]
-    assert all(lines[i - 1] == "" for name, i in at.items() if name != "Stats")
-    assert at["Route"] > lines.index(area[-1]), "the route graph follows the drawing"
+    assert stage[-1] == "north up · labels = hash byte"  # the caption reads the drawing back
+    assert "Trace this path" not in block  # the actions belong to the Stats tab
+    assert len(lines) <= 24, "the Area tab never outgrows the viewport"
+
+    screen.note_metrics(40, 40)
+    taller = _plain(screen.render_body(58)).splitlines()
+    assert len(taller) > len(lines), "a taller viewport is a taller drawing"
+
+    screen.handle("tab")  # …and back round to Stats
+    assert "Trace this path" in _plain(screen.render_body(58))
 
 
 def test_record_area_drawing_spends_the_width_it_is_given() -> None:
     """The drawing is as wide as the page: a wider page is a bigger, not a padded, shape."""
-    narrow = _plain(_dialog(_record(), shape=_loop_shape()).render_body(40)).splitlines()
-    wide = _plain(_dialog(_record(), shape=_loop_shape()).render_body(72)).splitlines()
 
-    def drawn_width(lines: list[str]) -> int:
-        start = next(i for i, line in enumerate(lines) if line.startswith("Area walked")) + 1
-        block = lines[start : lines.index("", start)]
-        return max(len(line.rstrip()) for line in block)
+    def drawn_width(width: int) -> int:
+        screen = _dialog(_record(), shape=_loop_shape())
+        # Rows enough that the shape's proportions bind on the width, not the height.
+        screen.note_metrics(40, 40)
+        screen.handle("tab")
+        lines = _plain(screen.render_body(width)).splitlines()
+        return max(len(line.rstrip()) for line in lines[_strip_end(lines) : -1])
 
-    assert drawn_width(wide) > drawn_width(narrow)
+    assert drawn_width(72) > drawn_width(40)
 
 
-def test_record_drops_the_area_drawing_when_too_narrow() -> None:
-    """Below the drawing's floor the block is left out; the far name stays in the stats."""
-    body = _plain(_dialog(_record(), far_label="Far", shape=_loop_shape()).render_body(14))
-    lines = body.splitlines()
-    assert "Area walked" not in body  # no drawing, no heading for one
-    # The stats run straight into the blank line before the route graph; nothing pinned.
-    assert "★" not in "\n".join(lines[: lines.index("")])
-    assert "Far" in body  # the far-point name survives the drop
+def test_record_area_tab_says_so_when_too_narrow_to_draw() -> None:
+    """Below the drawing's floor the Area tab says why it is empty instead of squeezing."""
+    screen = _dialog(_record(), far_label="Far", shape=_loop_shape())
+    screen.handle("tab")
+    body = _plain(screen.render_body(12))
+    assert not any(_is_braille(ch) for ch in body)
+    assert "no room" in body  # cut at the edge like any row, but there
+
+
+def test_record_without_a_shape_has_one_tab_and_nothing_to_switch() -> None:
+    """No positioned hops, no Area tab: the strip collapses to a heading and Tab is inert."""
+    screen = _dialog(_record())
+    lines = _plain(screen.render_body(60)).splitlines()
+    assert "── Stats ──" in "\n".join(lines[: _strip_end(lines)])
+    assert "Area" not in "\n".join(lines)
+    assert "Tab" not in screen.footer_hint
+    screen.handle("tab")
+    assert screen._tab_index == 0
+
+
+def test_record_footer_names_only_what_each_tab_answers() -> None:
+    """The Stats tab hints the cursor keys; the Area tab, a picture, only the switch and Esc."""
+    screen = _dialog(_record(), shape=_loop_shape())
+    assert screen.footer_hint == "Tab/⇧Tab switch · ↑↓ move · Enter select · Esc back"
+    screen.note_metrics(40, 10)  # taller than the viewport: the pager earns its atom
+    assert "PgUp/PgDn scroll" in screen.footer_hint
+    screen.handle("tab")
+    assert screen.footer_hint == "Tab/⇧Tab switch · Esc back"
+    screen.handle("down")  # inert on the Area tab
+    assert screen._index == 0
 
 
 def test_record_dialog_scrolls_free_of_the_action_cursor() -> None:

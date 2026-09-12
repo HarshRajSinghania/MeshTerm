@@ -1165,6 +1165,30 @@ def node_type_legend(indent: str = "") -> Text:
     return legend
 
 
+#: Blank rows of air around a tab strip — one above and one under on the desktop; none
+#: on the PicoCalc (JP, 2026-08-08), where rows are the scarce resource and both lines go
+#: to the stage instead (the route graph's ceiling, the location preview's growth room).
+#: Rides the same frugality signal as the borderless frame, and is bound at
+#: platform-switch time like every platform-derived constant — never branched per paint.
+_TAB_AIR = 1
+
+
+@on_platform
+def _bind_tab_air(platform: Platform) -> None:
+    """Bind the strip's air to the platform (runs now and on every switch)."""
+    global _TAB_AIR
+    _TAB_AIR = 1 if platform.frame_border else 0
+
+
+def tab_air() -> int:
+    """Blank rows a tabbed page spends above its strip and under it (see :data:`_TAB_AIR`).
+
+    Read by every screen that draws :func:`tab_strip` — the node page, a record — so the
+    strip sits in the same air everywhere, and loses it on the same platform.
+    """
+    return _TAB_AIR
+
+
 def tab_strip(labels: Sequence[str], active: int, width: int) -> Group:
     """A boxed tab strip: every tab always boxed on top, the active one open into the page.
 

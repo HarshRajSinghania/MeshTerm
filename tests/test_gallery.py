@@ -83,7 +83,7 @@ from meshterm.ui.node_detail_screen import NodeDetailScreen, _Action, _RoutesVie
 from meshterm.ui.packet_viewer import PacketEntry, PacketViewer
 from meshterm.ui.path_composer import PathComposerScreen
 from meshterm.ui.preferences import _menu_items as _preference_items
-from meshterm.ui.records_screen import RecordScreen
+from meshterm.ui.records_screen import RecordScreen, WalkVertex
 from meshterm.ui.remote_cli import RemoteCliScreen
 from meshterm.ui.repeater_admin import AdminMenu
 from meshterm.ui.repeater_admin import _menu_items as _admin_menu_items
@@ -94,7 +94,13 @@ from meshterm.ui.tui import Screen, SelectScreen, fkeys, frame
 from meshterm.ui.tui.prompt import CountdownDialog
 from meshterm.ui.tx_screen import TxSweepScreen
 from meshterm.ui.walk_screen import WalkScreen
-from meshterm.ui.widgets import _NODE_GLYPHS, ContactsSort, highlighted_hash
+from meshterm.ui.widgets import (
+    _NODE_GLYPHS,
+    ContactsSort,
+    highlighted_hash,
+    node_marker,
+    self_marker,
+)
 from tests.conftest import plain as _plain
 
 _HUB_KEY = "3d63c6429436" + "0" * 52
@@ -673,6 +679,31 @@ def _record_dialog(cols: int, rows: int) -> Screen:
     )
 
 
+def _record_area(cols: int, rows: int) -> Screen:
+    """A record with positioned hops, turned to its Area tab: the drawing at the stage's size."""
+    record = _record()
+    sglyph, scolor = self_marker()
+    hglyph, hcolor = node_marker(NODE_TYPE_REPEATER)
+    nglyph, ncolor = node_marker(1)
+    screen = RecordScreen(
+        record,
+        CATEGORY_BY_ID[record.category],
+        1,
+        resolve=lambda h: {"3d63c6429436": "Hilltop-Repeater", "f2c24f54551e": "Alice"}.get(h, h),
+        device_label="Homestead",
+        device_hash=None,
+        far_label="Alice",
+        shape=[
+            WalkVertex(0.0, 0.0, sglyph, scolor, True),
+            WalkVertex(4.0, 1.5, hglyph, hcolor, False, label="3d"),
+            WalkVertex(2.5, 3.0, nglyph, ncolor, False, label="f2"),
+        ],
+    )
+    screen.note_metrics(rows, rows)
+    screen.handle("tab")
+    return screen
+
+
 def _packet_viewer(cols: int, rows: int) -> Screen:
     entry = PacketEntry(
         when=utcnow(),
@@ -896,6 +927,7 @@ _ENTRIES: list[_Entry] = [
     _Entry("path_composer", _path_composer),
     _Entry("courier_outbox", _courier_outbox),
     _Entry("record_dialog", _record_dialog),
+    _Entry("record_area", _record_area),
     _Entry("packet_viewer", _packet_viewer),
     _Entry("trace", _trace),
     _Entry("tx_sweep", _tx_sweep),
