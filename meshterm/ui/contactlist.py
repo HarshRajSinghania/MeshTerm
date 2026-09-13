@@ -34,12 +34,12 @@ from .menus import fit_cells
 from .theme import name_style
 from .tui.select import Choice, SelectScreen, Separator
 from .widgets import (
-    _DEFAULT_GLYPH,
-    _NODE_GLYPHS,
+    DEFAULT_GLYPH,
+    NODE_GLYPHS,
     ContactsSort,
-    _age_seconds,
-    _format_age,
     _recency_style,
+    age_seconds,
+    format_age,
     highlighted_hash,
 )
 
@@ -270,7 +270,7 @@ def _header(
 def _lane_cell(row: ContactRow, lane: ContactLane) -> Text:
     """One row's value for one lane, right-aligned into the lane's width and styled by kind.
 
-    An ``age`` lane draws the relative age in the column form (:func:`_format_age`) under
+    An ``age`` lane draws the relative age in the column form (:func:`format_age`) under
     recency heat, so a fresh value glows and a cold one greys — the same reading whatever
     the event the lane times. A ``count`` lane draws the tally muted, or a faint ``—`` where
     there is nothing to count, and clamps so a runaway tally can't widen the column.
@@ -280,8 +280,8 @@ def _lane_cell(row: ContactRow, lane: ContactLane) -> Text:
         if value is None:
             return Text(f"{'—':>{lane.width}}", style="faint")
         return Text(f"{min(value, 99999):>{lane.width}}", style="muted")
-    secs = _age_seconds(value)
-    return Text(f"{_format_age(secs):>{lane.width}}", style=_recency_style(secs))
+    secs = age_seconds(value)
+    return Text(f"{format_age(secs):>{lane.width}}", style=_recency_style(secs))
 
 
 def _you_lane(
@@ -353,7 +353,7 @@ def _lane(
     """
     if row.you:
         return _you_lane(row, name_w, prefix_bytes, hash_w, lanes)
-    glyph, glyph_style = _NODE_GLYPHS.get(row.node_type, _DEFAULT_GLYPH)
+    glyph, glyph_style = NODE_GLYPHS.get(row.node_type, DEFAULT_GLYPH)
     text = Text(no_wrap=True, overflow="ellipsis")
     text.append(glyph, style=glyph_style)
     text.append(" ")
@@ -413,7 +413,7 @@ def _ordered(
         value = getattr(row, lane.field, None)
         if lane.kind == "count":
             return value or 0
-        secs = _age_seconds(value)
+        secs = age_seconds(value)
         return secs if secs is not None else float("inf")
 
     ordered = sorted(rows, key=key_name)

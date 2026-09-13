@@ -27,7 +27,7 @@ from ..services.trace_runner import make_name_key_resolver
 from .menus import icon_lane, icon_mark, marked_label, section_heading
 from .theme import name_style
 from .tui import Choice, Separator
-from .widgets import _DEFAULT_GLYPH, _NODE_GLYPHS, _age_seconds, _format_age
+from .widgets import DEFAULT_GLYPH, NODE_GLYPHS, age_seconds, format_age
 
 if TYPE_CHECKING:
     from ..context import AppContext
@@ -254,10 +254,10 @@ def _alert_lanes(
         row.append("○ ", style="muted")
     else:
         row.append("● ", style="err")
-    age = _format_age(_age_seconds(alert.when))
+    age = format_age(age_seconds(alert.when))
     row.append(f"{age:>5}  ", style="muted")
     row.append(alert.kind.ljust(10), style=_KIND_STYLES.get(alert.kind, "brand"))
-    glyph, glyph_style = _NODE_GLYPHS.get(type_of(alert.label), _DEFAULT_GLYPH)
+    glyph, glyph_style = NODE_GLYPHS.get(type_of(alert.label), DEFAULT_GLYPH)
     row.append(f"{glyph} ", style="muted" if alert.acked else glyph_style)
     if alert.acked:
         row.append(alert.label, style="muted")
@@ -282,7 +282,7 @@ def _watched_row(entry: WatchedNode, type_of: Callable[[str], int | None]) -> Te
     glyph — and the name takes its key-derived hue (the entry's 12-hex watch key).
     """
     node_type = entry.node_type if entry.node_type is not None else type_of(entry.key)
-    glyph, glyph_style = _NODE_GLYPHS.get(node_type, _DEFAULT_GLYPH)
+    glyph, glyph_style = NODE_GLYPHS.get(node_type, DEFAULT_GLYPH)
     row = Text()
     row.append(f"{glyph} ", style=glyph_style)
     row.append(entry.name, style=name_style(entry.name, entry.key))
@@ -292,7 +292,7 @@ def _watched_row(entry: WatchedNode, type_of: Callable[[str], int | None]) -> Te
     if entry.silent_since is not None:
         row.append("  ·  ⚠ silent", style="err")
     elif entry.last_heard is not None:
-        row.append(f"  ·  heard {_format_age(_age_seconds(entry.last_heard))}", style="muted")
+        row.append(f"  ·  heard {format_age(age_seconds(entry.last_heard))}", style="muted")
     return row
 
 
@@ -318,19 +318,19 @@ async def _pick_node(ctx: AppContext, contacts: list[Contact]) -> None:
         return
 
     def recency(pair: tuple[str, Contact]) -> float:
-        seen = _age_seconds(pair[1].last_seen)
+        seen = age_seconds(pair[1].last_seen)
         return seen if seen is not None else float("inf")
 
     items: list = []
     for key, contact in sorted(candidates, key=recency):
-        glyph, glyph_style = _NODE_GLYPHS.get(contact.node_type, _DEFAULT_GLYPH)
+        glyph, glyph_style = NODE_GLYPHS.get(contact.node_type, DEFAULT_GLYPH)
         row = Text()
         row.append(f"{glyph} ", style=glyph_style)
         row.append(
             contact.name,
             style=name_style(contact.name, contact.public_key or contact.key_prefix),
         )
-        row.append(f"   heard {_format_age(_age_seconds(contact.last_seen))}", style="muted")
+        row.append(f"   heard {format_age(age_seconds(contact.last_seen))}", style="muted")
         items.append(Choice(row, (key, contact)))
     picked = await session.select(
         "Watch a node",

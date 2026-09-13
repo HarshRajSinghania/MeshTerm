@@ -79,7 +79,7 @@ from .pathline import PathLine, cut_to, path_line
 from .theme import snr_style
 from .tui.render import query_line, render_lines, render_to_ansi
 from .tui.screen import ListWindow, Screen
-from .widgets import NodeResolver, _age_seconds, _format_age, identity_label, path_text
+from .widgets import NodeResolver, age_seconds, format_age, identity_label, path_text
 
 #: Sentinel spec meaning "no forced path — let the device route" (the trace screen's
 #: empty-spec convention). Only meaningful in target mode; a path walk has no target
@@ -551,7 +551,7 @@ class PathComposerScreen(Screen):
             text.append("  ↔ ", style="muted")
             text.append(f"{snr:+.1f} dB", style=snr_style(snr))
         text.append(f"  {link.samples}×", style="muted")
-        age = _format_age(_age_seconds(link.last_seen))
+        age = format_age(age_seconds(link.last_seen))
         text.append(f" · {age}", style="muted")
         tags = "".join(_SOURCE_TAGS[s] for s in sorted(link.sources & _SOURCE_TAGS.keys()))
         if tags:

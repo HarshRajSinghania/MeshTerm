@@ -95,7 +95,7 @@ from meshterm.ui.tui.prompt import CountdownDialog
 from meshterm.ui.tx_screen import TxSweepScreen
 from meshterm.ui.walk_screen import WalkScreen
 from meshterm.ui.widgets import (
-    _NODE_GLYPHS,
+    NODE_GLYPHS,
     ContactsSort,
     highlighted_hash,
     node_marker,
@@ -276,7 +276,7 @@ def _archived(cols: int, rows: int) -> Screen:
 def _node_detail_header() -> Text:
     # Through the app's own marker and name styles, not a hand-spelled hex: the gallery is
     # a specimen of what the platform draws, so a stub colour would hide a palette bug.
-    glyph, glyph_style = _NODE_GLYPHS[NODE_TYPE_REPEATER]
+    glyph, glyph_style = NODE_GLYPHS[NODE_TYPE_REPEATER]
     header = Text(f"{glyph} ", style=glyph_style)
     header.append("Hilltop-Repeater", style=name_style("Hilltop-Repeater", _HUB_KEY))
     header.append("   repeater", style="muted")

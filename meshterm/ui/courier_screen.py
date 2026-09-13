@@ -34,7 +34,7 @@ from .contactlist import SORT_COLUMNS, SORT_OPENS_ASCENDING, ContactListScreen, 
 from .menus import icon_lane, marked_label, run_steps, section_heading
 from .tui import CANCEL, DM_BYTE_LIMIT, Choice, SelectScreen, Separator
 from .watchtower_screen import contact_watch_key
-from .widgets import ContactsSort, _age_seconds, contact_packets, format_ago
+from .widgets import ContactsSort, age_seconds, contact_packets, format_ago
 
 if TYPE_CHECKING:
     from ..context import AppContext
@@ -323,7 +323,7 @@ def _done_row(message: QueuedMessage, lane: int = _MARK_LANE) -> Text:
     when = message.finished or message.created
     verb = "delivered" if message.status == DELIVERED else "gave up"
     row.append(
-        f"  ·  {verb} {format_ago(_age_seconds(when))}"
+        f"  ·  {verb} {format_ago(age_seconds(when))}"
         f" · {message.attempts} attempt{'s' if message.attempts != 1 else ''}",
         style="muted",
     )

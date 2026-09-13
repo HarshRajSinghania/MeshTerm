@@ -18,7 +18,7 @@ from meshterm.ui.pathline import (
 )
 from meshterm.ui.theme import node_style
 from meshterm.ui.widgets import (
-    _format_age,
+    format_age,
     format_ago,
     name_chip,
     path_text,
@@ -33,12 +33,12 @@ def _span_style(text: Text, run: str) -> Style:
 
 def test_format_age_is_the_bare_column_form() -> None:
     """The lane form stays suffix-free at every magnitude, for aligned age columns."""
-    assert _format_age(None) == "never"
-    assert _format_age(5) == "now"
-    assert _format_age(90) == "1m"
-    assert _format_age(7200) == "2h"
-    assert _format_age(180000) == "2d"
-    assert _format_age(1300000) == "2w"
+    assert format_age(None) == "never"
+    assert format_age(5) == "now"
+    assert format_age(90) == "1m"
+    assert format_age(7200) == "2h"
+    assert format_age(180000) == "2d"
+    assert format_age(1300000) == "2w"
 
 
 def test_format_ago_speaks_grammatical_prose() -> None:

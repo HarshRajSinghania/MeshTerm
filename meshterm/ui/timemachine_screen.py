@@ -50,8 +50,8 @@ from .tui.screen import CANCEL, Screen
 from .tui.select import Choice, Separator
 from .widgets import (
     ContactsSort,
-    _age_seconds,
     _recency_style,
+    age_seconds,
     body_heading,
     format_ago,
     highlighted_hash,
@@ -404,7 +404,7 @@ def _node_sections(
     first, last = observations[0].observed_at, observations[-1].observed_at
     line = Text("heard    ", style="muted")
     line.append(f"first {_when_label(first)} · last {_when_label(last)}")
-    line.append(f"  ({format_ago(_age_seconds(last))})", style="muted")
+    line.append(f"  ({format_ago(age_seconds(last))})", style="muted")
     out.append(line)
     snrs = [p[1] for p in snr_pairs]
     if snrs:
@@ -527,7 +527,7 @@ def _self_sections(ctx: AppContext, window: timedelta | None, width: int) -> lis
     first, last = stamps[0], stamps[-1]
     line = Text("active   ", style="muted")
     line.append(f"first {_when_label(first)} · last {_when_label(last)}")
-    line.append(f"  ({format_ago(_age_seconds(last))})", style="muted")
+    line.append(f"  ({format_ago(age_seconds(last))})", style="muted")
     out.append(line)
 
     if ledger.trace_total:
@@ -1073,7 +1073,7 @@ def _mesh_sections(
             )
         )
         for key, name, first in listed:
-            secs = _age_seconds(first)
+            secs = age_seconds(first)
             line = Text("  ", no_wrap=True, overflow="ellipsis")
             line.append(
                 fit_cells(name or "unknown", name_w),

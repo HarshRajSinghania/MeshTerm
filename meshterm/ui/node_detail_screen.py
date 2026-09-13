@@ -117,10 +117,10 @@ from .theme import mark_rgb, name_style, snr_style
 from .tui.render import crop_cells, render_hanging, render_lines, render_to_ansi
 from .tui.screen import CANCEL, ListWindow, Screen
 from .widgets import (
-    _DEFAULT_GLYPH,
-    _NODE_GLYPHS,
-    _age_seconds,
+    DEFAULT_GLYPH,
+    NODE_GLYPHS,
     _recency_style,
+    age_seconds,
     format_ago,
     highlighted_hash,
     node_type_legend,
@@ -1192,7 +1192,7 @@ async def open_node_detail(
         glyph, glyph_style = SELF_MARK
         name_hue = "you"
     else:
-        glyph, glyph_style = _NODE_GLYPHS.get(node_type, _DEFAULT_GLYPH)
+        glyph, glyph_style = NODE_GLYPHS.get(node_type, DEFAULT_GLYPH)
         name_hue = name_style(name, key) if name else "muted"
     header = Text()
     header.append(f"{glyph} ", style=glyph_style)
@@ -1235,7 +1235,7 @@ async def open_node_detail(
         # one node. Only a node that is no contact, or one whose merge could not read our
         # history, falls back to the raw reception stat.
         heard_at = contact.last_seen if contact else None
-        secs = _age_seconds(heard_at or (hn.last_seen if hn else None))
+        secs = age_seconds(heard_at or (hn.last_seen if hn else None))
         heard_val = Text(format_ago(secs), style=_recency_style(secs))
         if first_heard is not None:
             heard_val.append(f"  ·  first {first_heard.astimezone():%b %d %Y}", style="muted")
@@ -1759,10 +1759,10 @@ def _cluster_presentation(members: tuple[str, ...], type_of) -> _Cluster:  # noq
     types = {type_of(m) for m in members}
     only = next(iter(types)) if len(types) == 1 else None
     if only is not None:
-        glyph, color = _NODE_GLYPHS.get(only, _DEFAULT_GLYPH)
+        glyph, color = NODE_GLYPHS.get(only, DEFAULT_GLYPH)
         kind = NODE_TYPE_LABELS.get(only, "node")
     else:
-        glyph, color = _DEFAULT_GLYPH
+        glyph, color = DEFAULT_GLYPH
         kind = "node"
     return _Cluster(glyph=glyph, color=color, label=f"{len(members)} {kind}s", rgb=mark_rgb(color))
 
@@ -1953,7 +1953,7 @@ def _routes_view(
         return (cluster.glyph, cluster.color) if cluster is not None else base_glyph_of(node)
 
     glyph_of = _with_target_glyph(
-        cluster_glyph_of, _NODE_GLYPHS.get(type_of(canonical_target), _DEFAULT_GLYPH)
+        cluster_glyph_of, NODE_GLYPHS.get(type_of(canonical_target), DEFAULT_GLYPH)
     )
     return _RoutesView(
         routes=routes,

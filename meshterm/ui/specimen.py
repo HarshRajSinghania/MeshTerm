@@ -76,7 +76,7 @@ def specimen_lines() -> list[RenderableType]:
     lines.append(status)
 
     # The node-type marks in the theme's own ``type.*`` entries — the same styles every
-    # typed node in the app is drawn in (ui.widgets._NODE_GLYPHS), so this row *is* the
+    # typed node in the app is drawn in (ui.widgets.NODE_GLYPHS), so this row *is* the
     # marker language rather than a restatement of it. The star and the unknown ring have
     # no type of their own: they take the ``you`` white and ``muted`` grey they carry
     # everywhere else.

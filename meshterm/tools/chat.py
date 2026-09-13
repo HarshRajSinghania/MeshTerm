@@ -49,7 +49,7 @@ from ..ui.fields import ChannelRef, NodeRef
 from ..ui.menus import Lane, column_header, fit_cells, section_heading
 from ..ui.theme import name_style
 from ..ui.tui import Choice, DeleteRequest, Separator
-from ..ui.widgets import _NODE_GLYPHS, _age_seconds, _format_age, channel_glyph
+from ..ui.widgets import NODE_GLYPHS, age_seconds, channel_glyph, format_age
 from .base import Tool, ToolResult, register
 
 if TYPE_CHECKING:
@@ -834,7 +834,7 @@ def _title(
 #: The standard companion pink — the shared plain-node ``●`` colour — the contact dot's
 #: hue: the shape (filled/hollow) marks history, the colour marks "a companion", and the
 #: name beside it carries the person's own key-derived hue.
-_COMPANION_DOT_STYLE = _NODE_GLYPHS[NODE_TYPE_CHAT][1]
+_COMPANION_DOT_STYLE = NODE_GLYPHS[NODE_TYPE_CHAT][1]
 
 
 def _append_marker(
@@ -910,7 +910,7 @@ def _append_body(text: Text, body: str, key_of: NameKeyResolver) -> None:
 
 
 def _ago(when: Any) -> str:
-    """The column age for a message time, through THE grammar (``_format_age``).
+    """The column age for a message time, through THE grammar (``format_age``).
 
     One deliberate difference from the widget: a missing or naive timestamp (a stray one
     from the wire) reads as a *blank* lane rather than ``never`` — the picker wants an
@@ -918,7 +918,7 @@ def _ago(when: Any) -> str:
     """
     if getattr(when, "tzinfo", None) is None:
         return ""
-    return _format_age(_age_seconds(when))
+    return format_age(age_seconds(when))
 
 
 def _channel_ref(idx: int | None, label: str, secret: bytes | None) -> ChannelRef:

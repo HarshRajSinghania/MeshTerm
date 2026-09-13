@@ -126,7 +126,7 @@ def test_stamp_is_absolute_local_iso_to_the_second() -> None:
 def test_stamp_reads_an_unknown_offset_as_absent() -> None:
     """A naive datetime is a time whose offset we don't know, which is not a fact.
 
-    The same rule :func:`~meshterm.ui.widgets._age_seconds` applies to relative ages.
+    The same rule :func:`~meshterm.ui.widgets.age_seconds` applies to relative ages.
     """
     assert script.stamp(None) == script.NONE
     assert script.stamp(datetime(2026, 9, 7, 22, 22, 41)) == script.NONE
@@ -162,7 +162,7 @@ def test_a_time_is_an_age_unless_the_instant_is_itself_the_fact() -> None:
 def test_the_age_ladder_steps_where_a_person_would_step(seconds: int, expected: str) -> None:
     """``now``, ``5m``, ``3h``, ``2d``, ``4w`` — the menu's own column ladder.
 
-    Delegated to :func:`~meshterm.ui.widgets._format_age` rather than re-derived, so the
+    Delegated to :func:`~meshterm.ui.widgets.format_age` rather than re-derived, so the
     two faces of the same age cannot drift apart.
     """
     assert script.age(datetime.now(timezone.utc) - timedelta(seconds=seconds)) == expected

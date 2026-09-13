@@ -182,7 +182,7 @@ def stamp(when: datetime | None) -> str:
 
     Stored times are timezone-aware UTC; a naive one is a time whose offset we do not
     actually know, which is not a fact and so reads as absent — the same rule
-    :func:`~meshterm.ui.widgets._age_seconds` applies to ages.
+    :func:`~meshterm.ui.widgets.age_seconds` applies to ages.
 
     Args:
         when: The instant to format.
@@ -201,7 +201,7 @@ def age(when: datetime | None, *, absent: str = NONE) -> str:
     The default time form, and the reason is the premise change: a person at a prompt
     reading ``2026-09-07T19:58:53-04:00`` is doing arithmetic to answer "recently?", which
     is the question they typed the command to ask. Delegates to
-    :func:`~meshterm.ui.widgets._format_age` so the two faces cannot drift apart.
+    :func:`~meshterm.ui.widgets.format_age` so the two faces cannot drift apart.
 
     Args:
         when: The instant to age. A naive datetime has no offset we know, so it reads as
@@ -214,10 +214,10 @@ def age(when: datetime | None, *, absent: str = NONE) -> str:
     Returns:
         The age, or ``absent``.
     """
-    from .widgets import _age_seconds, _format_age
+    from .widgets import age_seconds, format_age
 
-    seconds = _age_seconds(when)
-    return absent if seconds is None else _format_age(seconds)
+    seconds = age_seconds(when)
+    return absent if seconds is None else format_age(seconds)
 
 
 def number(value: Any, spec: str = "") -> str:

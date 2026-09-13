@@ -488,13 +488,13 @@ def _target_items(contacts: list[Contact], admin: Contact) -> list:
 
     from ..ui.theme import name_style
     from ..ui.tui import Choice
-    from ..ui.widgets import _DEFAULT_GLYPH, _NODE_GLYPHS
+    from ..ui.widgets import DEFAULT_GLYPH, NODE_GLYPHS
 
     def row(contact: Contact) -> Any:
         # The type mark keeps its own fixed hue; the *name* takes the node's key-derived
         # colour like every other list of nodes (a style on the Text itself would be the
         # row's base and would paint the name the type's colour too).
-        glyph, glyph_style = _NODE_GLYPHS.get(contact.node_type, _DEFAULT_GLYPH)
+        glyph, glyph_style = NODE_GLYPHS.get(contact.node_type, DEFAULT_GLYPH)
         label = Text()
         label.append(f"{glyph} ", style=glyph_style)
         label.append(

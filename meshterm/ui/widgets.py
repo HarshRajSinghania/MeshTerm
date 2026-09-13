@@ -636,7 +636,7 @@ def route_graph_style(
         if type_of is not None:
             node_type = type_of(node)
             if node_type is not None:
-                return _NODE_GLYPHS.get(node_type, _DEFAULT_GLYPH)
+                return NODE_GLYPHS.get(node_type, DEFAULT_GLYPH)
         named = resolve(node)
         return NODE_MARK if named and named != node else UNKNOWN_MARK
 
@@ -846,13 +846,13 @@ def stats_panel(
 # The colours are the theme's ``type.*`` entries rather than raw hex, so the 16-slot console
 # picks its slot deliberately (the violet would otherwise downsample to grey, and a repeater
 # would read as an unknown node); on the regular platform they *are* the map's hues.
-_NODE_GLYPHS: dict[int, tuple[str, str]] = {
+NODE_GLYPHS: dict[int, tuple[str, str]] = {
     NODE_TYPE_REPEATER: (REPEATER_MARK[0], "type.repeater"),
     NODE_TYPE_ROOM: ("■", "type.room"),
     NODE_TYPE_SENSOR: ("◉", "type.sensor"),
     NODE_TYPE_CHAT: (NODE_MARK[0], "type.node"),
 }
-_DEFAULT_GLYPH: tuple[str, str] = (NODE_MARK[0], "type.node")
+DEFAULT_GLYPH: tuple[str, str] = (NODE_MARK[0], "type.node")
 
 
 def node_marker(node_type: int | None) -> tuple[str, RGB]:
@@ -860,13 +860,13 @@ def node_marker(node_type: int | None) -> tuple[str, RGB]:
 
     The shared node-type marks (``▲`` repeater, ``■`` room, ``◉`` sensor, ``●`` plain
     node) in the map's own colours, minted here for a braille raster the way
-    :data:`_NODE_GLYPHS` mints them for a Rich row — so a spatial drawing pins its nodes
+    :data:`NODE_GLYPHS` mints them for a Rich row — so a spatial drawing pins its nodes
     in the exact glyphs and hues the map and the nodes list use. Both read the same
     ``type.*`` theme entry (through :func:`~meshterm.ui.theme.mark_rgb` here), so the
     raster and the row agree on whatever the platform's palette can afford. An unknown
     type falls back to the plain node mark.
     """
-    glyph, style = _NODE_GLYPHS.get(node_type or -1, _DEFAULT_GLYPH)
+    glyph, style = NODE_GLYPHS.get(node_type or -1, DEFAULT_GLYPH)
     return glyph, mark_rgb(style)
 
 
@@ -890,14 +890,14 @@ _HEAT_STOPS: tuple[tuple[float, tuple[int, int, int]], ...] = (
 _RECENCY_NEVER = "#64748b"  # never heard — the coldest slate
 
 
-def _age_seconds(when: datetime | None) -> float | None:
+def age_seconds(when: datetime | None) -> float | None:
     """Seconds since ``when`` (aware UTC), or ``None`` when unknown/naive."""
     if when is None or getattr(when, "tzinfo", None) is None:
         return None
     return max(0.0, (utcnow() - when).total_seconds())
 
 
-def _format_age(secs: float | None) -> str:
+def format_age(secs: float | None) -> str:
     """A compact relative age — ``now``, ``5m``, ``3h``, ``2d``, ``4w`` — or ``never``."""
     if secs is None:
         return "never"
@@ -941,9 +941,9 @@ def format_ago(secs: float | None) -> str:
     sighting reads as bare ``now`` and an unknown one as bare ``never`` (neither takes
     the suffix — "now ago" is nonsense), while any measured age reads ``5m ago``.
     Callers embedding an age in a sentence or parenthetical use this;
-    :func:`_format_age` stays the bare column form for aligned age lanes.
+    :func:`format_age` stays the bare column form for aligned age lanes.
     """
-    age = _format_age(secs)
+    age = format_age(secs)
     return age if age in ("now", "never") else f"{age} ago"
 
 
@@ -1142,7 +1142,7 @@ def _sort_header(label: str, column: str, sort: ContactsSort) -> str:
 def node_type_legend(indent: str = "") -> Text:
     """The one-line key to the node-type marks: ``★ you  ▲ repeater  ● node  …``.
 
-    Every glyph in its shared map colour (see :data:`_NODE_GLYPHS`), each named muted after
+    Every glyph in its shared map colour (see :data:`NODE_GLYPHS`), each named muted after
     it. THE legend for any surface that draws typed node markers — the contacts list under its
     table, the route graph under its lanes — so one glyph means one thing app-wide.
 
@@ -1153,7 +1153,7 @@ def node_type_legend(indent: str = "") -> Text:
     legend.append(SELF_MARK[0], style=SELF_MARK[1])
     legend.append(" you", style="muted")
     for node_type in (NODE_TYPE_REPEATER, NODE_TYPE_CHAT, NODE_TYPE_ROOM, NODE_TYPE_SENSOR):
-        glyph, color = _NODE_GLYPHS[node_type]
+        glyph, color = NODE_GLYPHS[node_type]
         legend.append("   ")
         legend.append(glyph, style=color)
         legend.append(f" {NODE_TYPE_LABELS[node_type]}", style="muted")
@@ -1346,13 +1346,13 @@ def contacts_table(
     )
     table.add_section()
     for c in ordered_contacts(contacts, counts, sort):
-        secs = _age_seconds(c.last_seen)
-        glyph, glyph_style = _NODE_GLYPHS.get(c.node_type, _DEFAULT_GLYPH)
+        secs = age_seconds(c.last_seen)
+        glyph, glyph_style = NODE_GLYPHS.get(c.node_type, DEFAULT_GLYPH)
         pkts = contact_packets(c, counts)
         table.add_row(
             Text(glyph, style=glyph_style),
             Text(c.name, style=name_style(c.name, c.public_key or c.key_prefix)),
-            Text(_format_age(secs), style=_recency_style(secs)),
+            Text(format_age(secs), style=_recency_style(secs)),
             Text(str(pkts), style="muted") if pkts else Text("—", style="faint"),
             highlighted_hash(c.public_key, prefix_bytes) if c.public_key else unknown,
         )

@@ -285,7 +285,7 @@ async def purge_contacts(ctx: AppContext, self_key: str) -> int:
             return await _sweep(ctx, self_key, victims)
 
 
-def _age_seconds(scored: ScoredContact) -> float | None:
+def age_seconds(scored: ScoredContact) -> float | None:
     """A scored contact's last-heard age in seconds, or ``None`` if it was never heard."""
     days = scored.signals.heard_age_days
     return None if days is None else days * _DAY
@@ -319,7 +319,7 @@ def victims_for(
         return sweep_candidates(ranked, keep=math.ceil(len(sweepable) * int(value) / 100))
     matched = []
     for scored in sweepable:
-        age = _age_seconds(scored)
+        age = age_seconds(scored)
         if value == _NEVER:
             if age is None:
                 matched.append(scored)

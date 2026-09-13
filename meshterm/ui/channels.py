@@ -70,7 +70,7 @@ from .menus import (
 from .qr import share_screen
 from .theme import glyph
 from .tui import CANCEL, Choice, SelectScreen, Separator
-from .widgets import _age_seconds, _format_age, channel_glyph, format_ago
+from .widgets import age_seconds, channel_glyph, format_age, format_ago
 
 if TYPE_CHECKING:
     from ..context import AppContext
@@ -564,7 +564,7 @@ def _slot_text(ctx: AppContext, slot: ChannelSlot, stats: _LiveStats, name_w: in
         # no messages drew the same glyph twice meaning different things.
         text.append(f"{'○':>{_COUNT_WIDTH}}", style="muted")
     text.append("  ")
-    age = _format_age(_age_seconds(st.last_at)) if st is not None and st.last_at else ""
+    age = format_age(age_seconds(st.last_at)) if st is not None and st.last_at else ""
     text.append(f"{age:>{_AGE_WIDTH}}", style="muted")
     text.append("  ")
     # The shared peak across all channels, so every row's sparkline uses one scale.
@@ -676,7 +676,7 @@ def _detail_summary(ctx: AppContext, slot: ChannelSlot, stats: _LiveStats) -> st
     if _is_muted(ctx, slot):
         parts.append("muted")
     if st is not None and st.last_at is not None:
-        parts.append(f"last {format_ago(_age_seconds(st.last_at))}")
+        parts.append(f"last {format_ago(age_seconds(st.last_at))}")
     width = get_platform().readable_cols
     while len(parts) > 1 and cell_len(" · ".join(parts)) > width:
         parts.pop()

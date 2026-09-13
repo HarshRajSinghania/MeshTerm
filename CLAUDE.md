@@ -28,7 +28,7 @@ them instead of hand-rolling:
   the language below).
 - `ui/widgets.py` — `highlighted_hash` (THE key widget — shows a key, lights its hash),
   `format_ago` (prose ages),
-  `_format_age` (column ages), `channel_glyph`, `_NODE_GLYPHS`, heard-age heat colouring.
+  `format_age` (column ages), `channel_glyph`, `NODE_GLYPHS`, heard-age heat colouring.
 - `ui/theme.py` — `name_style`/`node_style` (per-node hues, hash-derived), `snr_style`,
   the `you` white.
 
@@ -65,7 +65,7 @@ only). A behaviour value belongs in the preference registry, not as a module con
 not in `config.toml`: a code constant a reader can't reach is a preference nobody has.
 
 Relative ages: `format_ago` for prose ("now", "5m ago", "never" — never "now ago"),
-`_format_age` for aligned columns ("now", "5m").
+`format_age` for aligned columns ("now", "5m").
 
 ### Navigation — the stack
 
@@ -429,7 +429,7 @@ splitting safe has gone, because splitting is the machine face's job now.
   quoting stays and always will (`script._escaped`): a node broadcasts its own name and a
   stranger fills in a message body, and neither may end the record it sits in.
 - **A time is an age** — `now`, `5m`, `3h`, `never` (`script.age`, delegating to
-  `widgets._format_age` so the two faces cannot drift). An absolute instant survives where
+  `widgets.format_age` so the two faces cannot drift). An absolute instant survives where
   the instant *is* the fact (`script.stamp`, `fields.instant`): the device clock, an
   appointment set with `--at`, a live capture's own `TIME`, every column under `--absolute`.
   `--absolute` is an override of the `cli_time_format` **preference**, not a switch beside

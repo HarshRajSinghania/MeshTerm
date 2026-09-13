@@ -60,11 +60,11 @@ from .trace_screen import snr_bar
 from .tui.render import render_lines, render_to_ansi
 from .tui.screen import Screen
 from .widgets import (
-    _DEFAULT_GLYPH,
-    _NODE_GLYPHS,
+    DEFAULT_GLYPH,
+    NODE_GLYPHS,
     NameKeyResolver,
     TypeOf,
-    _age_seconds,
+    age_seconds,
     format_ago,
     highlighted_hash,
     node_type_legend,
@@ -727,7 +727,7 @@ class PacketViewer(Screen):
         icon, class_label = class_chrome(entry)
         rows.append(("class", Text(f"{icon} {class_label}")))
 
-        secs = _age_seconds(entry.when)
+        secs = age_seconds(entry.when)
         heard = Text(entry.when.astimezone().strftime("%b %d %H:%M:%S"))
         heard.append(f"  ({format_ago(secs)})", style="muted")
         rows.append(("heard", heard))
@@ -779,7 +779,7 @@ class PacketViewer(Screen):
             node_type = self._type_of(entry.node)
         if node_type is None:
             return UNKNOWN_MARK
-        return _NODE_GLYPHS.get(node_type, _DEFAULT_GLYPH)
+        return NODE_GLYPHS.get(node_type, DEFAULT_GLYPH)
 
     def _tail_rows(self, entry: PacketEntry) -> list[tuple[str, RenderableType]]:
         """The rows below the route graph: location, the message/ack fields, the raw dump."""

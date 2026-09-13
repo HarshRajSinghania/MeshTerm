@@ -75,7 +75,7 @@ from .theme import mark_rgb, name_style, snr_style
 from .trace_screen import snr_bar
 from .tui.render import crop_cells, query_line, render_to_ansi
 from .tui.screen import ListWindow, Screen
-from .widgets import _DEFAULT_GLYPH, _NODE_GLYPHS, _format_age, highlighted_hash
+from .widgets import DEFAULT_GLYPH, NODE_GLYPHS, format_age, highlighted_hash
 
 if TYPE_CHECKING:
     from ..context import AppContext
@@ -752,7 +752,7 @@ class WalkScreen(Screen):
                 line.append(f"  ·  {ring} hop{'s' if ring != 1 else ''} out", style="muted")
             if contact is not None and contact.last_seen is not None:
                 secs = max(0.0, (utcnow() - contact.last_seen).total_seconds())
-                line.append(f"  ·  heard {_format_age(secs)}", style="muted")
+                line.append(f"  ·  heard {format_age(secs)}", style="muted")
         return line
 
     def _short_hash(self, node: str) -> str:
@@ -1134,8 +1134,8 @@ class WalkScreen(Screen):
         legend = Text()
         for (glyph, colour), word in (
             (SELF_MARK, " you   "),
-            (_NODE_GLYPHS[NODE_TYPE_REPEATER], " repeater   "),
-            (_DEFAULT_GLYPH, " node   "),
+            (NODE_GLYPHS[NODE_TYPE_REPEATER], " repeater   "),
+            (DEFAULT_GLYPH, " node   "),
             (UNKNOWN_MARK, " unknown"),
         ):
             legend.append(glyph, style=colour)
@@ -1280,7 +1280,7 @@ class WalkScreen(Screen):
         row.append(f" {min(link.samples, 999):>3}×", style="muted")
         tags = "".join(_SOURCE_TAGS[s] for s in sorted(link.sources & _SOURCE_TAGS.keys()))
         row.append(f" {tags:<4}", style="faint")
-        age = _format_age(
+        age = format_age(
             max(0.0, (utcnow() - link.last_seen).total_seconds())
             if link.last_seen is not None and getattr(link.last_seen, "tzinfo", None)
             else None
@@ -1392,7 +1392,7 @@ class WalkScreen(Screen):
     def _glyph(self, node: str) -> tuple[str, str]:
         """A node's mark: the type glyph and the colour that type wears app-wide.
 
-        The shared marks (:data:`~meshterm.ui.widgets._NODE_GLYPHS`) and the shared
+        The shared marks (:data:`~meshterm.ui.widgets.NODE_GLYPHS`) and the shared
         ``type.*`` colours behind them, so a node is pinned here in exactly the glyph and
         hue the map, the route graph and the contact list pin it in — ``▲`` violet for a
         repeater, ``■`` for a room, ``◉`` for a sensor, ``●`` pink for a plain node, our
@@ -1410,7 +1410,7 @@ class WalkScreen(Screen):
         contact = self._contacts.get(node)
         if contact is None:
             return UNKNOWN_MARK
-        return _NODE_GLYPHS.get(contact.node_type, _DEFAULT_GLYPH)
+        return NODE_GLYPHS.get(contact.node_type, DEFAULT_GLYPH)
 
     def _label(self, node: str) -> str:
         """A node's display name: its own name for us, contact name, or short hash."""

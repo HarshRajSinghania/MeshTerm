@@ -45,7 +45,7 @@ def admin_picker_rows(ctx: AppContext, contacts: list[Contact]) -> tuple[list, l
     from .menus import section_heading
     from .theme import name_style
     from .tui import Choice
-    from .widgets import _DEFAULT_GLYPH, _NODE_GLYPHS
+    from .widgets import DEFAULT_GLYPH, NODE_GLYPHS
 
     candidates = [c for c in contacts if (c.public_key or c.key_prefix).strip()]
     if not candidates:
@@ -55,7 +55,7 @@ def admin_picker_rows(ctx: AppContext, contacts: list[Contact]) -> tuple[list, l
         # The type mark keeps its own fixed hue; the *name* takes the node's key-derived
         # colour like every other list of nodes (a style on the Text itself would be the
         # row's base and would paint the name the type's colour too).
-        glyph, glyph_style = _NODE_GLYPHS.get(contact.node_type, _DEFAULT_GLYPH)
+        glyph, glyph_style = NODE_GLYPHS.get(contact.node_type, DEFAULT_GLYPH)
         label = Text()
         label.append(f"{glyph} ", style=glyph_style)
         label.append(

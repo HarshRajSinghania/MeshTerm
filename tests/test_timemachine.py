@@ -872,7 +872,7 @@ def test_picker_glyph_reflects_resolved_node_type() -> None:
     """A node with no stored type takes its contact's type for the leading glyph."""
     from meshterm.core.models import NODE_TYPE_REPEATER
     from meshterm.ui.timemachine_screen import MESH, SELF
-    from meshterm.ui.widgets import _DEFAULT_GLYPH, _NODE_GLYPHS
+    from meshterm.ui.widgets import DEFAULT_GLYPH, NODE_GLYPHS
 
     listed = _heard_nodes()  # every node's stored node_type is None
     repeater = listed[0][0].node  # Alice's id — the one the resolver knows as a repeater
@@ -882,8 +882,8 @@ def test_picker_glyph_reflects_resolved_node_type() -> None:
         c.value[0]: c.label.plain[0] for c in screen._choices() if c.value not in (MESH, SELF)
     }
     # The resolved repeater takes ▲; a node the resolver can't place keeps the plain-node ●.
-    assert glyphs[repeater] == _NODE_GLYPHS[NODE_TYPE_REPEATER][0]
-    assert glyphs[listed[1][0].node] == _DEFAULT_GLYPH[0]
+    assert glyphs[repeater] == NODE_GLYPHS[NODE_TYPE_REPEATER][0]
+    assert glyphs[listed[1][0].node] == DEFAULT_GLYPH[0]
 
 
 def test_picker_stored_node_type_wins_over_the_resolver() -> None:
@@ -892,7 +892,7 @@ def test_picker_stored_node_type_wins_over_the_resolver() -> None:
 
     from meshterm.core.models import NODE_TYPE_REPEATER, NODE_TYPE_SENSOR, HeardNode
     from meshterm.ui.timemachine_screen import MESH, SELF
-    from meshterm.ui.widgets import _NODE_GLYPHS
+    from meshterm.ui.widgets import NODE_GLYPHS
 
     sensor = HeardNode(
         node="ab" * 6,
@@ -906,7 +906,7 @@ def test_picker_stored_node_type_wins_over_the_resolver() -> None:
     )
     screen = _picker([(sensor, "Probe")], type_of=lambda _node: NODE_TYPE_REPEATER)
     glyph = next(c.label.plain[0] for c in screen._choices() if c.value not in (MESH, SELF))
-    assert glyph == _NODE_GLYPHS[NODE_TYPE_SENSOR][0]
+    assert glyph == NODE_GLYPHS[NODE_TYPE_SENSOR][0]
 
 
 def test_picker_resort_keeps_the_highlight_on_its_node_and_the_filter() -> None:

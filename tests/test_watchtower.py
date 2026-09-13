@@ -214,11 +214,11 @@ def test_watched_row_type_glyph_and_hued_name(tmp_path: Path) -> None:
     from meshterm.core.watch_store import WatchedNode
     from meshterm.ui.theme import name_style
     from meshterm.ui.watchtower_screen import _watched_row
-    from meshterm.ui.widgets import _NODE_GLYPHS
+    from meshterm.ui.widgets import NODE_GLYPHS
 
     entry = WatchedNode(key="a1" * 6, name="Roof", node_type=2, last_heard=utcnow())
     row = _watched_row(entry, lambda key: None)
-    glyph, glyph_style = _NODE_GLYPHS[2]
+    glyph, glyph_style = NODE_GLYPHS[2]
     assert row.plain.startswith(f"{glyph} Roof")
     assert any(s.style == glyph_style and s.start == 0 for s in row.spans)
     name_at = row.plain.index("Roof")
@@ -260,7 +260,7 @@ def test_alert_row_leads_node_name_with_type_glyph(tmp_path: Path) -> None:
     """The node name is preceded by its shared type glyph (own colour, muted when acked)."""
     from meshterm.core.watch_store import Alert
     from meshterm.ui.watchtower_screen import _alert_lanes
-    from meshterm.ui.widgets import _DEFAULT_GLYPH, _NODE_GLYPHS
+    from meshterm.ui.widgets import DEFAULT_GLYPH, NODE_GLYPHS
 
     def key_of(label):
         return None
@@ -268,7 +268,7 @@ def test_alert_row_leads_node_name_with_type_glyph(tmp_path: Path) -> None:
     def type_of(label):
         return 2 if label == "Roof" else None  # Roof advertises as a repeater
 
-    glyph, glyph_style = _NODE_GLYPHS[2]
+    glyph, glyph_style = NODE_GLYPHS[2]
 
     alert = Alert(ident=1, when=utcnow(), kind="silence", label="Roof", message="quiet")
     row = _alert_lanes(alert, key_of, type_of)
@@ -278,7 +278,7 @@ def test_alert_row_leads_node_name_with_type_glyph(tmp_path: Path) -> None:
 
     # Unknown type (and a keyless kind like courier) falls back to the plain-node glyph.
     ghost = Alert(ident=2, when=utcnow(), kind="courier", label="Ghost", message="gave up")
-    assert f"{_DEFAULT_GLYPH[0]} Ghost" in _alert_lanes(ghost, key_of).plain
+    assert f"{DEFAULT_GLYPH[0]} Ghost" in _alert_lanes(ghost, key_of).plain
 
     # An acked alert mutes the glyph with the rest of its history.
     acked = Alert(ident=3, when=utcnow(), kind="silence", label="Roof", message="quiet", acked=True)

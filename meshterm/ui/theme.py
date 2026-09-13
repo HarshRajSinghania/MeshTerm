@@ -139,7 +139,7 @@ MESH_THEME = Theme(
         "batt.flash": "not bold #000000 on #dc2626",
         "batt.flash.off": "bold #f87171",
         # The node-type *marks* — THE colours behind ● ▲ ■ ◉ wherever a typed node is
-        # drawn (see ui.widgets._NODE_GLYPHS), and the map's own marker language: clients
+        # drawn (see ui.widgets.NODE_GLYPHS), and the map's own marker language: clients
         # the loud pink, repeaters the calmer violet, rooms a white square, sensors an
         # orange ringed dot. Named styles rather than raw hex so the 16-slot console picks
         # its slot *deliberately* — a naive downsample of the violet lands on grey, which

@@ -363,7 +363,7 @@ def test_picker_rows_hue_each_name_by_its_own_key(tui_ctx) -> None:
     """
     from meshterm.ui.admin_picker import admin_picker_rows
     from meshterm.ui.theme import name_style
-    from meshterm.ui.widgets import _NODE_GLYPHS
+    from meshterm.ui.widgets import NODE_GLYPHS
 
     contacts = [
         Contact(name="Hub-North", public_key="a1" * 32, key_prefix="a1b2c3d4", node_type=2),
@@ -372,7 +372,7 @@ def test_picker_rows_hue_each_name_by_its_own_key(tui_ctx) -> None:
     rows, candidates = admin_picker_rows(tui_ctx, contacts)
     assert [c.name for c in candidates] == ["Hub-North", "Hub-South"]
 
-    glyph, glyph_style = _NODE_GLYPHS[2]
+    glyph, glyph_style = NODE_GLYPHS[2]
     titles = {str(row.value): row.title for row in rows if getattr(row, "value", None) is not None}
     hues = set()
     for contact in contacts:
