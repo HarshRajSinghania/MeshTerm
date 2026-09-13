@@ -69,6 +69,37 @@ jobs:
         working-directory: packaging
         run: pyinstaller --clean --noconfirm meshterm.spec
 
+      # `packaging/meshterm.spec` regenerates `THIRD-PARTY-NOTICES.txt` fresh on every
+      # leg's own build (see `packaging/notices.py`) and bundles it, along with LICENSE
+      # and NOTICE, inside that leg's own installer -- so each downloaded binary always
+      # carries an accurate copy of what it actually contains. This step is a separate
+      # convenience: the same three files land on the release page itself, next to the
+      # downloads, so nobody has to extract an installer just to read a license. One
+      # copy serves every platform there (LICENSE/NOTICE never vary, and the runtime
+      # dependency closures differ only in a handful of platform-specific packages), so
+      # it rides on this leg alone rather than being uploaded -- and attached to the
+      # release -- five identical-in-substance times over. linux-x64 was picked
+      # arbitrarily among the five; nothing here is Linux-specific.
+      - name: Upload the licences for the release page
+        if: matrix.label == 'linux-x64'
+        shell: bash
+        run: |
+          # `build/<specname>/` is PyInstaller's own workpath layout (see the spec's
+          # comment on `workpath`), not something worth this step knowing by heart
+          # twice -- copy it flat, next to LICENSE and NOTICE, so the artifact (and,
+          # via `find`, the release assets built from it) is three plain files.
+          cp packaging/build/meshterm/THIRD-PARTY-NOTICES.txt .
+
+      - uses: actions/upload-artifact@v4
+        if: matrix.label == 'linux-x64'
+        with:
+          name: meshterm-licenses
+          path: |
+            LICENSE
+            NOTICE
+            THIRD-PARTY-NOTICES.txt
+          if-no-files-found: error
+
       - name: Check it actually runs
         shell: bash
         run: |

@@ -536,3 +536,8 @@ is Microsoft's Cascadia Mono PL, redistributed unmodified under the SIL Open Fon
 1.1, which travels with it as
 [CascadiaMono-OFL.txt](meshterm/assets/fonts/CascadiaMono-OFL.txt) and stays its only
 license.
+
+Each standalone build carries `LICENSE`, `NOTICE` and a generated `THIRD-PARTY-NOTICES.txt`
+(every dependency's own license text) inside the archive, and the same three files sit
+beside the downloads on the [releases page](https://github.com/jpmartineau/MeshTerm/releases)
+so you don't have to extract one just to read them.

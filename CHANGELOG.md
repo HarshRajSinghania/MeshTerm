@@ -19,6 +19,12 @@ allowed to change behaviour, not just add to it.
 
 ### Added
 
+- **The standalone installers carry their own licences now.** Each one-file build
+  bundles `LICENSE`, `NOTICE` and a generated `THIRD-PARTY-NOTICES.txt` — every
+  MIT/BSD/PSF dependency's own licence text, gathered at build time from what that
+  build actually installed — at the root of the archive, and the same three files ride
+  beside the downloads on the GitHub release page.
+
 - **The map credits OpenStreetMap on the map.** The full-screen map is arrived at with
   `© OpenMapTiles · Data from OpenStreetMap` in its bottom-right corner — the corner a
   paper map puts it in — and the first pan, zoom, reframe or find keystroke collapses it

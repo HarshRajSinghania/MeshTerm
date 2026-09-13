@@ -9,13 +9,44 @@
 # Built on the machine it targets. There is no cross-compiling here — the Windows build
 # comes off a Windows runner, the macOS one off macOS. That is what the workflow is for.
 
+import sys
+
 from PyInstaller.utils.hooks import collect_submodules
+
+# `packaging/notices.py` builds THIRD-PARTY-NOTICES.txt at build time; it sits beside
+# this spec rather than under `meshterm/` because — like `entry.py` above — it has no
+# business being importable from the installed package, only from the freezer. `SPECPATH`
+# is one of the names PyInstaller injects into a running .spec's namespace (the directory
+# holding this file, resolved from the path given to `pyinstaller`, not the process's
+# cwd), so this finds it however the spec was invoked.
+sys.path.insert(0, SPECPATH)
+import notices  # noqa: E402 (import must follow the sys.path edit above)
+
+# Generated fresh on every build rather than checked into git: it is a function of
+# whichever distributions are actually installed in *this* interpreter, and a stale copy
+# would drift the moment a dependency's license text changed upstream without anyone
+# noticing. `workpath` is PyInstaller's own scratch directory for exactly this kind of
+# build-time artefact — cleaned by `--clean`, never mistaken for a source file. It lands
+# at `<workpath>/<specname>/THIRD-PARTY-NOTICES.txt` (PyInstaller appends the spec's own
+# name, minus its extension, to whatever workpath it was given — see `build()` in
+# `PyInstaller/building/build_main.py`), which for this spec means `build/meshterm/`.
+third_party_notices = notices.write_third_party_notices(
+    os.path.join(workpath, "THIRD-PARTY-NOTICES.txt")
+)
 
 # The assets have to land at `meshterm/assets`, because `ui/about.py` finds them with
 # `Path(__file__).parent.parent / "assets"` and that path has to keep resolving inside
 # the bundle exactly as it does in a checkout.
 datas = [
     ("../meshterm/assets", "meshterm/assets"),
+    # A one-file build is a *copy* of MeshTerm, and Apache-2.0 §4(a)/(d) want MeshTerm's
+    # own LICENSE and NOTICE distributed with every copy — not folded into the app's own
+    # assets, but sitting at the bundle root the way they sit at the repository root.
+    ("../LICENSE", "."),
+    ("../NOTICE", "."),
+    # Every MIT/BSD/PSF dependency's own notice wants to travel with copies the same way;
+    # see packaging/notices.py for how this is built.
+    (str(third_party_notices), "."),
 ]
 
 hiddenimports = [

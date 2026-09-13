@@ -1,0 +1,37 @@
+Vendored by packaging/notices.py -- not part of these packages' own distributions.
+
+The nine `winrt-*` packages (winrt-runtime and the eight winrt-windows-* API projection
+packages bleak's Windows BLE backend pulls in) are all generated and published together
+by the pywinrt project, and their wheels ship no license file of any kind -- verified
+directly against winrt-runtime 3.2.1: the wheel contains only INSTALLER, METADATA,
+RECORD, top_level.txt and WHEEL. Each one's own METADATA does declare
+`License-Expression: MIT`, so the omission is a packaging gap, not an unlicensed
+dependency -- the same text below covers all nine, since they come from one upstream
+project and one license file.
+
+Pulled unmodified, 2026-09-13, from the project's own repository:
+https://raw.githubusercontent.com/pywinrt/pywinrt/main/LICENSE
+===================================================================================
+
+    MIT License
+
+    Copyright (c) Microsoft Corporation. All rights reserved.
+    Copyright (c) 2021-2025 David Lechner <david@pybricks.com>
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in all
+    copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    SOFTWARE
