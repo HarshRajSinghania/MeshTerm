@@ -19,6 +19,10 @@ allowed to change behaviour, not just add to it.
 
 ### Added
 
+- **All Python files declare their license with SPDX identifiers** on line 1 (or line 2 after a shebang), enforced by a new `tests/test_spdx.py` gate. A file lifted from the repository carries no license marking otherwise.
+
+- **The XIAO firmware patch and builder carry the MeshCore MIT license** in `scripts/xiao-radio/LICENSE.MeshCore`, and the dual-licensing of the shared font generator (Apache-2.0 and GPL-2.0-only) is documented in the script headers and `docs/hardware.md`.
+
 - **The SPI radio bridge runs on `openhop_core`.** The library the uConsole's software
   node runs on was renamed from `pymc_core` in 2026, and the current `meshcore-uconsole`
   package depends on the new name. `meshterm-spi-bridge` now drives either runtime,
