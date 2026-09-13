@@ -27,10 +27,21 @@ your mesh's history is worth.
 > open an issue before writing a pull request. [More on how it's run](#how-this-project-is-run).
 
 <!--
-  Screenshots welcome here. Drop PNGs into docs/ and reference them, e.g.:
-  ![Dashboard](docs/dashboard.png)
-  ![Mesh map](docs/map.png)
+  Screenshots to take — PNG, a 72-column window, the dark theme — saved under
+  docs/screenshots/ with these names, and the four links below come alive:
+    dashboard.png   the dashboard on a live mesh: heard-age heat, the braille timelines
+    map.png         the map zoomed on a handful of nodes, basemap under them
+    trace.png       a trace result with its route drawn as chips
+    picocalc.png    a photo of the app on the PicoCalc's 53x26 console
 -->
+<p align="center">
+  <img src="docs/screenshots/dashboard.png" alt="The dashboard" width="49%">
+  <img src="docs/screenshots/map.png" alt="The mesh map" width="49%">
+</p>
+<p align="center">
+  <img src="docs/screenshots/trace.png" alt="A trace and the route it walked" width="49%">
+  <img src="docs/screenshots/picocalc.png" alt="MeshTerm on the PicoCalc" width="49%">
+</p>
 
 ---
 
