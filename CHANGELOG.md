@@ -19,6 +19,16 @@ allowed to change behaviour, not just add to it.
 
 ### Added
 
+- **The SPI radio bridge runs on `openhop_core`.** The library the uConsole's software
+  node runs on was renamed from `pymc_core` in 2026, and the current `meshcore-uconsole`
+  package depends on the new name. `meshterm-spi-bridge` now drives either runtime,
+  preferring the newer, and two of its three compatibility shims stand down under it —
+  openhop_core accepts long ACK payloads and pushes completed trace replies itself; only
+  the raw RX-log push is still the bridge's. On a bookworm uConsole, where the trixie
+  package cannot run, the bridge takes a venv of its own with `openhop-core[hardware]`
+  and still uses the GUI's identity, so it stays the same node. Verified on the device:
+  radio up, 159 contacts restored, `info` and `contacts` answered over TCP.
+
 - **The PicoCalc picks its console font, and MeshTerm hands the console back.** A *Console
   font* row under Display on the Preferences page offers `6x12 (53x26)` — the font the
   device boots in — and `6x8 (53x40)`, fourteen more rows of the same glyph inventory in a

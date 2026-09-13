@@ -456,9 +456,9 @@ confirming against it rather than taking from here.
 On some boards the LoRa chip hangs straight off the host's SPI bus — the ClockworkPi
 uConsole with the hackergadgets AIO, Waveshare LoRa HATs, and similar. There is **no
 companion microcontroller and no firmware to flash**, so there is no node for MeshTerm to
-talk to: the mesh node itself has to run in software on the host, through the `pymc_core`
-library (which on the uConsole arrives with the `meshcore-uconsole` package, alongside its
-own `meshcore-console` GUI).
+talk to: the mesh node itself has to run in software on the host, through the `openhop_core`
+library — `pymc_core` until its 2026 rename, and on the uConsole it arrives with the
+`meshcore-uconsole` package, alongside its own `meshcore-console` GUI.
 
 [`scripts/meshterm-spi-bridge`](../scripts/meshterm-spi-bridge) fills that gap. It runs the
 software node and puts the **standard companion protocol in front of it on a local TCP
@@ -476,22 +476,43 @@ a packaged virtual environment, and you should never need to know that.
 It runs on the radio host as **your normal user, never root**: the node identity and the
 service are per-user.
 
-### Before you start: the runtime rename
+### Before you start: which runtime you have
 
-> **On a current uConsole install this bridge does not start, and the fix is a port nobody
-> has done yet.** It was written against **`pymc_core` 1.0.12** and every one of its
-> interfaces was checked against that release. Since then the library was renamed: the
-> `pyMC_core` project became `openhop_core`, PyPI's `pymc-core` stopped at 1.0.12 in May
-> 2026, and the current `meshcore-uconsole` package depends on `openhop-core` instead. That
-> virtual environment has no `pymc_core` module at all, and the helper module the bridge
-> imports from now exports a differently named entry point. What you will see is the
-> bridge's own preflight reporting the runtime as **not found**, and nothing running.
->
-> That is the whole of what has been verified: the rename, the package dependency, and that
-> the preflight therefore fails. Whether the bridge's three compatibility shims are still
-> needed under the new library, and what else moved inside it, has **not** been checked. If
-> you are on an older, pre-rename install — `pymc-core` 1.0.x — everything below applies as
-> written.
+The library was renamed in 2026: the `pyMC_core` project became `openhop_core`, PyPI's
+`pymc-core` stopped at 1.0.12, and `openhop-core` carries on from 1.1.x. The bridge drives
+**either**, and prefers the newer one when both are installed. Its preflight names the
+runtime it found beside the interpreter it will run under:
+
+```
+[ ok ] node runtime   /home/you/.local/share/meshterm-spi-bridge/venv/bin/python (openhop_core)
+```
+
+Under `openhop_core` two of the bridge's three compatibility shims stand down, because the
+library now does their work itself — it accepts the longer ACK payloads modern firmware
+sends, and it pushes a completed trace reply to the client. The bridge logs each as
+`not needed` at startup. The third, the raw RX-log push that feeds MeshTerm's live feed, is
+still the bridge's, and still logs `compat:` when it is wired.
+
+**Which runtime you get depends on your Debian release.** The `meshcore-uconsole` package
+from 1.12.0 is built for *trixie* against Python 3.13; on a *bookworm* uConsole (Python
+3.11) that package will not run — its virtual environment points at an interpreter the
+system does not have — and apt will offer it anyway. Do not take the upgrade. Give the
+bridge a runtime of its own instead, in the directory the preflight looks in first:
+
+```bash
+python3 -m venv ~/.local/share/meshterm-spi-bridge/venv
+~/.local/share/meshterm-spi-bridge/venv/bin/pip install "openhop-core[hardware]"
+```
+
+The GUI keeps its own stack, and the bridge still loads the GUI's identity key from
+`~/.local/share/meshcore-uconsole/identity.key`, so it is the same node either way. Without
+the `meshcore_console` helpers in that venv the bridge configures the radio itself, with
+the uConsole AIO preset (SPI bus 1, reset 25, busy 24, IRQ 26, no TX-enable pin, the DIO2
+RF switch and the DIO3 TCXO on, 910.525 MHz) and every `MESHCORE_*` override the GUI
+honours — see [Hardware knobs](#hardware-knobs). Verified on a bookworm uConsole with
+`openhop-core` 1.1.3: the radio initialises, the contacts come back, and MeshTerm reads
+`info` and `contacts` over the TCP port. On a pre-rename install — `pymc-core` 1.0.x —
+everything below applies as written, all three shims included.
 
 ### Setting it up
 
@@ -554,7 +575,14 @@ board, export what differs before launching.
 | `MESHCORE_RESET_PIN`, `MESHCORE_BUSY_PIN`, `MESHCORE_IRQ_PIN` | the three control lines |
 | `MESHCORE_FREQUENCY`, `MESHCORE_TX_POWER` | frequency in Hz, power in dBm |
 | `MESHCORE_SPREADING_FACTOR`, `MESHCORE_BANDWIDTH`, `MESHCORE_CODING_RATE` | the modem preset — all three must match the mesh you are joining |
+| `MESHCORE_TXEN_PIN`, `MESHCORE_RXEN_PIN`, `MESHCORE_EN_PINS` | the RF-switch and power-enable lines a board may need (`-1` for none; `EN_PINS` is a comma list — the AIO v2 wants `27`) |
+| `MESHCORE_USE_DIO2_RF`, `MESHCORE_USE_DIO3_TCXO`, `MESHCORE_IS_WAVESHARE` | whether DIO2 drives the RF switch and DIO3 the TCXO (both on for the uConsole), and the Waveshare HAT's own wiring |
+| `MESHCORE_GPIO_CHIP`, `MESHCORE_USE_GPIOD_BACKEND`, `MESHCORE_PREAMBLE_LENGTH` | which gpiochip, whether to drive it through `gpiod`, and the LoRa preamble |
 | `MESHTERM_PYMC_PYTHON` | force a specific interpreter instead of letting the bridge discover one |
+
+The direct path passes a knob only when the runtime's radio constructor accepts it, so the
+same environment works under `pymc_core` 1.0.x, which lacks the newer ones. Under the
+`meshcore_console` helpers the GUI's own configuration reads the same names.
 
 Where the `meshcore-console` stack is installed, the bridge builds the radio through *its*
 hardware configuration, which reads a longer list of variables — transmit/receive enable
@@ -576,9 +604,10 @@ Traces and the live feed reach MeshTerm through compatibility shims the bridge i
 the library: it subscribes to raw packets to feed the live feed, reassembles a completed
 trace reply and pushes it, and relaxes an acknowledgement length check that newer firmware
 trips by appending bytes after the CRC. None of that is MeshTerm's protocol being bent —
-the library simply never registered those two pushes — and upstream wiring would make the
-shims redundant. Their **on-air behaviour was validated on one bench**, against the radios
-that were in range of it.
+`pymc_core` simply never registered those two pushes. `openhop_core` has since taken the
+ACK relaxation and the trace push upstream, and under it the bridge installs only the raw
+RX-log shim, logging the other two as `not needed`. Their **on-air behaviour was validated
+on one bench**, against the radios that were in range of it.
 
 ---
 
@@ -602,7 +631,9 @@ expecting a finished tool.
 Most of what this manual explains is checked in code: the platform spec, the font and
 palette contracts (a test parses the font script itself and pins it to MeshTerm's glyph
 inventory), the profile keys the scripts write, the soldered-UART liveness fix, and every
-interface the SPI bridge calls in `pymc_core` 1.0.12. The upstream firmware state is checked
+interface the SPI bridge calls in `pymc_core` 1.0.12 and in `openhop_core` 1.1.3 (the
+latter on a live uConsole: radio up, contacts restored, `info` and `contacts` answered over
+TCP). The upstream firmware state is checked
 too: the pinned MeshCore commit exists, the patch's two hunks are still needed on `dev`
 today, and the nRF52840 UF2 family id and both XIAO bootloader ids match Adafruit's board
 files.
@@ -633,8 +664,10 @@ following is confirmable from code in this repository, and a second device may d
 - **Everything on-air about the SPI bridge** — the per-hop trace semantics it reassembles and
   the acknowledgement bytes "newer firmware" appends. The code is internally consistent with
   the library's API; the wire behaviour was seen on one mesh.
-- **Whether the renamed radio library still needs the bridge's three shims**, and where the
-  current package installs itself.
+- **The bridge under `openhop_core` beyond `info` and `contacts`.** Startup, identity,
+  contact restore and those two reads were exercised on a uConsole; a trace, a message and
+  the live feed under the new runtime were not, though the library's own trace push is
+  what the bridge now relies on for the first.
 - **The framebuffer console's 512-glyph cap.** Well known, taken as given, not re-measured
   here.
 

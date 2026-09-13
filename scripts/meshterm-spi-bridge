@@ -5,10 +5,12 @@ meshterm-spi-bridge — expose an SPI-attached MeshCore radio to MeshTerm.
 Some boards (the ClockworkPi uConsole hackergadgets AIO, Waveshare LoRa HATs)
 wire the LoRa chip straight to the host's SPI bus — there is no companion MCU
 and no firmware to flash. The node runs *in software* on the host via the
-`pymc_core` library. MeshTerm, though, speaks the MeshCore companion protocol
-over serial/BLE/TCP and expects to talk to a node, not to drive a bare radio.
+`openhop_core` library (`pymc_core` until its rename in mid-2026; both are
+supported, the newer preferred). MeshTerm, though, speaks the MeshCore
+companion protocol over serial/BLE/TCP and expects to talk to a node, not to
+drive a bare radio.
 
-This tool bridges the two: it runs the pymc_core node itself and puts the
+This tool bridges the two: it runs the software node itself and puts the
 standard companion protocol in front of it on a local TCP port, so that
 
     meshterm --tcp 127.0.0.1:5000
@@ -16,7 +18,7 @@ standard companion protocol in front of it on a local TCP port, so that
 connects exactly as if a real companion device were plugged in.
 
 It is BOTH a friendly setup menu and the bridge process. Run it with any
-Python 3 — it finds the pymc_core runtime for you and re-execs the bridge half
+Python 3 — it finds the node runtime for you and re-execs the bridge half
 under that interpreter automatically. You never need to know about venvs.
 
     ./meshterm-spi-bridge            # interactive menu
@@ -42,11 +44,24 @@ DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 5000
 DEFAULT_NODE_NAME = "uConsole"
 
-# Interpreters likely to have pymc_core, in preference order. The hackergadgets
-# uConsole .deb installs everything into this private virtualenv.
-VENV_CANDIDATES = ["/opt/venvs/meshcore-uconsole/bin/python"]
-
 HOME = Path.home()
+
+# The node runtimes this bridge can drive, newest first. `pymc_core` was renamed
+# `openhop_core` in 2026 (PyPI `pymc-core` stops at 1.0.12; `openhop-core` carries on
+# from 1.1.x) and the newer one has taken two of this file's three compat shims upstream,
+# so when both are installed the newer wins.
+RUNTIMES = ("openhop_core", "pymc_core")
+
+# Interpreters likely to have a runtime, in preference order. First the bridge's own
+# venv — the answer on a host whose distro package cannot be upgraded (the
+# meshcore-uconsole .deb for trixie is built against Python 3.13 and will not run on a
+# bookworm uConsole; `python3 -m venv <this path> && pip install "openhop-core[hardware]"`
+# gives the bridge the current runtime while the GUI keeps its own). Then the
+# hackergadgets uConsole .deb's private virtualenv.
+VENV_CANDIDATES = [
+    str(HOME / ".local" / "share" / APP_NAME / "venv" / "bin" / "python"),
+    "/opt/venvs/meshcore-uconsole/bin/python",
+]
 INSTALL_PATH = HOME / ".local" / "bin" / APP_NAME
 UNIT_NAME = f"{APP_NAME}.service"
 UNIT_PATH = HOME / ".config" / "systemd" / "user" / UNIT_NAME
@@ -133,20 +148,37 @@ def confirm(prompt: str, default_yes: bool = False) -> bool:
 # --------------------------------------------------------------------------- #
 
 
-def python_has_pymc(python: str) -> bool:
-    """Return whether `python` can import pymc_core."""
+def python_runtime(python: str) -> str | None:
+    """The node runtime `python` can import — a name from RUNTIMES — or None.
+
+    One subprocess per interpreter: it reports the first runtime it finds in
+    RUNTIMES order, so an interpreter carrying both answers `openhop_core`.
+    """
     if not python or not os.path.exists(python):
-        return False
+        return None
+    probe = (
+        "import importlib.util as u, sys\n"
+        f"for m in {RUNTIMES!r}:\n"
+        "    if u.find_spec(m):\n"
+        "        print(m); break\n"
+    )
     try:
         r = subprocess.run(
-            [python, "-c", "import pymc_core"],
-            stdout=subprocess.DEVNULL,
+            [python, "-c", probe],
+            stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
+            text=True,
             timeout=20,
         )
-        return r.returncode == 0
     except Exception:
-        return False
+        return None
+    found = r.stdout.strip()
+    return found if r.returncode == 0 and found in RUNTIMES else None
+
+
+def python_has_pymc(python: str) -> bool:
+    """Return whether `python` can import a node runtime (kept for the older name)."""
+    return python_runtime(python) is not None
 
 
 def _meshcore_console_python() -> str | None:
@@ -165,24 +197,43 @@ def _meshcore_console_python() -> str | None:
     return None
 
 
-def find_pymc_python() -> str | None:
-    """Find an interpreter that has pymc_core, or None.
+def find_runtime_python() -> tuple[str, str] | None:
+    """Find an interpreter that has a node runtime: `(python, runtime)`, or None.
 
-    Order: explicit override, this interpreter, known venv paths, then the
-    interpreter behind an installed `meshcore-console`.
+    Candidates in order: the explicit override, this interpreter, the known venv
+    paths, then the interpreter behind an installed `meshcore-console`. The newest
+    runtime wins across all of them — an interpreter with `openhop_core` beats an
+    earlier candidate that only has `pymc_core` — and the override is the one
+    exception: MESHTERM_PYMC_PYTHON names a python, and whatever it has is used.
     """
     seen: set[str] = set()
-    candidates = [os.environ.get("MESHTERM_PYMC_PYTHON", ""), sys.executable]
-    candidates += VENV_CANDIDATES
+    override = os.environ.get("MESHTERM_PYMC_PYTHON", "")
+    if override:
+        rt = python_runtime(override)
+        if rt:
+            return override, rt
+    candidates = [sys.executable, *VENV_CANDIDATES]
     mcc = _meshcore_console_python()
     if mcc:
         candidates.append(mcc)
+    found: list[tuple[str, str]] = []
     for c in candidates:
         if c and c not in seen:
             seen.add(c)
-            if python_has_pymc(c):
-                return c
+            rt = python_runtime(c)
+            if rt:
+                found.append((c, rt))
+    for wanted in RUNTIMES:
+        for python, rt in found:
+            if rt == wanted:
+                return python, rt
     return None
+
+
+def find_pymc_python() -> str | None:
+    """The interpreter `find_runtime_python` picks, or None (kept for the older name)."""
+    hit = find_runtime_python()
+    return hit[0] if hit else None
 
 
 # --------------------------------------------------------------------------- #
@@ -253,7 +304,8 @@ def service_active() -> bool:
 
 class Preflight:
     def __init__(self) -> None:
-        self.python = find_pymc_python()
+        hit = find_runtime_python()
+        self.python, self.runtime = hit if hit else (None, None)
         self.spidev = _first_spidev()
         self.spidev_ok, self.spidev_detail = (
             _dev_ok(self.spidev) if self.spidev else (False, "no /dev/spidev* found")
@@ -271,12 +323,13 @@ class Preflight:
         print(bold("Prerequisite check:"))
         # 1. runtime
         if self.python:
-            print(f"  {tag(True)} pymc_core runtime    {self.python}")
+            print(f"  {tag(True)} node runtime         {self.python} ({self.runtime})")
         else:
-            print(f"  {tag(False)} pymc_core runtime    not found")
-            print("         fix: install the radio stack, e.g. on the uConsole:")
-            print("              sudo apt install meshcore-uconsole")
-            print("              (or set MESHTERM_PYMC_PYTHON to a python that has it)")
+            print(f"  {tag(False)} node runtime         not found (openhop_core or pymc_core)")
+            print("         fix: give the bridge its own runtime, on any Debian-family host:")
+            print(f"              python3 -m venv {VENV_CANDIDATES[0][: -len('/bin/python')]}")
+            print(f"              {VENV_CANDIDATES[0][: -len('python')]}pip install 'openhop-core[hardware]'")
+            print("              (or set MESHTERM_PYMC_PYTHON to a python that has one)")
         # 2. spi
         print(f"  {tag(self.spidev_ok)} SPI device           {self.spidev or '-'} — {self.spidev_detail}")
         if not self.spidev_ok and self.spidev is None:
@@ -384,7 +437,7 @@ def _write_unit(python: str) -> None:
     )
     UNIT_PATH.write_text(
         "[Unit]\n"
-        "Description=MeshTerm SPI-radio companion bridge (pymc_core -> TCP)\n"
+        "Description=MeshTerm SPI-radio companion bridge (software node -> TCP)\n"
         "After=network.target\n\n"
         "[Service]\n"
         "Type=simple\n"
@@ -398,7 +451,7 @@ def _write_unit(python: str) -> None:
 
 def action_install_service(pre: Preflight) -> None:
     if not pre.python:
-        print("\nCan't install — the pymc_core runtime wasn't found (see above).")
+        print("\nCan't install — no node runtime was found (see above).")
         return
     if pre.gui:
         print("\nmeshcore-console is running. The service would fight it for the")
@@ -562,7 +615,31 @@ def menu() -> int:
 # --------------------------------------------------------------------------- #
 
 
-def _patch_pymc_ack_compat(log) -> None:
+def _import_runtime():
+    """Import the node runtime this interpreter has: `(module_name, module)`.
+
+    RUNTIMES order, so `openhop_core` wins over a `pymc_core` sitting beside it.
+    Raises ImportError when neither is importable.
+    """
+    import importlib
+
+    for name in RUNTIMES:
+        try:
+            return name, importlib.import_module(name)
+        except ImportError:
+            continue
+    raise ImportError("no node runtime: " + " or ".join(RUNTIMES))
+
+
+def _rt_import(rt: str, dotted: str, attr: str | None = None):
+    """`from {rt}.{dotted} import {attr}` for whichever runtime is loaded."""
+    import importlib
+
+    module = importlib.import_module(f"{rt}.{dotted}")
+    return getattr(module, attr) if attr else module
+
+
+def _patch_pymc_ack_compat(rt: str, log) -> None:
     """Accept modern MeshCore ACKs that carry extra bytes after the CRC.
 
     Newer firmware sends discrete ACK payloads longer than 4 bytes (the 4-byte
@@ -570,9 +647,16 @@ def _patch_pymc_ack_compat(log) -> None:
     and drops the rest, so delivery confirmations never reach MeshTerm.
     Override it to take the leading 4 bytes as the CRC — the same tolerant
     parse pymc_core already uses for path-bundled ACKs.
+
+    openhop_core carries this upstream (its `process_discrete_ack` takes the
+    first four bytes of anything four bytes or longer), so under that runtime
+    the shim stands down rather than re-stating what the library already does.
     """
+    if rt != "pymc_core":
+        log.info("compat: %s accepts >4-byte ACK payloads itself; ack shim not needed", rt)
+        return
     try:
-        from pymc_core.node.handlers.ack import AckHandler
+        AckHandler = _rt_import(rt, "node.handlers.ack", "AckHandler")
     except Exception as exc:  # package layout changed — leave it alone
         log.warning("ack compat shim not applied (%s)", exc)
         return
@@ -661,7 +745,7 @@ def _wire_contact_persistence(companion, log) -> None:
     log.info("contact persistence at %s", path)
 
 
-def _wire_trace_push(companion, server, log) -> None:
+def _wire_trace_push(rt: str, companion, server, log) -> None:
     """Forward over-the-air trace replies to the client as PUSH_CODE_TRACE_DATA.
 
     pymc_core parses received TRACE packets but never hands them to the
@@ -707,8 +791,17 @@ def _wire_trace_push(companion, server, log) -> None:
     import struct
     import time
 
+    # openhop_core carries this upstream: its CompanionRadio fires
+    # ``trace_received`` for a completed trace and its frame server registers
+    # ``_on_trace_received`` → ``push_trace_data``. Bridging it a second time
+    # would push every reply twice, so where the server has the handler, the
+    # shim stands down.
+    if hasattr(server, "_on_trace_received"):
+        log.info("compat: %s pushes completed TRACE replies itself; trace shim not needed", rt)
+        return
+
     try:
-        from pymc_core.protocol.constants import PAYLOAD_TYPE_TRACE
+        PAYLOAD_TYPE_TRACE = _rt_import(rt, "protocol.constants", "PAYLOAD_TYPE_TRACE")
     except Exception as exc:  # package layout changed — leave it alone
         log.warning("trace push not wired (%s)", exc)
         return
@@ -846,29 +939,44 @@ def run_bridge(host: str, port: int, node_name: str) -> int:
     log = logging.getLogger(APP_NAME)
 
     try:
-        import pymc_core  # noqa: F401
+        rt, runtime = _import_runtime()
     except ImportError:
         sys.stderr.write(
-            "This must run under a Python that has pymc_core. Run the menu instead "
-            "(it finds the right one), or set MESHTERM_PYMC_PYTHON.\n"
+            "This must run under a Python that has openhop_core or pymc_core. Run the "
+            "menu instead (it finds the right one), or set MESHTERM_PYMC_PYTHON.\n"
         )
         return 2
+    try:
+        import importlib.metadata as _md
 
-    _patch_pymc_ack_compat(log)
+        rt_version = _md.version(rt.replace("_", "-"))
+    except Exception:
+        rt_version = getattr(runtime, "__version__", "?")
+    log.info("node runtime %s %s (%s)", rt, rt_version, sys.executable)
 
-    from pymc_core.companion import CompanionFrameServer, CompanionRadio
+    _patch_pymc_ack_compat(rt, log)
+
+    CompanionFrameServer = _rt_import(rt, "companion", "CompanionFrameServer")
+    CompanionRadio = _rt_import(rt, "companion", "CompanionRadio")
 
     # Prefer the hackergadgets meshcore_console helpers (correct board pins +
-    # the SAME node identity the GUI uses). Fall back to a direct pymc_core
-    # setup for a generic install (e.g. a Waveshare HAT with pip'd pymc_core).
+    # the SAME node identity the GUI uses). Fall back to a direct setup for a
+    # generic install (a Waveshare HAT with a pip'd runtime), or for the
+    # bridge's own venv on a host whose GUI package is behind the runtime.
     identity = None
     radio = None
     try:
+        from meshcore_console.meshcore import runtime as _mc_runtime
         from meshcore_console.meshcore.config import load_hardware_config_from_env
         from meshcore_console.meshcore.paths import identity_key_path
-        from meshcore_console.meshcore.runtime import create_radio, import_pymc_core
 
-        SX1262Radio, _ES, _ESub, _MN, LocalIdentity = import_pymc_core()
+        # The helper is named for the runtime the GUI was built against; either
+        # spelling hands back the same five-tuple.
+        _import_stack = getattr(_mc_runtime, "import_openhop_core", None) or getattr(
+            _mc_runtime, "import_pymc_core"
+        )
+        create_radio = _mc_runtime.create_radio
+        SX1262Radio, _ES, _ESub, _MN, LocalIdentity = _import_stack()
         hw = load_hardware_config_from_env()
         log.info("radio config %s", hw.to_log_string())
         radio = create_radio(SX1262Radio, hw, log.info)
@@ -882,35 +990,80 @@ def run_bridge(host: str, port: int, node_name: str) -> int:
             "tx_power": hw.tx_power,
         }
     except ImportError:
-        log.info("meshcore_console not present — using direct pymc_core defaults")
-        from pymc_core.hardware.sx1262_wrapper import SX1262Radio
-        from pymc_core.protocol.identity import LocalIdentity
+        log.info("meshcore_console not present — using direct %s defaults", rt)
+        import inspect
 
-        radio = SX1262Radio(
-            bus_id=int(os.environ.get("MESHCORE_BUS_ID", 1)),
-            cs_id=int(os.environ.get("MESHCORE_CS_ID", 0)),
-            cs_pin=int(os.environ.get("MESHCORE_CS_PIN", -1)),
-            reset_pin=int(os.environ.get("MESHCORE_RESET_PIN", 25)),
-            busy_pin=int(os.environ.get("MESHCORE_BUSY_PIN", 24)),
-            irq_pin=int(os.environ.get("MESHCORE_IRQ_PIN", 26)),
-            frequency=int(os.environ.get("MESHCORE_FREQUENCY", 910_525_000)),
-            tx_power=int(os.environ.get("MESHCORE_TX_POWER", 22)),
-            spreading_factor=int(os.environ.get("MESHCORE_SPREADING_FACTOR", 7)),
-            bandwidth=int(os.environ.get("MESHCORE_BANDWIDTH", 62_500)),
-            coding_rate=int(os.environ.get("MESHCORE_CODING_RATE", 5)),
-        )
-        radio_config = {
-            "frequency": 910_525_000, "bandwidth": 62_500,
-            "spreading_factor": 7, "coding_rate": 5, "tx_power": 22,
+        SX1262Radio = _rt_import(rt, "hardware.sx1262_wrapper", "SX1262Radio")
+        LocalIdentity = _rt_import(rt, "protocol.identity", "LocalIdentity")
+
+        # The uConsole AIO preset, knob for knob what meshcore_console's own
+        # HardwareRadioConfig defaults to — because the runtime's *own* defaults
+        # are a Waveshare HAT's (TX-enable on pin 6, no DIO2 RF switch, no DIO3
+        # TCXO, 868 MHz), and on the AIO those leave the radio deaf. Every knob is
+        # env-overridable under the same MESHCORE_* names the GUI reads.
+        env = os.environ.get
+
+        def _int(name: str, default: int) -> int:
+            return int(env(name, default))
+
+        def _bool(name: str, default: bool) -> bool:
+            raw = env(name)
+            return default if raw is None else raw.strip().lower() in ("1", "true", "yes", "on")
+
+        def _pins(name: str) -> list[int] | None:
+            raw = env(name, "").strip()
+            return [int(p) for p in raw.split(",") if p.strip()] or None
+
+        wanted = {
+            "bus_id": _int("MESHCORE_BUS_ID", 1),
+            "cs_id": _int("MESHCORE_CS_ID", 0),
+            "cs_pin": _int("MESHCORE_CS_PIN", -1),
+            "gpio_chip": _int("MESHCORE_GPIO_CHIP", 0),
+            "use_gpiod_backend": _bool("MESHCORE_USE_GPIOD_BACKEND", False),
+            "reset_pin": _int("MESHCORE_RESET_PIN", 25),
+            "busy_pin": _int("MESHCORE_BUSY_PIN", 24),
+            "irq_pin": _int("MESHCORE_IRQ_PIN", 26),
+            "txen_pin": _int("MESHCORE_TXEN_PIN", -1),
+            "rxen_pin": _int("MESHCORE_RXEN_PIN", -1),
+            "en_pins": _pins("MESHCORE_EN_PINS"),
+            "frequency": _int("MESHCORE_FREQUENCY", 910_525_000),
+            "tx_power": _int("MESHCORE_TX_POWER", 22),
+            "spreading_factor": _int("MESHCORE_SPREADING_FACTOR", 7),
+            "bandwidth": _int("MESHCORE_BANDWIDTH", 62_500),
+            "coding_rate": _int("MESHCORE_CODING_RATE", 5),
+            "preamble_length": _int("MESHCORE_PREAMBLE_LENGTH", 12),
+            "is_waveshare": _bool("MESHCORE_IS_WAVESHARE", False),
+            "use_dio2_rf": _bool("MESHCORE_USE_DIO2_RF", True),
+            "use_dio3_tcxo": _bool("MESHCORE_USE_DIO3_TCXO", True),
         }
-        key_path = HOME / ".local" / "share" / APP_NAME / "identity.key"
-        if key_path.exists():
-            identity = LocalIdentity(key_path.read_bytes())
+        # Pass only what this runtime's constructor knows: pymc_core 1.0.x lacks
+        # some of these (en_pins, the gpiod backend) and would refuse the call.
+        accepted = inspect.signature(SX1262Radio.__init__).parameters
+        kwargs = {k: v for k, v in wanted.items() if k in accepted and v is not None}
+        log.info("radio config %s", " ".join(f"{k}={v}" for k, v in kwargs.items()))
+        radio = SX1262Radio(**kwargs)
+        radio_config = {
+            "frequency": kwargs["frequency"], "bandwidth": kwargs["bandwidth"],
+            "spreading_factor": kwargs["spreading_factor"],
+            "coding_rate": kwargs["coding_rate"], "tx_power": kwargs["tx_power"],
+        }
+        # The GUI's identity first, where the meshcore-uconsole stack keeps one, so
+        # a bridge running from its own venv is still the same node the GUI is; then
+        # the bridge's own.
+        xdg = Path(env("XDG_DATA_HOME") or (HOME / ".local" / "share"))
+        for key_path in (
+            xdg / "meshcore-uconsole" / "identity.key",
+            HOME / ".local" / "share" / APP_NAME / "identity.key",
+        ):
+            if key_path.exists():
+                identity = LocalIdentity(key_path.read_bytes())
+                log.info("using existing node identity at %s", key_path)
+                break
 
     if identity is None:
         # No persisted identity anywhere — mint one and save it so the node
         # keeps a stable identity across restarts.
-        from pymc_core.protocol.identity import LocalIdentity as _LI
+        _LI = _rt_import(rt, "protocol.identity", "LocalIdentity")
 
         tmp = _LI()
         seed = tmp.get_signing_key_bytes()
@@ -956,7 +1109,7 @@ def run_bridge(host: str, port: int, node_name: str) -> int:
             device_model="pyMC-spi-bridge",
         )
         await server.start()
-        _wire_trace_push(companion, server, log)
+        _wire_trace_push(rt, companion, server, log)
         _wire_rx_log_push(companion, server, log)
         log.info("READY — connect with:  meshterm --tcp %s:%d", host, port)
 
@@ -1006,7 +1159,7 @@ def main() -> int:
     ap.add_argument("--name", default=DEFAULT_NODE_NAME)
     args = ap.parse_args()
 
-    # Internal: we've already been re-execed under the pymc_core interpreter.
+    # Internal: we've already been re-execed under the node runtime's interpreter.
     if args.run_bridge:
         return run_bridge(args.host, args.port, args.name)
 
