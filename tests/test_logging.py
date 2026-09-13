@@ -103,8 +103,8 @@ def test_a_level_name_becomes_a_level(tmp_path: Path) -> None:
 def test_a_nonsense_level_still_starts_the_app() -> None:
     """A typo in a hand-edited preferences file loses log detail, not the app.
 
-    Someone editing the preferences file by hand and writing ``WARN`` should get a slightly quieter log,
-    not a program that refuses to launch.
+    Someone editing the preferences file by hand and writing ``WARN`` should get a
+    slightly quieter log, not a program that refuses to launch.
     """
     assert level_from_name("WARN") == logging.WARNING
     assert level_from_name("") == logging.WARNING

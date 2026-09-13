@@ -34,22 +34,11 @@ def test_spdx_headers():
 
     missing_spdx = []
     for filepath in sorted(python_files):
-        try:
-            content = filepath.read_text(encoding="utf-8")
-            lines = content.split("\n", 2)  # Check first 2 lines max
-
-            # Check for SPDX identifier on line 1 or 2
-            has_spdx = False
-            if lines and "SPDX-License-Identifier:" in lines[0]:
-                has_spdx = True
-            elif len(lines) > 1 and "SPDX-License-Identifier:" in lines[1]:
-                has_spdx = True
-
-            if not has_spdx:
-                missing_spdx.append(str(filepath.relative_to(repo_root)))
-        except Exception:
-            # Skip files that can't be read
-            continue
+        # A file that cannot be read as UTF-8 is a finding, not something to skip: every
+        # source file here is UTF-8, and a silent skip would let an unmarked file through.
+        head = filepath.read_text(encoding="utf-8").split("\n", 2)[:2]
+        if not any("SPDX-License-Identifier:" in line for line in head):
+            missing_spdx.append(str(filepath.relative_to(repo_root)))
 
     assert not missing_spdx, (
         f"Found {len(missing_spdx)} Python file(s) without SPDX-License-Identifier:\n"
