@@ -146,3 +146,19 @@ def test_write_third_party_notices_writes_utf8_lf(tmp_path: Path) -> None:
     raw = out.read_bytes()
     assert b"\r\n" not in raw
     assert raw.decode("utf-8") == notices.render(notices.collect_notices())
+
+
+def test_every_vendored_license_gap_has_its_file() -> None:
+    """A gap-table entry whose file is missing would fail only on the platform that hits it.
+
+    The pyobjc entries are exercised by a macOS build alone and the winrt ones by a
+    Windows build alone, so a typo in a path would surface on a release runner rather
+    than here. Check every entry on every platform: the file exists, is non-empty, and
+    the key is in the canonical (lowercase, hyphenated) form ``collect_notices`` looks up.
+    """
+    for name, paths in notices._VENDORED_LICENSE_GAPS.items():
+        assert name == name.lower().replace("_", "-"), name
+        for rel in paths:
+            path = Path(notices.__file__).parent / rel
+            assert path.is_file(), f"{name}: {rel} is missing"
+            assert path.read_text(encoding="utf-8").strip(), f"{name}: {rel} is empty"

@@ -17,6 +17,19 @@ allowed to change behaviour, not just add to it.
 
 ## [Unreleased]
 
+## [0.3.4] — 2026-09-13
+
+### Fixed
+
+- **The macOS installers build again.** 0.3.3's release never published: both macOS legs
+  stopped at the new third-party notices step, which refuses to bundle a dependency whose
+  wheel carries no licence text — and on macOS bleak's Bluetooth backend pulls in two such
+  wheels, `pyobjc-core` and `pyobjc-framework-libdispatch`. Their MIT text is vendored
+  beside pyserial's and pywinrt's now, verified against the wheels themselves, and a test
+  checks every vendored path on every platform so a gap that only one runner can hit is
+  caught here first. The 0.3.3 tag stands with no release behind it; this is the same
+  code with its installers.
+
 ## [0.3.3] — 2026-09-13
 
 ### Added
@@ -697,7 +710,8 @@ deliberately not reconstructed here.
 - Two `TYPE_CHECKING` imports the test suite referenced but never imported, on paths that
   happened never to run.
 
-[Unreleased]: https://github.com/jpmartineau/MeshTerm/compare/v0.3.3...HEAD
+[Unreleased]: https://github.com/jpmartineau/MeshTerm/compare/v0.3.4...HEAD
+[0.3.4]: https://github.com/jpmartineau/MeshTerm/releases/tag/v0.3.4
 [0.3.3]: https://github.com/jpmartineau/MeshTerm/releases/tag/v0.3.3
 [0.3.2]: https://github.com/jpmartineau/MeshTerm/releases/tag/v0.3.2
 [0.3.1]: https://github.com/jpmartineau/MeshTerm/releases/tag/v0.3.1

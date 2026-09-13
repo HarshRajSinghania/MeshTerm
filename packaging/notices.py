@@ -63,8 +63,17 @@ ROOT_DISTRIBUTION = "mesh-term"
 #:   in a Windows build's closure. All nine are generated and published together by the
 #:   pywinrt project and share the one upstream license file, which none of their
 #:   wheels include.
+#: * ``pyobjc-core`` and ``pyobjc-framework-libdispatch`` — two of the four pyobjc
+#:   packages bleak's macOS BLE backend (``bleak.backends.corebluetooth``) pulls in on
+#:   ``sys_platform == "darwin"``, so they only appear in a macOS build's closure, which
+#:   is where the 0.3.3 release build caught them. Their 12.2.2 wheels ship no license
+#:   file; the other two (Cocoa, CoreBluetooth) do, and are read from their dist-info
+#:   like everything else. All four come from the one pyobjc repository and its single
+#:   MIT text.
 _VENDORED_LICENSE_GAPS: dict[str, tuple[str, ...]] = {
     "pyserial": ("vendored-licenses/pyserial-LICENSE.txt",),
+    "pyobjc-core": ("vendored-licenses/pyobjc-LICENSE.txt",),
+    "pyobjc-framework-libdispatch": ("vendored-licenses/pyobjc-LICENSE.txt",),
     "winrt-runtime": ("vendored-licenses/pywinrt-LICENSE.txt",),
     "winrt-windows-devices-bluetooth": ("vendored-licenses/pywinrt-LICENSE.txt",),
     "winrt-windows-devices-bluetooth-advertisement": ("vendored-licenses/pywinrt-LICENSE.txt",),
