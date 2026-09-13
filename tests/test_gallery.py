@@ -68,6 +68,7 @@ from meshterm.ui.about import (
     join_discord,
     support_project,
 )
+from meshterm.ui.attribution import CREDIT_FULL, CREDIT_SHORT
 from meshterm.ui.chat import ChatScreen
 from meshterm.ui.config_editor import _ConfigMenu, _menu_items, config_table, has_pin
 from meshterm.ui.contactlist import SORT_COLUMNS, SORT_OPENS_ASCENDING
@@ -340,9 +341,10 @@ def _map_body_rows(rows: int) -> int:
     The map is the one screen that sizes its own canvas from
     :meth:`~meshterm.ui.tui.session.TuiSession.base_body_size`, so the stub session has to
     answer with the *body* height rather than the terminal's — otherwise the specimen draws
-    a canvas taller than the slice it is shown in, which cuts the bottom row (and with it
-    the basemap credit that rides there) and hangs a phantom "↓ more" off a map that never
-    scrolls. Mirrors ``base_body_size`` with no header — these specimens compose against an
+    a canvas taller than the slice it is shown in, which cuts the bottom row (and on the
+    borderless platform the basemap credit that rides there) and hangs a phantom "↓ more"
+    off a map that never scrolls. Mirrors ``base_body_size`` with no header — these
+    specimens compose against an
     empty one — so it is the footer row plus either the panel's two borders or the
     borderless platform's single title bar.
     """
@@ -1036,6 +1038,10 @@ _KNOWN_WIDE: set[str] = set()
 _PREEXISTING_REGULAR_OVERFLOW: set[str] = set()
 
 
+#: The specimens by name, for a test that wants one entry rather than the whole sweep.
+_ENTRY_BY_NAME = {entry.name: entry for entry in _ENTRIES}
+
+
 def _cases():
     for entry in _ENTRIES:
         for platform, cols, rows in _COMBOS:
@@ -1136,3 +1142,46 @@ def test_gallery_screen_fits_its_platform(
                     f"{entry.name} {where} line {i} has characters outside the console "
                     f"font: {sorted(strays)!r} in {line!r}"
                 )
+
+
+#: The map specimens and the credit each should be carrying — the whole OpenFreeMap line
+#: on the map nobody has touched, the remnant on the two that have been used.
+_CREDITED: list[tuple[str, bool]] = [
+    ("map", True),
+    ("map_panned", False),
+    ("map_find", False),
+]
+
+
+@pytest.mark.parametrize("name,full", _CREDITED)
+@pytest.mark.parametrize("platform,cols,rows", _COMBOS)
+def test_gallery_map_shows_the_basemap_credit_where_its_frame_puts_it(
+    name: str,
+    full: bool,
+    platform: Platform,
+    cols: int,
+    rows: int,
+) -> None:
+    """Every map specimen credits OpenStreetMap, on the surface its own frame affords.
+
+    The width gate above would be perfectly happy with a map that had quietly stopped
+    crediting anyone, so the specimens assert the mark itself as well: on a bordered frame
+    it is set into the bottom border rule, right-justified with one rule cell before the
+    corner, and the drawing is left alone; on the borderless one, which has no rule, it is
+    stamped on the drawing's own last row. See :mod:`meshterm.ui.attribution`.
+    """
+    set_platform(platform)
+    screen = _ENTRY_BY_NAME[name].factory(cols, rows)
+    screen.note_viewport(max(1, rows - 4))
+    expected = CREDIT_FULL if full else CREDIT_SHORT
+    body = _plain(screen.render_body(cols))
+    composed = frame.compose_base(Text(""), screen, screen.footer_hint, cols, rows)
+    lines = [_plain(ln) for ln in composed.split("\n")]
+
+    if platform.frame_border:
+        assert "OpenStreetMap" not in body, "the credit reached the drawing on a bordered frame"
+        rule = next(ln for ln in reversed(lines) if "└" in ln)
+        assert rule.endswith(f" {expected} ─┘"), rule
+    else:
+        assert body.splitlines()[-1].endswith(expected)
+    assert any(expected in ln for ln in lines)

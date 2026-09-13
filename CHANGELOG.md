@@ -25,16 +25,18 @@ allowed to change behaviour, not just add to it.
   build actually installed — at the root of the archive, and the same three files ride
   beside the downloads on the GitHub release page.
 
-- **The map credits OpenStreetMap on the map.** The full-screen map is arrived at with
-  `© OpenMapTiles · Data from OpenStreetMap` in its bottom-right corner — the corner a
-  paper map puts it in — and the first pan, zoom, reframe or find keystroke collapses it
-  to `© OpenStreetMap`, which is a complete credit in its own right, so nothing is ever
-  taken back. It costs no chrome: no title atom, no footer character, no body row, just
-  fifteen cells of the drawing's own bottom line that a keypress can pan out from under.
-  The node page's location preview carries the short form throughout, being a picture
-  rather than a place. The licence and its URL live where they can be read — the About
-  page, which also now names **OpenMapTiles**, as OpenFreeMap asks and neither the page
-  nor the README did.
+- **The map credits OpenStreetMap in its own bottom-right corner.** The full-screen map is
+  arrived at with `© OpenMapTiles · Data from OpenStreetMap` there — the corner a paper map
+  puts it in — and the first pan, zoom, reframe or find keystroke collapses it to
+  `© OpenStreetMap`, which is a complete credit in its own right, so nothing is ever taken
+  back. It costs no chrome at all: no title atom, no footer character, no body row. On a
+  desktop terminal it is set into the panel's bottom border rule, right-justified, the way
+  a title sits in the top one, so the drawing keeps every cell it had; on the PicoCalc,
+  whose frame has no bottom rule to set anything into, it rides the right end of the map's
+  own last row, where a pan can move the ground out from under it. The node page's location
+  preview carries the short form throughout, being a picture rather than a place. The
+  licence and its URL live where they can be read — the About page, which also now names
+  **OpenMapTiles**, as OpenFreeMap asks and neither the page nor the README did.
 
 - **Every Python file names its licence with an SPDX identifier** on its first line (second, after a shebang), and `tests/test_spdx.py` keeps a new file from landing without one. Apache-2.0 does not require per-file headers, but a file lifted out of the tree carried no marking at all.
 

@@ -92,10 +92,20 @@ class Screen:
             base screen. Ignored while ``chrome`` is ``True``.
         footnote: A short line drawn muted and centered *below* a chromeless base screen's
             box (e.g. a copyright notice). Ignored while ``chrome`` is ``True``.
+        bottom_caption: A short credit or label set into the **bottom border rule**,
+            right-justified, the way :attr:`title` sits in the top one — for something
+            that belongs to the framed picture rather than to any row inside it. The map's
+            OpenStreetMap credit is the reason it exists (see
+            :mod:`meshterm.ui.attribution`): a bordered frame already draws that rule, so
+            a caption in it costs the body nothing at all. Read fresh every paint, so a
+            screen may change it as its state changes. Drawn only where the platform's
+            frame *has* a bottom rule — the borderless one has none, and a screen wanting
+            a mark there puts it in its own body instead.
     """
 
     title: str = ""
     footer_hint: str = "Esc back"
+    bottom_caption: str = ""
     floating: bool = True
     modal: bool = False
     grow_only: bool = False

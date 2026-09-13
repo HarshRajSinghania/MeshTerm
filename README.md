@@ -487,9 +487,11 @@ under the [Open Database License (ODbL)](https://www.openstreetmap.org/copyright
 are decoded with a small built-in reader for the
 [Mapbox Vector Tile](https://github.com/mapbox/vector-tile-spec) format.
 
-Both map surfaces carry the credit themselves: the full-screen map opens with
+Both map surfaces carry the credit themselves. The full-screen map opens with
 `© OpenMapTiles · Data from OpenStreetMap` in its bottom-right corner and collapses it to
-`© OpenStreetMap` once you pan, zoom or type; the node page's location preview shows the
+`© OpenStreetMap` once you pan, zoom or type — set into the panel's bottom border rule on
+a desktop terminal, so the drawing itself keeps every cell, and on the map's own last row
+on the PicoCalc, whose frame has no bottom rule. The node page's location preview shows the
 short form throughout. The About page inside the app spells out the licence URL.
 
 ### Bundled font

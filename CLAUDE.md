@@ -22,10 +22,17 @@ never `git push` unless explicitly asked in that moment.
   shebang). `tests/test_spdx.py` is the gate. Anything under another licence lives beside
   its own text and says so in its header — the GPL-2.0-only console-font script, the
   MeshCore MIT notice beside the XIAO patch — and never enters the distributed package.
-- **The map credits OpenStreetMap on the map** (`ui/attribution.py`): the full OpenFreeMap
-  line in the drawing's bottom-right corner on arrival, `© OpenStreetMap` there after the
-  first keystroke, `muted`, overprinting the cells it sits in. Never a title atom, never a
-  footer character, never a key. The licence and URL live on the About page.
+- **The map credits OpenStreetMap in the map's own bottom-right corner**
+  (`ui/attribution.py`): the full OpenFreeMap line on arrival, `© OpenStreetMap` after the
+  first keystroke, `muted`, on both platforms and in the same words. *Which* corner is the
+  frame's, not the drawing's, wherever the frame has one — **regular** sets the credit into
+  the panel's **bottom border rule**, right-justified, one rule cell before the corner, the
+  way a title sits in the top rule (`Screen.bottom_caption` → `frame._panel_box`), so the
+  map's cells are untouched; **picocalc**, whose frame has no bottom rule at all, stamps it
+  over the right end of the drawing's last row instead, overprinting what it covers. The
+  minimap always stamps. The split is bound once via `platforms.on_platform`, never asked
+  per frame. Never a title atom, never a footer character, never a key. The licence and URL
+  live on the About page.
 - The name and the wordmark are trademarks reserved in `NOTICE`, which Apache §4(d) makes
   every fork carry; `NOTICE` holds only what must travel with a redistribution.
 

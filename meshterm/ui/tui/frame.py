@@ -143,9 +143,25 @@ def _breathing_room(body_len: int, budget: int) -> int:
 
 
 def _panel_box(
-    title: str, visible: list[str], more_above: bool, more_below: bool, border: str
+    title: str,
+    visible: list[str],
+    more_above: bool,
+    more_below: bool,
+    border: str,
+    caption: str = "",
 ) -> Panel:
     """Wrap already-sliced body lines in a titled, scroll-aware panel.
+
+    The bottom rule carries up to two things, and they share one subtitle rather than
+    fighting over the line. The clip arrows sit centred as they always have. A
+    ``caption`` — a screen's :attr:`~meshterm.ui.tui.screen.Screen.bottom_caption`, which
+    today means the map's OpenStreetMap credit — is **right-justified**, so it lands as
+    ``──── © OpenStreetMap ─╯``: one rule cell before the corner, the mirror of the way
+    the title sits in the top rule, and not one cell of the body given up for it. Where
+    both are wanted the caption joins the arrows in the same run and the run moves right,
+    because the arrows are the half a reader is looking *for* and the caption is the half
+    that must simply be present — dropping either would be the frame deciding something
+    neither screen asked it to.
 
     Args:
         title: The screen's heading (empty for none).
@@ -153,19 +169,23 @@ def _panel_box(
         more_above: Whether content continues above the slice.
         more_below: Whether content continues below the slice.
         border: Border style name (``"accent"`` for the focused screen).
+        caption: A short muted credit for the bottom rule's right end (empty for none).
 
     Returns:
         A Rich :class:`Panel` of exactly ``len(visible) + 2`` rows.
     """
     body = Text.from_ansi("\n".join(visible))
-    subtitle = None
+    atoms = []
     if more_above or more_below:
-        arrow = ("↑" if more_above else " ") + ("↓" if more_below else " ")
-        subtitle = f"[{hint_style(border)}]{arrow} more[/]"
+        atoms.append(("↑" if more_above else " ") + ("↓" if more_below else " ") + " more")
+    if caption:
+        atoms.append(caption)
+    subtitle = f"[{hint_style(border)}]{' · '.join(atoms)}[/]" if atoms else None
     return Panel(
         body,
         title=f"[{title_style(border)}]{title}[/]" if title else None,
         subtitle=subtitle,
+        subtitle_align="right" if caption else "center",
         border_style=border,
         padding=(0, 1),
     )
@@ -314,11 +334,15 @@ def compose_base(
         # flip with the physical Shift key alone) has no place in the key, so it renders
         # uncached — that combination doesn't arise: the lane belongs to the borderless
         # platform below.
-        key = (cols, rows, base.title, footer_hint, more_above, more_below, *visible)
+        # The caption belongs in the key like the title does: the map's credit collapses on
+        # a keystroke that need not change a single body line, and a memo without it would
+        # keep serving the rule the reader has already grown out of.
+        caption = base.bottom_caption
+        key = (cols, rows, base.title, caption, footer_hint, more_above, more_below, *visible)
         if footer_lane is None and _BASE_BOX_CACHE is not None and _BASE_BOX_CACHE[0] == key:
             body = _BASE_BOX_CACHE[1]
         else:
-            panel = _panel_box(base.title, visible, more_above, more_below, "accent")
+            panel = _panel_box(base.title, visible, more_above, more_below, "accent", caption)
             body = render_lines(Group(panel, footer_row()), cols)
             if footer_lane is None:
                 _BASE_BOX_CACHE = (key, body)

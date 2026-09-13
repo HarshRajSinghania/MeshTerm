@@ -364,7 +364,24 @@ class MapScreen(Screen):
         self._ensure_prefetch(vp)  # last: it reads what this paint just asked for
         self.title = self._title(vp)
         echo = query_text(self._filter) if self._query_echo() else None
-        return attribution.stamp(lines, width, full=self._untouched, left=echo)
+        return attribution.map_body(lines, width, full=self._untouched, left=echo)
+
+    @property
+    def bottom_caption(self) -> str:  # type: ignore[override]
+        """The basemap credit, for a frame whose bottom rule can carry it.
+
+        The other half of :func:`~meshterm.ui.attribution.map_body`, and the half that
+        costs the drawing nothing: where the panel has a bottom border, the credit is set
+        into it right-justified rather than stamped over the map's own last row (JP,
+        2026-09-13 — *"that way it's not in the map"*). Empty where the frame has no rule
+        to set it into, which is exactly where ``map_body`` stamps instead, so between
+        them the credit is drawn once on every platform and twice on none.
+
+        Read per paint, like the title, so the collapse to
+        :data:`~meshterm.ui.attribution.CREDIT_SHORT` reaches the rule on the very
+        keystroke that causes it.
+        """
+        return attribution.rule_caption(full=self._untouched)
 
     def _ensure_viewport(self, width: int) -> Viewport:
         """The viewport for a body ``width`` cells wide — built on first paint, else resized.

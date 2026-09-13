@@ -2568,6 +2568,12 @@ def test_the_map_registers_no_cli_command() -> None:
 # meshterm/ui/attribution.py): the credit sits in a corner of the map, names
 # "OpenStreetMap" rather than an abbreviation, is visible without interacting, and may
 # collapse once the map is used — to a form that is still a complete OSM attribution.
+#
+# Which corner is the *frame's*, and the two platforms' frames differ: a bordered one sets
+# the credit into its bottom border rule and leaves the drawing alone, while the
+# borderless one has no rule and stamps the drawing's own last row instead. So most of
+# these run twice, once per platform, and assert on the surface that platform actually
+# marks.
 
 
 def _credited_map(cols: int = 80) -> MapScreen:
@@ -2581,6 +2587,36 @@ def _credited_map(cols: int = 80) -> MapScreen:
 def _last_row(screen: MapScreen, cols: int = 80) -> str:
     """The bottom row of a rendered map body, stripped to plain text."""
     return _plain(screen.render_body(cols)).splitlines()[-1]
+
+
+def _bottom_rule(screen: MapScreen, cols: int = 80, rows: int = 24) -> str:
+    """The composed frame's bottom border rule — the line the caption is set into."""
+    from rich.text import Text
+
+    from meshterm.ui.tui import frame
+
+    screen.note_viewport(max(1, rows - 4))
+    composed = frame.compose_base(Text(""), screen, screen.footer_hint, cols, rows)
+    return next(
+        ln for ln in reversed([Text.from_ansi(x).plain for x in composed.split("\n")]) if "└" in ln
+    )
+
+
+def _mark(screen: MapScreen, cols: int = 80) -> str:
+    """Wherever this platform puts the credit: the bottom rule, else the drawing's last row."""
+    return _bottom_rule(screen, cols) if screen.bottom_caption else _last_row(screen, cols)
+
+
+def _both_platforms():
+    """The two platforms, restoring REGULAR afterwards — the credit differs across them."""
+    from meshterm.platforms import PICOCALC, REGULAR, set_platform
+
+    try:
+        for platform in (REGULAR, PICOCALC):
+            set_platform(platform)
+            yield platform
+    finally:
+        set_platform(REGULAR)
 
 
 def test_credit_names_openstreetmap_in_full_never_an_abbreviation() -> None:
@@ -2598,28 +2634,62 @@ def test_credit_names_openstreetmap_in_full_never_an_abbreviation() -> None:
     assert "Data from OpenStreetMap" in attribution.CREDIT_FULL
 
 
-def test_an_untouched_map_shows_the_whole_credit_in_its_bottom_right_corner() -> None:
+def test_an_untouched_map_shows_the_whole_credit_on_every_platform() -> None:
     """The attribution may not be something you have to interact with the map to see."""
     from meshterm.ui import attribution
 
-    row = _last_row(_credited_map())
-    assert row.endswith(attribution.CREDIT_FULL)
-    assert cell_len(row) <= 80
+    for platform in _both_platforms():
+        mark = _mark(_credited_map(platform.readable_cols), platform.readable_cols)
+        assert attribution.CREDIT_FULL in mark, platform.name
+
+
+def test_a_bordered_frame_sets_the_credit_in_its_bottom_rule_and_spares_the_drawing() -> None:
+    """JP, 2026-09-13: "that way it's not in the map" — the rule carries it, the map doesn't."""
+    from meshterm.platforms import REGULAR, set_platform
+    from meshterm.ui import attribution
+
+    set_platform(REGULAR)
+    screen = _credited_map(72)
+    # Right-justified with exactly one rule cell before the corner, as a title sits in the
+    # top rule: "└──… © OpenMapTiles · Data from OpenStreetMap ─┘".
+    rule = _bottom_rule(screen, 72)
+    assert rule.startswith("└") and rule.endswith(f" {attribution.CREDIT_FULL} ─┘")
+    assert cell_len(rule) == 72
+    # And nothing of it reached the drawing: the map's own rows are pure picture.
+    assert "OpenStreetMap" not in _plain(screen.render_body(72))
+
+
+def test_a_frame_with_no_bottom_rule_stamps_the_drawing_instead() -> None:
+    """The PicoCalc has a title bar and an F-key lane, and no rule to set a caption into."""
+    from meshterm.platforms import PICOCALC, REGULAR, set_platform
+    from meshterm.ui import attribution
+
+    try:
+        set_platform(PICOCALC)
+        screen = _credited_map(53)
+        assert screen.bottom_caption == ""  # nowhere to put it but the map
+        assert _last_row(screen, 53).endswith(attribution.CREDIT_FULL)
+    finally:
+        set_platform(REGULAR)
 
 
 def test_the_credit_collapses_once_the_map_is_used_and_stays_collapsed() -> None:
     """OSMF allows a collapse "automatically on map interaction such as panning … zooming"."""
     from meshterm.ui import attribution
 
-    for action in ("right", "pageup", "home", "text"):
-        screen = _credited_map()
-        assert _last_row(screen).endswith(attribution.CREDIT_FULL)
-        screen.handle(action, "a" if action == "text" else "")
-        row = _last_row(screen)
-        assert row.endswith(attribution.CREDIT_SHORT), action
-        assert attribution.CREDIT_FULL not in row, action
-        screen.render_body(80)  # a repaint never brings the whole line back
-        assert _last_row(screen).endswith(attribution.CREDIT_SHORT), action
+    for platform in _both_platforms():
+        cols = platform.readable_cols
+        for action in ("right", "pageup", "home", "text"):
+            screen = _credited_map(cols)
+            screen.render_body(cols)  # the arrival paint the reader is answering
+            assert attribution.CREDIT_FULL in _mark(screen, cols), (platform.name, action)
+            screen.handle(action, "a" if action == "text" else "")
+            mark = _mark(screen, cols)
+            assert attribution.CREDIT_SHORT in mark, (platform.name, action)
+            assert attribution.CREDIT_FULL not in mark, (platform.name, action)
+            # A repaint never brings the whole line back — including through the frame's
+            # own composition memo, which has to key on the caption to notice.
+            assert attribution.CREDIT_FULL not in _mark(screen, cols), (platform.name, action)
 
 
 def test_a_reopened_map_arrives_with_the_whole_credit_again() -> None:
@@ -2629,17 +2699,30 @@ def test_a_reopened_map_arrives_with_the_whole_credit_again() -> None:
     used = _credited_map()
     used.render_body(80)  # keys do nothing until the map has a viewport to move
     used.handle("right")
-    assert _last_row(used).endswith(attribution.CREDIT_SHORT)
-    assert _last_row(_credited_map()).endswith(attribution.CREDIT_FULL)
+    assert attribution.CREDIT_SHORT in _mark(used)
+    assert attribution.CREDIT_FULL in _mark(_credited_map())
 
 
 def test_the_credit_costs_no_chrome_row_and_no_footer_character() -> None:
-    """It rides the drawing, so the body keeps its height and the hint keeps its wording."""
-    screen = _credited_map()
-    assert len(screen.render_body(80)) == len(_credited_map().render_body(80))
-    assert "OpenStreetMap" not in screen.footer_hint
-    screen.render_body(80)
-    assert "OpenStreetMap" not in screen.title
+    """It rides the frame, so the body keeps its height and the hint keeps its wording."""
+    for platform in _both_platforms():
+        cols = platform.readable_cols
+        screen = _credited_map(cols)
+        assert len(screen.render_body(cols)) == len(_credited_map(cols).render_body(cols))
+        assert "OpenStreetMap" not in screen.footer_hint
+        screen.render_body(cols)
+        assert "OpenStreetMap" not in screen.title
+
+
+def test_the_bottom_rule_keeps_its_clip_arrows_when_a_caption_shares_it() -> None:
+    """Neither half is dropped: the arrows lead, the caption follows, the run moves right."""
+    from meshterm.ui.tui.frame import _panel_box
+
+    panel = _panel_box("Map", ["body"], True, True, "accent", "© OpenStreetMap")
+    assert "↑↓ more · © OpenStreetMap" in (panel.subtitle or "")
+    assert panel.subtitle_align == "right"
+    # With no caption the arrows keep the centre they have always had.
+    assert _panel_box("Map", ["body"], False, True, "accent", "").subtitle_align == "center"
 
 
 def test_the_find_query_and_the_credit_share_the_row_with_the_credit_kept_whole() -> None:
@@ -2663,25 +2746,31 @@ def test_the_find_query_and_the_credit_share_the_row_with_the_credit_kept_whole(
 
 
 def test_the_location_preview_credits_the_basemap_in_its_short_form() -> None:
-    """A produced work too — and a non-interactive one, so its mark must stand still."""
+    """A produced work too — and a non-interactive one, so its mark must stand still.
+
+    The preview is embedded in somebody else's body, with no frame of its own to set a
+    caption into, so it stamps on both platforms — unlike the full-screen map.
+    """
     from meshterm.ui import attribution
     from meshterm.ui.map_render import MapMarker
     from meshterm.ui.minimap import MiniMap
 
-    preview = MiniMap(
-        _StubSession(72, 24),
-        _StubSource(),
-        14,
-        center_lat=45.5,
-        center_lon=-73.6,
-        zoom=12,
-        markers=[MapMarker("A", 45.5, -73.6)],
-    )
-    rows = preview.render(72, 6)
-    assert len(rows) == 6  # the credit takes no row of its own
-    last = _plain(rows).splitlines()[-1]
-    assert last.endswith(attribution.CREDIT_SHORT)
-    assert attribution.CREDIT_FULL not in last
+    for platform in _both_platforms():
+        cols = platform.readable_cols
+        preview = MiniMap(
+            _StubSession(cols, 24),
+            _StubSource(),
+            14,
+            center_lat=45.5,
+            center_lon=-73.6,
+            zoom=12,
+            markers=[MapMarker("A", 45.5, -73.6)],
+        )
+        rows = preview.render(cols, 6)
+        assert len(rows) == 6, platform.name  # the credit takes no row of its own
+        last = _plain(rows).splitlines()[-1]
+        assert last.endswith(attribution.CREDIT_SHORT), platform.name
+        assert attribution.CREDIT_FULL not in last, platform.name
 
 
 def test_the_credit_glyphs_are_in_the_picocalc_console_font() -> None:

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""The basemap's credit — OpenStreetMap's name, stamped in the corner of the drawing.
+"""The basemap's credit — OpenStreetMap's name, in the corner of the map's own frame.
 
 The street map is rendered from OpenStreetMap data, served as vector tiles by
 OpenFreeMap on the unmodified OpenMapTiles schema. All three want naming, and the
@@ -30,11 +30,21 @@ nice if you do."* — so :data:`CREDIT_FULL` is that line less its optional half
 
 That is the whole design, and it is built to cost the map almost nothing:
 
-* **The credit rides the map, not the chrome.** It is stamped over the right end of the
-  drawing's own bottom row, which is the corner the guideline calls traditional. No
-  title atom, no footer character, no body line: the title is a status line already
-  chaining four atoms and the footer hint spends its whole 72-cell budget, and a credit
-  bolted to either would be paid for on every screen of every visit.
+* **The credit rides the map's own frame, never a line of its own.** No title atom, no
+  footer character, no body row: the title is a status line already chaining four atoms
+  and the footer hint spends its whole 72-cell budget, and a credit bolted to either
+  would be paid for on every screen of every visit. *Where* it rides is the one thing
+  that differs by platform, and only because the platforms' frames differ. A bordered
+  frame has a **bottom border rule**, so the credit sits in it the way a title sits in
+  the top rule — right-justified, muted, one rule cell before the corner — and the
+  drawing itself is left alone (JP, 2026-09-13: *"that way it's not in the map"*). The
+  PicoCalc's frame has no bottom rule at all — a borderless title bar above, the F-key
+  lane below, and body rows in between — so there the credit is **stamped over the right
+  end of the drawing's own bottom row**, which is still the corner the guideline calls
+  traditional, and costs the map fifteen cells of ground a pan can move out from under.
+  That form was read on the device's own panel and signed off as it stands (JP,
+  2026-09-13), so its glyphs, its position and its collapse are settled: leave them alone.
+  :func:`rule_caption` and :func:`stamp` are the two forms; :func:`map_body` picks.
 * **It arrives whole and shrinks once used.** A map the reader has not touched yet shows
   :data:`CREDIT_FULL`, so the attribution is never something you have to interact to
   see; the first pan, zoom, reframe or find keystroke collapses it to
@@ -51,11 +61,12 @@ That is the whole design, and it is built to cost the map almost nothing:
   unadvertised key is an undiscoverable one, so a reveal would have had to buy a chip on
   a five-slot F-key lane that is already full.
 
-The mark **wins the cells it sits in**: it is spliced over the rendered row, so a street,
-a braille dot or a node label under it is overprinted rather than shifted. The guideline
-requires the attribution to be "legible and understandable", which a credit a passing
-label could shred is not — and the map is pannable, so ground hidden under fifteen cells
-of one row is a keypress away, while the credit is not allowed to be.
+Where it *is* stamped on the drawing — the PicoCalc's map, and the location preview on
+both platforms — the mark **wins the cells it sits in**: it is spliced over the rendered
+row, so a street, a braille dot or a node label under it is overprinted rather than
+shifted. The guideline requires the attribution to be "legible and understandable", which
+a credit a passing label could shred is not — and the map is pannable, so ground hidden
+under fifteen cells of one row is a keypress away, while the credit is not allowed to be.
 
 Its style is ``muted``: this is chrome drawn on the map, not content on it. It must not
 be mistaken for a node, so it takes neither the ``you`` white nor any key-derived node
@@ -67,6 +78,7 @@ from __future__ import annotations
 from rich.cells import cell_len
 from rich.text import Text
 
+from ..platforms import Platform, on_platform
 from .tui.render import crop_cells, render_to_ansi
 
 #: The whole credit, shown until the reader first touches the map. OpenFreeMap's required
@@ -83,6 +95,18 @@ CREDIT_SHORT = "© OpenStreetMap"
 #: Blank cells kept between whatever the map drew and the start of the mark, so the credit
 #: never reads as the tail of a street name it happens to land beside.
 _GAP = 1
+
+#: Whether this platform's frame has a bottom border rule for the credit to sit in, rather
+#: than the map having to give up cells of its own bottom row. Bound once per platform
+#: switch (:func:`_bind`) so no paint ever asks the platform this question itself.
+_HAS_RULE = True
+
+
+@on_platform
+def _bind(platform: Platform) -> None:
+    """Settle where the credit goes when the platform is chosen, not when a frame is drawn."""
+    global _HAS_RULE
+    _HAS_RULE = platform.frame_border
 
 
 def credit(*, full: bool) -> Text:
@@ -147,3 +171,54 @@ def stamp(lines: list[str], width: int, *, full: bool, left: Text | None = None)
     row.pad_right(max(0, keep - cell_len(row.plain)))
     row.append_text(mark)
     return [*lines[:-1], render_to_ansi(row, width, no_wrap=True)]
+
+
+def rule_caption(*, full: bool) -> str:
+    """The credit for the frame's bottom border rule — ``""`` where the frame draws none.
+
+    A bordered frame already has a rule under the body doing nothing but closing the box,
+    and a caption in it is the cheapest place the credit can possibly go: it takes no cell
+    of the drawing and no cell of any line the app was otherwise using. The frame renders
+    it right-justified through Rich's own subtitle machinery
+    (:func:`~meshterm.ui.tui.frame._panel_box`), so it lands as ``──── © OpenStreetMap ─╯``
+    — one rule cell before the corner, exactly as a title sits in the top rule.
+
+    Empty on the PicoCalc, whose frame has no bottom rule to sit in: there the credit is
+    stamped on the drawing instead (:func:`stamp`). Both callers ask unconditionally and
+    one of them gets nothing, so neither has to know which platform it is on.
+
+    Args:
+        full: Whether the credit is still in its whole form (see :func:`credit`).
+
+    Returns:
+        The caption, or ``""`` where this platform's frame has no rule for it.
+    """
+    return (CREDIT_FULL if full else CREDIT_SHORT) if _HAS_RULE else ""
+
+
+def map_body(lines: list[str], width: int, *, full: bool, left: Text | None = None) -> list[str]:
+    """The full-screen map's rows, credited wherever this platform's frame cannot do it.
+
+    The counterpart to :func:`rule_caption`, and the reason the map's ``render_body`` needs
+    no platform test of its own: exactly one of the two marks the map, and this is the one
+    that draws nothing where the frame's bottom rule is carrying the credit instead.
+
+    ``left`` (the find query echo) is drawn either way, because it belongs to the map
+    rather than to the credit — though in practice only the rule-less platform asks for it,
+    that being the same platform whose footer is the F-key lane and so has nowhere else to
+    put the query.
+
+    Args:
+        lines: The rendered map rows.
+        width: The row width in cells.
+        full: Whether the credit is still in its whole form (see :func:`credit`).
+        left: The find query echo for the bottom row, or ``None``.
+
+    Returns:
+        A new list of rows (the input's own list where there is nothing to draw).
+    """
+    if not _HAS_RULE:
+        return stamp(lines, width, full=full, left=left)
+    if left is None or not lines or width <= 0:
+        return lines
+    return [*lines[:-1], render_to_ansi(crop_cells(left, 0, width), width, no_wrap=True)]
