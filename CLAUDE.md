@@ -16,6 +16,19 @@ Commit directly on `main` — do not create topic branches unless explicitly ask
 is a solo repo; branches just create divergence to merge back later). Commit freely, but
 never `git push` unless explicitly asked in that moment.
 
+## Licensing — what every file and every build carries
+
+- **Every Python file opens with `# SPDX-License-Identifier: Apache-2.0`** (line 2 after a
+  shebang). `tests/test_spdx.py` is the gate. Anything under another licence lives beside
+  its own text and says so in its header — the GPL-2.0-only console-font script, the
+  MeshCore MIT notice beside the XIAO patch — and never enters the distributed package.
+- **The map credits OpenStreetMap on the map** (`ui/attribution.py`): the full OpenFreeMap
+  line in the drawing's bottom-right corner on arrival, `© OpenStreetMap` there after the
+  first keystroke, `muted`, overprinting the cells it sits in. Never a title atom, never a
+  footer character, never a key. The licence and URL live on the About page.
+- The name and the wordmark are trademarks reserved in `NOTICE`, which Apache §4(d) makes
+  every fork carry; `NOTICE` holds only what must travel with a redistribution.
+
 ## UX standards
 
 These are binding. Every new screen, dialog, row, or hint follows them; when you touch an
