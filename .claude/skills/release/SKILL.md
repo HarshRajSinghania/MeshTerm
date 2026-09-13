@@ -139,7 +139,11 @@ gh run watch --exit-status
 gh release view vX.Y.Z
 ```
 
-Five platform builds plus the release job, so it takes a few minutes. **Check the notes
+Five platform builds, the release job, and `website` — which rebuilds meshterm.net from the
+tag so the site shows the new version — so it takes a few minutes. If only `website` fails,
+the release itself is fine (it runs after publishing); the usual cause is the
+`SITE_DEPLOY_KEY` secret, and once that is fixed `gh run rerun <run-id> --failed` finishes
+it. **Check the notes
 actually came out of the changelog** — a green run is not proof, because the fallback is a
 successful step:
 
