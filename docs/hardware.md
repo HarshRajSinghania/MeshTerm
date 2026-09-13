@@ -211,9 +211,10 @@ and nothing more: the default is installed either way.
 **Choosing between them is a preference, not a command.** *Display → Console font* on the
 Preferences page offers `6x12 (53x26)` and `6x8 (53x40)`, and it is drawn on the PicoCalc
 only — it is a row about hardware no desktop has, though the value round-trips through
-`preferences.yaml` on any machine. Picking one loads it immediately: the kernel raises
-SIGWINCH on a font change, so the whole frame repaints at the new row count without a
-relaunch.
+`preferences.yaml` on any machine. Picking one is the preview: the console loads it
+immediately and the page repaints at the new row count (the kernel raises SIGWINCH on a
+font change), so you look at the choice before you keep it. *Apply* keeps it; leaving the
+page and discarding puts the saved font back.
 
 MeshTerm puts the font back when it exits. Before the first paint it saves the console's
 current font with `setfont -O ~/.meshterm/console-font-before.psf` — whatever the *shell*

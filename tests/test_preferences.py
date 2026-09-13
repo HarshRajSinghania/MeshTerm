@@ -491,6 +491,73 @@ async def test_leaving_with_unsaved_changes_is_gated(ctx: AppContext) -> None:
     assert await edit_preferences(ctx) == {"history_days": 30}
 
 
+def _preview_console(monkeypatch: pytest.MonkeyPatch, *, on_device: bool) -> list[str]:
+    """Stand in for the console-font service: record every font the page loads."""
+    from meshterm.ui import preferences as page
+
+    loaded: list[str] = []
+    monkeypatch.setattr(page.consolefont, "applies", lambda: on_device)
+    monkeypatch.setattr(page.consolefont, "apply", lambda choice: loaded.append(choice) or True)
+    return loaded
+
+
+async def test_picking_a_console_font_previews_it_and_apply_keeps_it(
+    ctx: AppContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The console loads the font the moment it is picked; Apply hands it over to save."""
+    loaded = _preview_console(monkeypatch, on_device=True)
+    _install(ctx, [("select", "console_font"), ("select", "6x8"), ("select", "__apply__")])
+    assert await edit_preferences(ctx) == {"console_font": "6x8"}
+    assert loaded == ["6x8"]  # previewed once, and nothing put back on the way out
+
+
+async def test_discarding_a_previewed_console_font_puts_the_saved_one_back(
+    ctx: AppContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A preview that is not kept is undone: the saved font comes back on discard."""
+    loaded = _preview_console(monkeypatch, on_device=True)
+    _install(
+        ctx,
+        [
+            ("select", "console_font"),
+            ("select", "6x8"),
+            ("select", None),  # Esc
+            ("dialog", "discard"),
+        ],
+    )
+    assert await edit_preferences(ctx) is None
+    assert loaded == ["6x8", "6x12"]
+
+
+async def test_setting_the_console_font_back_reloads_it_at_once(
+    ctx: AppContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Staging the value in force again is a clean row — and the console follows it."""
+    loaded = _preview_console(monkeypatch, on_device=True)
+    _install(
+        ctx,
+        [
+            ("select", "console_font"),
+            ("select", "6x8"),
+            ("select", "console_font"),
+            ("select", "6x12"),  # back to what is saved: nothing staged, Esc leaves quietly
+            ("select", None),
+        ],
+    )
+    assert await edit_preferences(ctx) is None
+    assert loaded == ["6x8", "6x12"]
+
+
+async def test_a_desktop_page_never_touches_a_console_font(
+    ctx: AppContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Off the handheld the service says no once, and the page asks it nothing more."""
+    loaded = _preview_console(monkeypatch, on_device=False)
+    _install(ctx, [("select", "console_font"), ("select", "6x8"), ("select", "__apply__")])
+    assert await edit_preferences(ctx) == {"console_font": "6x8"}
+    assert loaded == []
+
+
 async def test_discarding_at_the_gate_drops_the_changes(ctx: AppContext) -> None:
     """Confirming the discard leaves with nothing, staged values and all."""
     _install(

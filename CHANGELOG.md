@@ -22,9 +22,11 @@ allowed to change behaviour, not just add to it.
 - **The PicoCalc picks its console font, and MeshTerm hands the console back.** A *Console
   font* row under Display on the Preferences page offers `6x12 (53x26)` — the font the
   device boots in — and `6x8 (53x40)`, fourteen more rows of the same glyph inventory in a
-  shorter cell. Choosing one loads it there and then; the kernel raises SIGWINCH on a font
-  change, so the frame repaints at the new height without a relaunch. The 6×8 base has no
-  Cyrillic, so a node named in Cyrillic draws as boxes on it.
+  shorter cell. Picking one is the preview: the console loads it there and then, and the
+  page repaints at the new height (the kernel raises SIGWINCH on a font change), so the
+  choice is looked at before it is kept. Apply keeps it; leaving and discarding puts the
+  saved font back. The 6×8 base has no Cyrillic, so a node named in Cyrillic draws as
+  boxes on it.
 
   A virtual terminal has one font for the whole console, so switching MeshTerm's switches
   the shell's. It saves whatever font was loaded before the first paint and reloads it on

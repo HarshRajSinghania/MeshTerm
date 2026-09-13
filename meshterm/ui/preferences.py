@@ -44,6 +44,7 @@ from ..core.preferences import (
     range_hint,
 )
 from ..platforms import get_platform
+from ..services import consolefont
 from .menus import (
     confirm_discard,
     exit_rows,
@@ -84,6 +85,22 @@ async def edit_preferences(ctx: AppContext) -> dict[str, Any] | None:
     prefs = ctx.preferences
     pending: dict[str, Any] = {}  # preference key -> staged new value
 
+    # The console font previews. A VT loads one font for the whole screen, so the only
+    # honest way to show what the 6x8 build looks like is to load it — and this page is
+    # the preview: it repaints at the new row count the moment the value is picked.
+    # ``shown`` is what the console is drawn in right now; a discard puts the saved value
+    # back, and Apply's own re-apply after the write finds nothing to change.
+    previewing = consolefont.applies()
+    shown = prefs.get(consolefont.PREFERENCE_KEY)
+
+    def preview() -> None:
+        nonlocal shown
+        if not previewing:
+            return
+        want = _effective(prefs, consolefont.PREFERENCE_KEY, pending)
+        if want != shown and consolefont.apply(want):
+            shown = want
+
     # The rows *are* the data — each carries its own staged ``current → new`` value and
     # the title counts what is staged — so they refresh in place after every round
     # (``replace_items``) rather than being rebuilt as a new screen. One screen for the
@@ -103,6 +120,8 @@ async def edit_preferences(ctx: AppContext) -> dict[str, Any] | None:
             if choice in (None, _CANCEL):
                 if pending and not await confirm_discard(ctx, len(pending), verb="saving"):
                     continue  # keep editing — the same list, the same place in it
+                if previewing and shown != prefs.get(consolefont.PREFERENCE_KEY):
+                    consolefont.apply(prefs.get(consolefont.PREFERENCE_KEY))
                 return None
             if choice == _APPLY:
                 return dict(pending) or None
@@ -110,6 +129,7 @@ async def edit_preferences(ctx: AppContext) -> dict[str, Any] | None:
                 await _stage_reset(ctx, prefs, pending)
             else:  # a preference key
                 await _stage_preference(ctx, prefs, choice, pending)
+            preview()
             title, items = _menu_items(prefs, pending)
             menu.replace_items(items, title=title)
 
