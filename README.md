@@ -26,22 +26,18 @@ your mesh's history is worth.
 > MeshTerm is a side project, not a product. Bug reports are very welcome — but please
 > open an issue before writing a pull request. [More on how it's run](#how-this-project-is-run).
 
-<!--
-  Screenshots to take — PNG, a 72-column window, the dark theme — saved under
-  docs/screenshots/ with these names, and the four links below come alive:
-    dashboard.png   the dashboard on a live mesh: heard-age heat, the braille timelines
-    map.png         the map zoomed on a handful of nodes, basemap under them
-    trace.png       a trace result with its route drawn as chips
-    picocalc.png    a photo of the app on the PicoCalc's 53x26 console
--->
 <p align="center">
-  <img src="docs/screenshots/dashboard.png" alt="The dashboard" width="49%">
-  <img src="docs/screenshots/map.png" alt="The mesh map" width="49%">
+  <img src="docs/screenshots/dashboard.png" alt="The dashboard: a packets-per-minute timeline over the last two hours, and every packet class counted" width="49%">
+  <img src="docs/screenshots/map.png" alt="The map: repeaters named over an OpenStreetMap basemap of the Lachine Canal" width="49%">
 </p>
 <p align="center">
-  <img src="docs/screenshots/trace.png" alt="A trace and the route it walked" width="49%">
-  <img src="docs/screenshots/picocalc.png" alt="MeshTerm on the PicoCalc" width="49%">
+  <img src="docs/screenshots/trace.png" alt="A trace: the route it walked drawn as chips, then the SNR of every hop" width="49%">
+  <img src="docs/screenshots/path.png" alt="Message paths: every route a channel message was heard over, drawn on the ground" width="49%">
 </p>
+<p align="center">
+  <img src="docs/screenshots/picocalc.png" alt="MeshTerm on the PicoCalc, a 53-column console with a radio wired inside" width="38%">
+</p>
+<p align="center"><sub>The dashboard, the map, a trace, the paths a message took — and the whole thing on a PicoCalc.</sub></p>
 
 ---
 
