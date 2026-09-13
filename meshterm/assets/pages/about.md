@@ -62,8 +62,11 @@ library — with Rich, prompt_toolkit, Typer, bleak, pyserial, pycryptodome,
 markdown-it-py, tomli/tomli-w and Segno, each under its own terms.
 
 Map data **© OpenStreetMap contributors**, served as vector tiles by
-**OpenFreeMap** *https://openfreemap.org/*, used under the
-**ODbL** *https://www.openstreetmap.org/copyright*.
+**OpenFreeMap** *https://openfreemap.org/* on the **© OpenMapTiles** schema
+*https://openmaptiles.org/*, used under the **ODbL**
+*https://www.openstreetmap.org/copyright*. That last address is where the map's
+own corner credit points — nothing on a console is clickable, so the link is
+spelled out here instead.
 
 ---
 

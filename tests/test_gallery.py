@@ -55,7 +55,7 @@ from meshterm.core.preferences import Preferences
 from meshterm.core.remote_store import CachedValue
 from meshterm.core.watch_store import WatchStore
 from meshterm.persistence.repository import DiscoveredPath
-from meshterm.platforms import PICOCALC, REGULAR, Platform, set_platform
+from meshterm.platforms import PICOCALC, REGULAR, Platform, get_platform, set_platform
 from meshterm.services.courier import CourierService
 from meshterm.services.message_paths import Arrival
 from meshterm.services.monitor_service import ACTIVITY_BUCKETS
@@ -284,7 +284,20 @@ def _node_detail_header() -> Text:
     return header
 
 
-def _node_detail(cols: int, rows: int) -> Screen:
+def _node_detail(cols: int, rows: int, *, with_minimap: bool = False) -> Screen:
+    minimap = None
+    if with_minimap:
+        from meshterm.ui.minimap import MiniMap
+
+        minimap = MiniMap(
+            _GallerySession(cols, rows),
+            _StubTileSource(),
+            14,
+            center_lat=45.40,
+            center_lon=-73.50,
+            zoom=12,
+            markers=[MapMarker("Hilltop-Repeater", 45.40, -73.50, is_repeater=True)],
+        )
     return NodeDetailScreen(
         title="Node — Hilltop-Repeater",
         header=_node_detail_header(),
@@ -294,7 +307,7 @@ def _node_detail(cols: int, rows: int) -> Screen:
             ("packets", Text("42")),
         ],
         tabs=[_Tab("Info", "info"), _Tab("Routes", "routes")],
-        minimap=None,
+        minimap=minimap,
         map_caption=None,
         routes=_RoutesView(note="no route observed yet — trace to discover one"),
         info_actions=[
@@ -321,14 +334,51 @@ class _StubTileSource:
         return False  # offline is silence, never the source saying "nothing there"
 
 
+def _map_body_rows(rows: int) -> int:
+    """The body height the map would be handed in the frame these specimens compose into.
+
+    The map is the one screen that sizes its own canvas from
+    :meth:`~meshterm.ui.tui.session.TuiSession.base_body_size`, so the stub session has to
+    answer with the *body* height rather than the terminal's — otherwise the specimen draws
+    a canvas taller than the slice it is shown in, which cuts the bottom row (and with it
+    the basemap credit that rides there) and hangs a phantom "↓ more" off a map that never
+    scrolls. Mirrors ``base_body_size`` with no header — these specimens compose against an
+    empty one — so it is the footer row plus either the panel's two borders or the
+    borderless platform's single title bar.
+    """
+    return max(1, rows - (3 if get_platform().frame_border else 2))
+
+
 def _map(cols: int, rows: int) -> Screen:
-    session = _GallerySession(cols, rows)
+    """The map as it is arrived at: nothing pressed yet, so the whole basemap credit shows."""
+    session = _GallerySession(cols, _map_body_rows(rows))
     markers = [
         MapMarker("Homestead", 45.50, -73.60, is_self=True),
         MapMarker("Hilltop-Repeater", 45.40, -73.50, is_repeater=True),
         MapMarker("A Rather Long Node Name For Width", 45.55, -73.65),
     ]
     return MapScreen(session, markers, _StubTileSource(), 14)
+
+
+def _map_panned(cols: int, rows: int) -> Screen:
+    """The map once used: the credit has collapsed to its remnant (see ui/attribution.py)."""
+    screen = _map(cols, rows)
+    screen.render_body(cols)  # the arrival paint the reader is answering
+    screen.handle("right")
+    return screen
+
+
+def _map_find(cols: int, rows: int) -> Screen:
+    """A used map with a live find: on the PicoCalc the query and the credit share a row."""
+    screen = _map_panned(cols, rows)
+    for ch in "Hilltop":
+        screen.handle("text", ch)
+    return screen
+
+
+def _node_detail_map(cols: int, rows: int) -> Screen:
+    """The node page carrying its location preview, which credits the basemap too."""
+    return _node_detail(cols, rows, with_minimap=True)
 
 
 def _chat(cols: int, rows: int) -> Screen:
@@ -924,7 +974,10 @@ _ENTRIES: list[_Entry] = [
     _Entry("purge_preview", _purge_preview),
     _Entry("archived", _archived),
     _Entry("node_detail", _node_detail),
+    _Entry("node_detail_map", _node_detail_map),
     _Entry("map", _map),
+    _Entry("map_panned", _map_panned),
+    _Entry("map_find", _map_find),
     _Entry("chat", _chat),
     _Entry("chat_picker", _chat_picker),
     _Entry("channels_manager", _channels_manager),

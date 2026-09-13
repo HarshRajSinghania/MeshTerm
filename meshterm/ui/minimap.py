@@ -14,6 +14,19 @@ refining in place as more arrive, exactly like the big map. With no network and 
 tiles the basemap is simply absent and the markers plot on a blank grid, so the preview is
 always *something*. It owns no keys and resolves nothing; the screen that embeds it just
 calls :meth:`render` from its own ``render_body`` and forwards nothing back.
+
+It is a produced work like the big map, so it carries the basemap credit too — but only
+ever the remnant form (:data:`~meshterm.ui.attribution.CREDIT_SHORT`), never the whole
+line. Two reasons, and the guideline supports both. A preview is five to thirteen rows of
+somebody's *node page*, not a map they went to look at, so forty cells of credit across
+the bottom of it would be the loudest thing on the row; and the remnant is not a
+concession in the first place — "© OpenStreetMap" is one of the two forms OSMF names as
+acceptable outright, so nothing here leans on the collapse permission the big map spends.
+The preview is also not interactive, which is what makes that distinction matter: there is
+no pan or zoom here for a collapse to trigger on, so the mark it draws has to be one that
+is complete standing still. OpenMapTiles and the ODbL are named on the About page, which
+is the guideline's own worked example of where a credit's licence information may be
+found.
 """
 
 from __future__ import annotations
@@ -25,6 +38,7 @@ from typing import TYPE_CHECKING
 from ..core.geo import Viewport, clamp_lat
 from ..core.mvt import Layer
 from ..services.basemap import TILE_RETRY_SECONDS
+from . import attribution
 from .map_render import MapMarker, render_map
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -134,7 +148,8 @@ class MiniMap:
         )
         self._ensure_tiles(viewport)
         tiles = {t: self._tiles.get(t) for t in viewport.tiles(self._max_tile_zoom)}
-        return render_map(viewport, tiles, self._markers)
+        lines = render_map(viewport, tiles, self._markers)
+        return attribution.stamp(lines, width, full=False)
 
     def _ensure_tiles(self, viewport: Viewport) -> None:
         """Schedule background fetches for any visible tile we don't have and aren't owed.

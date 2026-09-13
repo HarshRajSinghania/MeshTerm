@@ -19,6 +19,17 @@ allowed to change behaviour, not just add to it.
 
 ### Added
 
+- **The map credits OpenStreetMap on the map.** The full-screen map is arrived at with
+  `© OpenMapTiles · Data from OpenStreetMap` in its bottom-right corner — the corner a
+  paper map puts it in — and the first pan, zoom, reframe or find keystroke collapses it
+  to `© OpenStreetMap`, which is a complete credit in its own right, so nothing is ever
+  taken back. It costs no chrome: no title atom, no footer character, no body row, just
+  fifteen cells of the drawing's own bottom line that a keypress can pan out from under.
+  The node page's location preview carries the short form throughout, being a picture
+  rather than a place. The licence and its URL live where they can be read — the About
+  page, which also now names **OpenMapTiles**, as OpenFreeMap asks and neither the page
+  nor the README did.
+
 - **Every Python file names its licence with an SPDX identifier** on its first line (second, after a shebang), and `tests/test_spdx.py` keeps a new file from landing without one. Apache-2.0 does not require per-file headers, but a file lifted out of the tree carried no marking at all.
 
 - **The XIAO firmware patch carries MeshCore's MIT notice beside it** as `scripts/xiao-radio/LICENSE.MeshCore`, and the console-font scripts state that the shared generator block is offered under GPL-2.0-only as well as Apache-2.0, which is what lets the GPL-2.0-only 6×8 script run it.

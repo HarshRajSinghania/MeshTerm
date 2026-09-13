@@ -266,7 +266,25 @@ def query_line(query: str, width: int) -> str:
     Returns:
         One rendered ANSI line.
     """
-    return render_to_ansi(Text(f"/{query}", style="warn"), width, no_wrap=True)
+    return render_to_ansi(query_text(query), width, no_wrap=True)
+
+
+def query_text(query: str) -> Text:
+    """The same echo as a styled run, for a surface that lays the row out itself.
+
+    :func:`query_line` is the whole line and the usual call; this is the run inside it,
+    wanted where something else shares the row. The map is the one such caller: its credit
+    is pinned to the row's right end (see :mod:`meshterm.ui.attribution`), so the query has
+    to arrive croppable rather than already rendered to the full width. Both go through
+    this one constructor, so the shape and the ``warn`` colour cannot drift apart.
+
+    Args:
+        query: The current query (callers only call this when it is non-empty).
+
+    Returns:
+        The echo, ``warn`` and ``no_wrap``.
+    """
+    return Text(f"/{query}", style="warn", no_wrap=True)
 
 
 def right_aligned_tail(body: Text, tail: Text, width: int) -> Text:

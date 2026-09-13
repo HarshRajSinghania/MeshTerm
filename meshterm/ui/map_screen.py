@@ -42,8 +42,9 @@ from ..core.mvt import Layer
 from ..platforms import get_platform
 from ..services import modifier_watch
 from ..services.basemap import TILE_RETRY_SECONDS, BasemapSource
+from . import attribution
 from .map_render import Ghost, MapMarker, render_ground, render_map
-from .tui.render import query_line
+from .tui.render import query_text
 from .tui.screen import Screen
 
 if TYPE_CHECKING:
@@ -233,6 +234,14 @@ class MapScreen(Screen):
         # :meth:`consume_edge_scrub`). Seeded ``True`` so the first braille frame's edge is
         # cleaned even before the first pan.
         self._needs_scrub = True
+        #: Whether the reader has yet touched this map. It gates the basemap credit's two
+        #: forms (see :mod:`meshterm.ui.attribution`): the whole line while nothing has
+        #: been pressed — the attribution may not be something you have to interact to see
+        #: — collapsing to the bare OpenStreetMap credit on the first key the map handles,
+        #: which is the "automatically on map interaction such as panning, clicking, or
+        #: zooming" clause of OSMF's guideline. A visit's worth of state, not a session's:
+        #: a map reopened is a map arrived at again.
+        self._untouched = True
         # Decoded tiles, least-recently-shown first — see :meth:`_trim_tiles`. A stored
         # ``None`` is the source's own answer that there is nothing at those coordinates.
         self._tiles: OrderedDict[tuple[int, int, int], list[Layer] | None] = OrderedDict()
@@ -339,6 +348,14 @@ class MapScreen(Screen):
         where it used to live — it sees the *previous* paint's answer, and a settled map
         given a find keystroke starts a speculative fetch in the very paint that queues
         the frame the reader is waiting for.
+
+        The basemap credit is stamped last, over the right end of that same bottom row
+        (see :mod:`meshterm.ui.attribution`), because its two forms turn on what the
+        reader has pressed rather than on what the raster shows — a frame is half a second
+        of Python and is served across many paints, so a credit baked into one would
+        either lag the keystroke that collapses it or force a redraw to shrink a caption.
+        Where the query echo wants this row too, the two share it: query left, credit
+        right, and the query is the half that gives way.
         """
         vp = self._ensure_viewport(width)
         self._ensure_tiles(vp)
@@ -346,9 +363,8 @@ class MapScreen(Screen):
         lines = self._ground(vp)
         self._ensure_prefetch(vp)  # last: it reads what this paint just asked for
         self.title = self._title(vp)
-        if lines and self._query_echo():
-            lines[-1] = query_line(self._filter, width)
-        return lines
+        echo = query_text(self._filter) if self._query_echo() else None
+        return attribution.stamp(lines, width, full=self._untouched, left=echo)
 
     def _ensure_viewport(self, width: int) -> Viewport:
         """The viewport for a body ``width`` cells wide — built on first paint, else resized.
@@ -988,8 +1004,11 @@ class MapScreen(Screen):
             self._filter += " "  # node names carry spaces; only meaningful mid-query
         elif action == "backspace":
             self._filter = self._filter[:-1]
-        # Any handled key may have redrawn the body, so clean the right edge next paint.
+        # Any handled key may have redrawn the body, so clean the right edge next paint —
+        # and it is also the moment the map stops being one the reader has merely arrived
+        # at, which collapses the basemap credit to its remnant (see :attr:`_untouched`).
         self._needs_scrub = True
+        self._untouched = False
         self._persist()
 
     def _self_marker(self) -> MapMarker | None:

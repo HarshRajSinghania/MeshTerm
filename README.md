@@ -481,10 +481,16 @@ MeshTerm stands on the [MeshCore](https://meshcore.io/) project — its firmware
 ### Map data
 
 The street map is rendered from **© OpenStreetMap contributors** data, served as vector
-tiles by [OpenFreeMap](https://openfreemap.org/). OpenStreetMap data is available under the
-[Open Database License (ODbL)](https://www.openstreetmap.org/copyright). Tiles are decoded
-with a small built-in reader for the [Mapbox Vector Tile](https://github.com/mapbox/vector-tile-spec)
-format.
+tiles by [OpenFreeMap](https://openfreemap.org/) on the unmodified
+**© OpenMapTiles** [schema](https://openmaptiles.org/). OpenStreetMap data is available
+under the [Open Database License (ODbL)](https://www.openstreetmap.org/copyright). Tiles
+are decoded with a small built-in reader for the
+[Mapbox Vector Tile](https://github.com/mapbox/vector-tile-spec) format.
+
+Both map surfaces carry the credit themselves: the full-screen map opens with
+`© OpenMapTiles · Data from OpenStreetMap` in its bottom-right corner and collapses it to
+`© OpenStreetMap` once you pan, zoom or type; the node page's location preview shows the
+short form throughout. The About page inside the app spells out the licence URL.
 
 ### Bundled font
 

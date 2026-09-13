@@ -1535,6 +1535,7 @@ def test_map_locate_recenters_on_our_own_node_at_the_current_zoom() -> None:
 def test_map_echoes_the_find_query_in_the_body_only_where_the_footer_is_gone() -> None:
     """The PicoCalc draws no hint line, so the query it carries moves into the body."""
     from meshterm.platforms import PICOCALC, REGULAR, set_platform
+    from meshterm.ui.attribution import CREDIT_SHORT
     from meshterm.ui.map_render import MapMarker
     from meshterm.ui.map_screen import MapScreen
 
@@ -1559,7 +1560,10 @@ def test_map_echoes_the_find_query_in_the_body_only_where_the_footer_is_gone() -
         lines = device.render_body(53)
         # The echo overlays the canvas's *last* row — directly above the F-key lane —
         # so the ground never shifts: same body height, same viewport, top anchor held.
-        assert _plain(lines[-1]).strip() == "/hil"
+        # The basemap credit is pinned to that same row's other end (it is chrome on the
+        # drawing, not a body line of its own), so the echo takes what is left of it.
+        assert _plain(lines[-1]).strip().startswith("/hil")
+        assert _plain(lines[-1]).rstrip().endswith(CREDIT_SHORT)
         assert "/hil" not in _plain(lines[0])
         assert len(lines) == 23
         # Clearing the find hands the row back to the canvas, still without a reflow.
@@ -2432,11 +2436,16 @@ def test_map_holds_an_aligned_frame_while_a_tile_lands(monkeypatch) -> None:  # 
     screen._frame = ["ground"] * 20
     screen._frame_key = screen._ground_key(screen._viewport)
     screen._drawing = None
-    assert screen.render_body(80) == ["ground"] * 20
+    # All but the bottom row is the frame verbatim; that one also carries the basemap
+    # credit, which is stamped at paint time rather than baked into a raster served
+    # across many paints (see meshterm/ui/attribution.py).
+    painted = screen.render_body(80)
+    assert painted[:-1] == ["ground"] * 19
+    assert _plain(painted[-1]).startswith("ground")
 
     in_view = screen._viewport.tiles(14)[0]
     screen._tiles[in_view] = _loaded_tile()  # a tile lands, view unmoved
-    assert screen.render_body(80) == ["ground"] * 20, "dropped an aligned frame"
+    assert screen.render_body(80)[:-1] == ["ground"] * 19, "dropped an aligned frame"
     assert screen._drawing is not None, "did not redraw for the new tile"
 
 
@@ -2551,3 +2560,157 @@ def test_the_map_registers_no_cli_command() -> None:
     app = typer.Typer()
     MapTool().register_cli(app)
     assert app.registered_commands == []
+
+
+# -- the basemap credit -------------------------------------------------------
+#
+# The OpenStreetMap Foundation's Attribution Guideline is what these pin (quoted in
+# meshterm/ui/attribution.py): the credit sits in a corner of the map, names
+# "OpenStreetMap" rather than an abbreviation, is visible without interacting, and may
+# collapse once the map is used — to a form that is still a complete OSM attribution.
+
+
+def _credited_map(cols: int = 80) -> MapScreen:
+    """A map screen over the offline source, arrived at and not yet touched."""
+    from meshterm.ui.map_render import MapMarker
+    from meshterm.ui.map_screen import MapScreen
+
+    return MapScreen(_StubSession(cols, 24), [MapMarker("A", 45.5, -73.6)], _StubSource(), 14)
+
+
+def _last_row(screen: MapScreen, cols: int = 80) -> str:
+    """The bottom row of a rendered map body, stripped to plain text."""
+    return _plain(screen.render_body(cols)).splitlines()[-1]
+
+
+def test_credit_names_openstreetmap_in_full_never_an_abbreviation() -> None:
+    """OSMF: "Attribution must be to 'OpenStreetMap'" — so neither form may abbreviate it."""
+    from meshterm.ui import attribution
+
+    for text in (attribution.CREDIT_FULL, attribution.CREDIT_SHORT):
+        assert "OpenStreetMap" in text
+        assert not re.search(r"\bOSM\b", text), text
+    # The remnant is one of the two historical forms OSMF names as acceptable outright,
+    # so collapsing never costs the OpenStreetMap credit itself.
+    assert attribution.CREDIT_SHORT in ("© OpenStreetMap", "© OpenStreetMap contributors")
+    # OpenFreeMap's required line, less only the half it calls optional.
+    assert "OpenMapTiles" in attribution.CREDIT_FULL
+    assert "Data from OpenStreetMap" in attribution.CREDIT_FULL
+
+
+def test_an_untouched_map_shows_the_whole_credit_in_its_bottom_right_corner() -> None:
+    """The attribution may not be something you have to interact with the map to see."""
+    from meshterm.ui import attribution
+
+    row = _last_row(_credited_map())
+    assert row.endswith(attribution.CREDIT_FULL)
+    assert cell_len(row) <= 80
+
+
+def test_the_credit_collapses_once_the_map_is_used_and_stays_collapsed() -> None:
+    """OSMF allows a collapse "automatically on map interaction such as panning … zooming"."""
+    from meshterm.ui import attribution
+
+    for action in ("right", "pageup", "home", "text"):
+        screen = _credited_map()
+        assert _last_row(screen).endswith(attribution.CREDIT_FULL)
+        screen.handle(action, "a" if action == "text" else "")
+        row = _last_row(screen)
+        assert row.endswith(attribution.CREDIT_SHORT), action
+        assert attribution.CREDIT_FULL not in row, action
+        screen.render_body(80)  # a repaint never brings the whole line back
+        assert _last_row(screen).endswith(attribution.CREDIT_SHORT), action
+
+
+def test_a_reopened_map_arrives_with_the_whole_credit_again() -> None:
+    """The collapse is a visit's state, not a session's — a new map is arrived at anew."""
+    from meshterm.ui import attribution
+
+    used = _credited_map()
+    used.render_body(80)  # keys do nothing until the map has a viewport to move
+    used.handle("right")
+    assert _last_row(used).endswith(attribution.CREDIT_SHORT)
+    assert _last_row(_credited_map()).endswith(attribution.CREDIT_FULL)
+
+
+def test_the_credit_costs_no_chrome_row_and_no_footer_character() -> None:
+    """It rides the drawing, so the body keeps its height and the hint keeps its wording."""
+    screen = _credited_map()
+    assert len(screen.render_body(80)) == len(_credited_map().render_body(80))
+    assert "OpenStreetMap" not in screen.footer_hint
+    screen.render_body(80)
+    assert "OpenStreetMap" not in screen.title
+
+
+def test_the_find_query_and_the_credit_share_the_row_with_the_credit_kept_whole() -> None:
+    """Where the F-key lane replaces the hint, the echo yields its right end to the credit."""
+    from meshterm.platforms import PICOCALC, REGULAR, set_platform
+    from meshterm.ui import attribution
+
+    try:
+        set_platform(PICOCALC)
+        screen = _credited_map(53)
+        screen.render_body(53)  # keys do nothing until the map has a viewport to move
+        screen.handle("right")
+        for ch in "Hilltop-Repeater-With-A-Very-Long-Name":
+            screen.handle("text", ch)
+        row = _last_row(screen, 53)
+        assert row.lstrip().startswith("/Hilltop")  # the query, cropped to what is left
+        assert row.endswith(attribution.CREDIT_SHORT)  # the credit, whole
+        assert cell_len(row) <= 53
+    finally:
+        set_platform(REGULAR)
+
+
+def test_the_location_preview_credits_the_basemap_in_its_short_form() -> None:
+    """A produced work too — and a non-interactive one, so its mark must stand still."""
+    from meshterm.ui import attribution
+    from meshterm.ui.map_render import MapMarker
+    from meshterm.ui.minimap import MiniMap
+
+    preview = MiniMap(
+        _StubSession(72, 24),
+        _StubSource(),
+        14,
+        center_lat=45.5,
+        center_lon=-73.6,
+        zoom=12,
+        markers=[MapMarker("A", 45.5, -73.6)],
+    )
+    rows = preview.render(72, 6)
+    assert len(rows) == 6  # the credit takes no row of its own
+    last = _plain(rows).splitlines()[-1]
+    assert last.endswith(attribution.CREDIT_SHORT)
+    assert attribution.CREDIT_FULL not in last
+
+
+def test_the_credit_glyphs_are_in_the_picocalc_console_font() -> None:
+    """The mark is drawn on the device, so its glyphs must be in the 512-glyph font."""
+    from meshterm.ui import attribution
+    from meshterm.ui.fontset import FONT_CODEPOINTS
+
+    for text in (attribution.CREDIT_FULL, attribution.CREDIT_SHORT):
+        missing = {ch for ch in text if ord(ch) not in FONT_CODEPOINTS}
+        assert not missing, f"{text!r} needs glyphs the console font lacks: {missing!r}"
+        assert cell_len(text) == len(text), f"{text!r} draws wider than it measures"
+
+
+def test_a_row_too_narrow_for_the_remnant_takes_no_credit_rather_than_a_cut_one() -> None:
+    """A truncated credit would claim something untrue; the About page still carries it."""
+    from meshterm.ui import attribution
+
+    rows = ["x" * 8]
+    assert attribution.stamp(rows, 8, full=True) == rows
+    # And a row with room for the remnant but not the whole line falls back to it.
+    stamped = _plain(attribution.stamp(["x" * 20], 20, full=True)).splitlines()[-1]
+    assert stamped.endswith(attribution.CREDIT_SHORT)
+
+
+def test_stamping_leaves_the_callers_rows_untouched() -> None:
+    """The map serves one cached raster across many paints; stamping may not edit it."""
+    from meshterm.ui import attribution
+
+    rows = ["street " * 10, "more ground here"]
+    before = list(rows)
+    attribution.stamp(rows, 70, full=True)
+    assert rows == before
