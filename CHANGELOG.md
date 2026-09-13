@@ -17,7 +17,18 @@ allowed to change behaviour, not just add to it.
 
 ## [Unreleased]
 
+## [0.3.3] — 2026-09-13
+
 ### Added
+
+- **`meshterm --version` answers**, and under `--mock` the `devices` command lists the
+  simulator as the one device and scans nothing — it used to walk the serial ports and
+  switch the Bluetooth radio on, on the first command a stranger without a radio would try.
+
+- **[`docs/hardware.md`](docs/hardware.md)** is the one manual for putting MeshTerm on a
+  PicoCalc or a uConsole: the Calculinux bring-up, the console font, the XIAO UART radio from
+  parts to a verified link, the SPI bridge, and a closing list of what has only ever been
+  proven on one bench. The two script READMEs are short indexes pointing at it.
 
 - **The standalone installers carry their own licences now.** Each one-file build
   bundles `LICENSE`, `NOTICE` and a generated `THIRD-PARTY-NOTICES.txt` — every
@@ -83,6 +94,46 @@ allowed to change behaviour, not just add to it.
   earlier build is not read: set those preferences again, or copy the lines across as
   `key = value` with text in quotes. A line TOML refuses costs only that line, and a word
   left unquoted (`log_level = DEBUG`) is still understood.
+
+- **A trophy case record is a page, not a card floating over the list.** It fills the frame
+  like the browser under it and takes the node page's shape: a header line that reads as a
+  sentence — the discipline's mark, its standing and its score — over three tabs. *Info* is
+  the record's stats, identity first, with the page's actions at its foot; *Route* is the walk
+  two ways, the route graph and the route line, where Enter traces the path on show; *Area*
+  is the ground the walk covered, drawn across the whole stage with every pin labelled by its
+  hash byte so a pin and the graph node under it match by eye. Tab and Shift+Tab switch, F3 on
+  the PicoCalc. The trophy case itself fills the frame whichever way it is opened, from the
+  menu or from a trace.
+
+- **A QR code is white on black, and when it is the answer it is the whole screen.** A camera
+  reads contrast, and light-on-dark is what a scanner expects of a screen, so every code
+  MeshTerm draws is pure white on pure black on both themes. A channel's share link and a
+  contact card are no longer a titled popup with an instruction over the code: they are a
+  bare frame with nothing on it but the code and the URL it encodes, and Esc leaves.
+
+- **A question is a popup, and it is gone before the page it asked for opens.** The trace
+  target, the repeater admin's node and the TX optimize link used to stay pushed as full
+  screens under the page they led to, so Esc out of a trace or an admin page landed back on
+  the list it was picked from — two places where there is one. Each now floats over the main
+  menu, is popped before its page opens, and Esc from the page lands on the menu. The TX
+  optimize link is one box that turns its page (`… · step 1 of 2`): Esc on the second step
+  turns back with the picked node still highlighted. A refused admin login re-asks with the
+  same node highlighted.
+
+- The three delay settings — TX delay, direct TX delay and RX delay — show, stage and send at
+  one decimal on both the repeater admin and Device config pages; Device config's RX delay
+  had no rounding at all.
+
+- The source distribution ships the package, its tests and the manual, not
+  the repository: the Claude skills, the GitHub config, the PyInstaller spec and the device
+  scripts are out of it.
+
+### Fixed
+
+- **A share code's bottom-left finder was one cell skewed**, so a camera could not lock on.
+  Rich's centre justify strips a row's trailing spaces before padding it, so a code row whose
+  right edge was light modules landed a column off its neighbours. A code is now moved across
+  a line one way only, the same indent in front of every row.
 
 ## [0.3.2] — 2026-09-11
 
@@ -646,7 +697,8 @@ deliberately not reconstructed here.
 - Two `TYPE_CHECKING` imports the test suite referenced but never imported, on paths that
   happened never to run.
 
-[Unreleased]: https://github.com/jpmartineau/MeshTerm/compare/v0.3.2...HEAD
+[Unreleased]: https://github.com/jpmartineau/MeshTerm/compare/v0.3.3...HEAD
+[0.3.3]: https://github.com/jpmartineau/MeshTerm/releases/tag/v0.3.3
 [0.3.2]: https://github.com/jpmartineau/MeshTerm/releases/tag/v0.3.2
 [0.3.1]: https://github.com/jpmartineau/MeshTerm/releases/tag/v0.3.1
 [0.3.0]: https://github.com/jpmartineau/MeshTerm/releases/tag/v0.3.0

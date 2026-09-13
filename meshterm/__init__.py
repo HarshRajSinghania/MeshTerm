@@ -6,7 +6,7 @@ Supports USB, Bluetooth and TCP companion connection. For Windows, macOS and Lin
 
 from datetime import datetime
 
-__version__ = "0.3.2"
+__version__ = "0.3.3"
 __author__ = "Jean-Pierre Martineau"
 
 #: The year MeshTerm was first published; the copyright span starts here.

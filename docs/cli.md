@@ -1460,7 +1460,7 @@ each link; the scripted face prints the link alone.
 **`--json`:**
 
 ```json
-{"page":"discord","title":"Join Discord","version":"0.3.2","text":"Join the Discord\n  Questions, ideas, bug reports, and mesh talk.\n\n  • https://discord.gg/AZwe5Uvb3S","links":["https://discord.gg/AZwe5Uvb3S"]}
+{"page":"discord","title":"Join Discord","version":"0.3.3","text":"Join the Discord\n  Questions, ideas, bug reports, and mesh talk.\n\n  • https://discord.gg/AZwe5Uvb3S","links":["https://discord.gg/AZwe5Uvb3S"]}
 ```
 
 | Field | Type | Meaning |
