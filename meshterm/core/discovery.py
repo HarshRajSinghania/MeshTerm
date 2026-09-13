@@ -35,6 +35,10 @@ _log = logging.getLogger(__name__)
 TRANSPORT_SERIAL = "serial"
 TRANSPORT_BLE = "ble"
 TRANSPORT_TCP = "tcp"
+#: The built-in simulator, as a device inventory reports it under ``--mock``. Never
+#: discovered — there is nothing to find — but a session that promised no real hardware
+#: still has exactly one device, and this is what it is called.
+TRANSPORT_MOCK = "mock"
 
 #: Default TCP port assumed when a network companion is named as a bare host with no port.
 #: 5000 is the conventional MeshCore companion-over-TCP / ``meshcored`` listen port.
@@ -144,6 +148,8 @@ class DiscoveredDevice:
         """
         if self.is_tcp:
             return f"{self.host}:{self.tcp_port}"
+        if self.transport == TRANSPORT_MOCK:
+            return "--mock"  # the flag is the target: it is how this device is selected
         return self.address or self.port if self.is_ble else self.port
 
     @property
@@ -159,6 +165,8 @@ class DiscoveredDevice:
         """
         if self.is_tcp:
             return f"tcp:{self.host}:{self.tcp_port}"
+        if self.transport == TRANSPORT_MOCK:
+            return "mock:simulator"
         if self.is_ble:
             return f"ble:{(self.address or self.name or '').lower()}"
         if self.serial_number:

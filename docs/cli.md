@@ -584,11 +584,14 @@ repeat](#the-shapes-that-repeat), the table names the shape rather than restatin
 #### `meshterm devices`
 
 List every attached serial device and in-range Bluetooth companion. Opens no radio — it
-only enumerates what is attached or advertising.
+only enumerates what is attached or advertising. Under `--mock` it enumerates nothing at
+all: the simulator is the one device, listed with `--mock` as its target, and neither the
+serial ports nor the Bluetooth radio are touched — a session that promised no real
+hardware keeps the promise here too.
 
 | Option | What it does |
 | --- | --- |
-| `--ble` / `--no-ble` | Include a Bluetooth LE scan. On by default; skipping it saves a few seconds. |
+| `--ble` / `--no-ble` | Include a Bluetooth LE scan. On by default; skipping it saves a few seconds. Moot under `--mock`. |
 
 ```console
 $ meshterm devices --no-ble

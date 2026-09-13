@@ -81,13 +81,11 @@ _NOT_ONE_SHOT = {("monitor",), ("chat", "listen"), ("tx-optimize",)}
 #: The one command whose output *is* its colour, and says so (:mod:`meshterm.ui.specimen`).
 _KEEPS_ITS_COLOUR = {("specimen",)}
 
-#: Extra arguments the derived sweep passes a leaf that would otherwise reach for real
-#: hardware. ``devices`` enumerates serial ports *and* scans for Bluetooth companions, so
-#: run bare it turned this machine's radio on three times per suite run and took its wall
-#: time from whatever happened to be in the room. ``--no-ble`` drops the scan and keeps the
-#: (cheap, local) serial walk. The tool is deliberately untouched: what the sweep checks is
-#: the *shape* of an answer, and one transport's worth of rows proves that as well as two.
-_SWEEP_ARGS: dict[tuple[str, ...], tuple[str, ...]] = {("devices",): ("--no-ble",)}
+#: Extra arguments the derived sweep passes a leaf. Empty since ``devices`` learned that
+#: ``--mock`` means no scan: it used to enumerate serial ports *and* switch this machine's
+#: Bluetooth radio on three times per suite run, and the sweep passed ``--no-ble`` to
+#: spare it. Kept as the hook it is, in case another leaf ever reaches for hardware.
+_SWEEP_ARGS: dict[tuple[str, ...], tuple[str, ...]] = {}
 
 
 def _sweep(leaf: tuple[str, ...]) -> tuple[str, ...]:
@@ -706,6 +704,37 @@ def test_a_closing_message_goes_to_stderr_too(run) -> None:  # noqa: ANN001
     assert result.exit_code == exitcodes.NO_RESULT
     assert result.stdout == ""
     assert "records stored" in result.stderr
+
+
+# -- devices under --mock -------------------------------------------------------------
+
+
+def test_mock_devices_scans_nothing_and_lists_the_simulator(
+    run,  # noqa: ANN001
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``--mock`` promises no real hardware, so the inventory is the simulator and no scan.
+
+    Both discovery entry points are replaced with ones that fail loudly: the tool must not
+    reach either. The one row it lists names ``--mock`` as its target, because that flag is
+    how this device is selected — the same rule as ``--port``/``--ble`` for the others.
+    """
+    from meshterm.tools import devices as tool
+
+    def never(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+        raise AssertionError("a --mock session scanned for real hardware")
+
+    monkeypatch.setattr(tool, "discover_devices", never)
+    monkeypatch.setattr(tool, "discover_all", never)
+
+    result = run("devices")
+    assert result.exit_code == exitcodes.OK
+    assert "--mock" in result.stdout and "mock" in result.stdout
+
+    machine = run("--json", "devices")
+    assert machine.exit_code == exitcodes.OK
+    (row,) = json.loads(machine.stdout)
+    assert row["target"] == "--mock" and row["transport"] == "mock"
 
 
 # -- the map --------------------------------------------------------------------------

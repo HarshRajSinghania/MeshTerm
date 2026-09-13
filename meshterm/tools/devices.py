@@ -17,7 +17,7 @@ import typer
 
 from ..context import AppContext
 from ..core import exitcodes
-from ..core.discovery import discover_all, discover_devices
+from ..core.discovery import TRANSPORT_MOCK, DiscoveredDevice, discover_all, discover_devices
 from .base import Tool, ToolResult, register
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -51,8 +51,22 @@ class DevicesTool(Tool):
         Returns:
             A :class:`ToolResult` summarizing how many devices were found.
         """
-        scan_ble = params.get("ble", True)
-        devices = await discover_all(ble=scan_ble) if scan_ble else discover_devices()
+        if ctx.mock:
+            # `--mock` promises a session with no real hardware, and a scan is the one
+            # thing this tool does — it walked the serial ports and switched the Bluetooth
+            # radio on regardless, which is a promise broken on the first command a
+            # stranger without a radio would try. So under --mock the simulator *is* the
+            # inventory: one row, and nothing on the machine touched.
+            devices = [
+                DiscoveredDevice(
+                    transport=TRANSPORT_MOCK,
+                    description="the built-in simulator (nothing transmits)",
+                    name="simulator",
+                )
+            ]
+        else:
+            scan_ble = params.get("ble", True)
+            devices = await discover_all(ble=scan_ble) if scan_ble else discover_devices()
         known = ctx.device_store.load_all()
         remembered = ctx.device_store.load()
         active = ctx.selected_device
