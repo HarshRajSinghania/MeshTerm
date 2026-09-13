@@ -9,6 +9,7 @@
 
 ## Before you mark it ready
 
+- [ ] I've read [CONTRIBUTING.md](../blob/main/CONTRIBUTING.md) and agree its licensing terms apply to this contribution
 - [ ] `python -m pytest -q` passes, including the dual-platform gallery gate
 - [ ] `ruff check .` and `ruff format --check .` are clean
 - [ ] New screens, rows and hints go through the helpers in `ui/menus.py`, and follow the
