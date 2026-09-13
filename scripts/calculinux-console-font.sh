@@ -23,7 +23,8 @@
 # clearly marked file is the point of the split. The two scripts share ONE copy of the
 # donor / alias / keeper tables and the whole generator -- the block between the
 # "shared generator" markers below, which the 6x8 script extracts from this file and execs.
-# Edit those tables here and both fonts move together.
+# Edit those tables here and both fonts move together. The shared generator block is
+# additionally offered under GPL-2.0-only, to permit its use by calculinux-console-font-6x8.sh.
 #
 # Both fonts install into /usr/share/consolefonts. Flip live with
 # `setfont /usr/share/consolefonts/meshterm8.psf.gz` (and back with meshterm.psf.gz), or

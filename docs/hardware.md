@@ -114,8 +114,10 @@ font: the script and the inventory move in the same commit or the test fails.
 > bundles it and never redistributes it; it names a path on the console's own filesystem.
 > The two scripts share one copy of the donor, alias and keeper tables — the 6×8 one reads
 > them out of the 6×12 one, between its `shared generator` marker lines — so a glyph added
-> in one place lands in both fonts. The XIAO firmware patch and builder reference MeshCore,
-> which is under the MIT License — see [`scripts/xiao-radio/LICENSE.MeshCore`](../scripts/xiao-radio/LICENSE.MeshCore).
+> in one place lands in both fonts. To permit this sharing, the shared generator block in
+> the 6×12 script (Apache-2.0) is additionally offered under GPL-2.0-only by its source
+> file. The XIAO firmware patch and builder reference MeshCore, which is under the MIT
+> License — see [`scripts/xiao-radio/LICENSE.MeshCore`](../scripts/xiao-radio/LICENSE.MeshCore).
 
 ---
 

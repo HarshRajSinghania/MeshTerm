@@ -18,7 +18,8 @@
 # calculinux-console-font.sh (Apache-2.0), between its "shared generator (BEGIN)" and
 # "(END)" marker lines, and exec'd -- so the two fonts can never drift, and a repo test
 # that parses those tables has exactly one file to parse. That file must sit beside this
-# one; point SHARED at it if it does not.
+# one; point SHARED at it if it does not. The shared generator is additionally offered
+# under GPL-2.0-only by its source file, permitting its extraction and use here.
 #
 # WHAT IS ONLY HERE. The GPL-2.0 base bitmap, its CP437 unicode mapping, and the same 18
 # marks redrawn for the shorter cell (MARKS8).
