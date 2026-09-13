@@ -1,4 +1,4 @@
-"""Tests for MeshTerm's own preferences: the registry, the YAML file, and the page.
+"""Tests for MeshTerm's own preferences: the registry, the TOML file, and the page.
 
 Three layers, in that order — what a preference *is* (spec, default, validation), where it
 is kept (the file, and its tolerance for a hand edit gone wrong), and how it is changed
@@ -137,15 +137,15 @@ def test_only_a_disagreement_with_the_default_is_recorded() -> None:
 
 def test_the_file_round_trips_and_holds_only_the_overrides(tmp_path: Path) -> None:
     """What is saved is what was changed; everything else comes back from the code."""
-    path = tmp_path / "preferences.yaml"
+    path = tmp_path / "preferences.toml"
     prefs = Preferences(path)
     prefs.set("trace_cooldown_s", 2.5)
     prefs.set("fast_render", False)
     prefs.save()
 
     text = path.read_text(encoding="utf-8")
-    assert "trace_cooldown_s: 2.5" in text
-    assert "fast_render: false" in text
+    assert "trace_cooldown_s = 2.5" in text
+    assert "fast_render = false" in text
     assert "history_days" not in text  # untouched, so not written
 
     reloaded = Preferences.load(path)
@@ -156,9 +156,9 @@ def test_the_file_round_trips_and_holds_only_the_overrides(tmp_path: Path) -> No
 
 def test_the_file_reads_the_way_the_page_does(tmp_path: Path) -> None:
     """Grouped under comment headings, each entry above its help and its default."""
-    prefs = Preferences(tmp_path / "preferences.yaml")
+    prefs = Preferences(tmp_path / "preferences.toml")
     prefs.set("history_days", 30)
-    text = prefs.as_yaml()
+    text = prefs.as_toml()
     assert "# --- History ---" in text
     assert "# Older ones are deleted; 0 keeps everything" in text
     assert "# default: 365 days" in text
@@ -168,27 +168,27 @@ def test_the_file_reads_the_way_the_page_does(tmp_path: Path) -> None:
 
 def test_an_untouched_file_says_so(tmp_path: Path) -> None:
     """Saving with nothing overridden writes a file that explains its own emptiness."""
-    prefs = Preferences(tmp_path / "preferences.yaml")
+    prefs = Preferences(tmp_path / "preferences.toml")
     prefs.save()
-    assert "every preference is at its default" in (tmp_path / "preferences.yaml").read_text(
+    assert "every preference is at its default" in (tmp_path / "preferences.toml").read_text(
         encoding="utf-8"
     )
 
 
-def test_a_yaml_boolean_still_reaches_a_yes_no_choice(tmp_path: Path) -> None:
-    """YAML reads a bare ``yes`` as ``True``; the obvious hand edit is understood anyway."""
-    path = tmp_path / "preferences.yaml"
-    path.write_text("full_width: yes\n", encoding="utf-8")
+def test_a_yes_no_choice_is_understood_however_it_is_typed(tmp_path: Path) -> None:
+    """A bare ``yes`` is not TOML and ``false`` is the wrong type; the edit is understood."""
+    path = tmp_path / "preferences.toml"
+    path.write_text("full_width = yes\n", encoding="utf-8")
     assert Preferences.load(path).full_width == "yes"
 
-    path.write_text("full_width: no\n", encoding="utf-8")
+    path.write_text("full_width = false\n", encoding="utf-8")
     assert Preferences.load(path).full_width == "no"
 
     # And what we write ourselves is quoted, so it round-trips as the string it is.
     prefs = Preferences(path)
     prefs.set("full_width", "yes")
     prefs.save()
-    assert "full_width: 'yes'" in path.read_text(encoding="utf-8")
+    assert 'full_width = "yes"' in path.read_text(encoding="utf-8")
     assert Preferences.load(path).full_width == "yes"
 
 
@@ -197,30 +197,43 @@ def test_a_yaml_boolean_still_reaches_a_yes_no_choice(tmp_path: Path) -> None:
     [
         "",
         "not a mapping at all",
-        "history_days: [1, 2, 3]\n",  # a container where a scalar belongs
-        "no_such_preference: 3\n",  # a key the registry never had
-        "history_days: yesterday\n",  # right key, unparseable value
-        "{{{ not yaml",  # not even a document
+        "history_days = [1, 2, 3]\n",  # a container where a scalar belongs
+        "no_such_preference = 3\n",  # a key the registry never had
+        "history_days = yesterday\n",  # right key, unparseable value
+        "{{{ not toml",  # not even a document
     ],
 )
 def test_a_broken_file_costs_the_line_not_the_session(tmp_path: Path, text: str) -> None:
     """A hand edit gone wrong falls back to defaults instead of refusing to start."""
-    path = tmp_path / "preferences.yaml"
+    path = tmp_path / "preferences.toml"
     path.write_text(text, encoding="utf-8")
     assert Preferences.load(path).history_days == 365
 
 
 def test_a_good_line_survives_a_bad_one(tmp_path: Path) -> None:
     """One unusable entry is dropped; the rest of the file still applies."""
-    path = tmp_path / "preferences.yaml"
-    path.write_text("history_days: soon\ntrace_cooldown_s: 3.0\n", encoding="utf-8")
+    path = tmp_path / "preferences.toml"
+    path.write_text("history_days = soon\ntrace_cooldown_s = 3.0\n", encoding="utf-8")
     prefs = Preferences.load(path)
     assert prefs.history_days == 365 and prefs.trace_cooldown_s == 3.0
 
 
+def test_a_word_left_unquoted_is_read_as_the_text_it_is(tmp_path: Path) -> None:
+    """The likeliest hand edit of all costs nothing; a truly broken line costs only itself."""
+    path = tmp_path / "preferences.toml"
+    path.write_text(
+        'log_level = DEBUG  # louder\ntrace_cooldown_s = "3.0\nfast_render = false\n',
+        encoding="utf-8",
+    )
+    prefs = Preferences.load(path)
+    assert prefs.log_level == "DEBUG"
+    assert prefs.trace_cooldown_s == get_spec("trace_cooldown_s").default  # unclosed quote
+    assert prefs.fast_render is False  # TOML-valid, so it keeps its type
+
+
 def test_a_missing_file_is_simply_the_defaults(tmp_path: Path) -> None:
     """Nothing has to exist for the app to run: absence *is* the default state."""
-    prefs = Preferences.load(tmp_path / "never-written.yaml")
+    prefs = Preferences.load(tmp_path / "never-written.toml")
     assert prefs.overrides() == {} and prefs.fast_render is True
 
 
@@ -458,7 +471,7 @@ async def test_the_page_stages_a_typed_value_and_apply_returns_it(ctx: AppContex
     )
     assert await edit_preferences(ctx) == {"history_days": 30}
     # Nothing reached disk: the page stages, the tool saves.
-    assert not (ctx.settings.config_dir / "preferences.yaml").exists()
+    assert not (ctx.settings.config_dir / "preferences.toml").exists()
 
 
 async def test_the_page_unstages_a_value_set_back_to_where_it_started(ctx: AppContext) -> None:
@@ -630,7 +643,7 @@ async def test_the_tool_writes_the_staged_values_once(ctx: AppContext) -> None:
     result = await tool.run(ctx, {"ops": ops})
     assert result.summary == {"changes": 2}
 
-    path = ctx.settings.config_dir / "preferences.yaml"
+    path = ctx.settings.config_dir / "preferences.toml"
     assert path.exists()
     assert Preferences.load(path).history_days == 30
 
@@ -642,7 +655,7 @@ async def test_the_tool_reports_a_bad_value_rather_than_writing_it(ctx: AppConte
 
     with pytest.raises(PreferenceError):
         await get_tool("preferences").run(ctx, {"ops": [("set", "history_days", "soon")]})
-    assert not (ctx.settings.config_dir / "preferences.yaml").exists()
+    assert not (ctx.settings.config_dir / "preferences.toml").exists()
 
 
 def test_the_context_installs_its_preferences_process_wide(ctx: AppContext) -> None:

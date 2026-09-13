@@ -6,7 +6,7 @@ built out of the same parts on purpose — one grouped, lane-aligned list; a row
 is staged; the shared discard confirm on the way out. Two editors that stage values should
 not be two different screens to learn, so the only things that differ here are what is
 being edited (:mod:`meshterm.core.preferences`, not the radio) and where Apply writes
-(``preferences.yaml``, not the companion).
+(``preferences.toml``, not the companion).
 
 Its rows scroll sideways, which the device editor's do not: a preference's explanation is
 the widest thing on its row and the only part that runs past the edge, so ←→ slide the
@@ -159,7 +159,7 @@ def _page_groups() -> list[tuple[str, list[PrefSpec]]]:
     A preference gated to another flavour (the PicoCalc's console font, on a desktop) is a
     row whose question this machine cannot answer, so it is not drawn. Its value is still
     in the registry and still round-trips through the file, which is what keeps a
-    ``preferences.yaml`` written on the handheld from being quietly emptied by a desktop.
+    ``preferences.toml`` written on the handheld from being quietly emptied by a desktop.
     """
     return by_group(get_platform().name)
 

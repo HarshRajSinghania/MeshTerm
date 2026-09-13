@@ -38,7 +38,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
 @register
 class PreferencesTool(Tool):
-    """View and change MeshTerm's own preferences, saved to ``preferences.yaml``."""
+    """View and change MeshTerm's own preferences, saved to ``preferences.toml``."""
 
     name = "preferences"
     title = "Preferences"

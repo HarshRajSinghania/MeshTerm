@@ -1,4 +1,4 @@
-"""Declarative registry of MeshTerm's own preferences, and the YAML file they live in.
+"""Declarative registry of MeshTerm's own preferences, and the TOML file they live in.
 
 The distinction this module draws is between the three kinds of "setting" the app already
 had and never named apart:
@@ -22,9 +22,11 @@ away from that default, so the file is a short list of your disagreements with t
 built-in behaviour rather than a snapshot that silently pins every value forever. Delete a
 key (or use *Reset to defaults*) and the code's default takes over again.
 
-The file is ``<config_dir>/preferences.yaml``, written grouped and commented so it reads
-the way the page does. Reads are tolerant: an unknown key, a malformed value, or an
-unparseable file costs the override, never the session.
+The file is ``<config_dir>/preferences.toml``, written flat, grouped and commented so it
+reads the way the page does — TOML, like ``config.toml`` and the device-config backups,
+so every file a person edits by hand speaks one syntax. Reads are tolerant: an unknown
+key, a malformed value, or a line TOML refuses costs that one override, never the rest of
+the file and never the session.
 
 Two access paths, deliberately:
 
@@ -37,6 +39,7 @@ Two access paths, deliberately:
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -46,6 +49,11 @@ from .atomicwrite import write_atomically
 from .courier_store import DONE_CAP
 from .geo import DEFAULT_VIEW_FRACTION
 from .watch_store import ALERT_CAP, DEFAULT_SILENCE_HOURS, OFF, SILENCE_CHOICES_H
+
+if sys.version_info >= (3, 11):
+    import tomllib
+else:  # pragma: no cover - exercised only on 3.10
+    import tomli as tomllib
 
 #: Display groups, in the order the page and the file present them. The order is the
 #: order a session happens in — what MeshTerm puts on the air, how loud, what it watches
@@ -77,7 +85,7 @@ class PrefSpec:
 
     Attributes:
         key: Canonical key — the attribute name on :class:`Preferences`, and the key in
-            the YAML file.
+            the TOML file.
         label: Human-friendly name, as the page's SETTING lane shows it.
         help: One-line description, as the page's DESCRIPTION lane shows it.
         group: One of :data:`GROUPS`.
@@ -191,7 +199,7 @@ _LOG_LEVEL_CHOICES: dict[str, str] = {
 
 
 #: Every preference MeshTerm has, in page order. Adding one here gives it a row on the
-#: Preferences page, a key in the YAML file, a ``preferences get``/``set`` CLI face, and a
+#: Preferences page, a key in the TOML file, a ``preferences get``/``set`` CLI face, and a
 #: default — nothing else has to follow. A default that a module already states as its
 #: code-level behaviour is named, never re-typed: one source, so changing it cannot leave
 #: the constant and the registry disagreeing about what MeshTerm does.
@@ -500,15 +508,15 @@ def parse_value(spec: PrefSpec, raw: Any) -> Any:
         if raw in choices and not isinstance(raw, bool):
             return raw
         if isinstance(raw, bool):
-            # YAML 1.1 reads a bare ``yes``/``no`` (and ``on``/``off``) as a *boolean*, so a
-            # hand-edited file hands us ``True`` where the choice is spelled "yes". We quote
-            # ours on the way out, but someone typing the obvious thing should still be
-            # understood: map the boolean back to whichever spelling this spec offers.
+            # A hand edit that answers a yes/no choice with a TOML boolean
+            # (``full_width = true``) hands us ``True`` where the choice is spelled "yes".
+            # We quote ours on the way out, but someone typing the obvious thing should
+            # still be understood: map the boolean back to whichever spelling this offers.
             for choice in choices:
                 if str(choice).lower() in (_TRUE if raw else _FALSE):
                     return choice
         # Text arriving from the CLI or a hand-edited file: match a choice by its own
-        # spelling, so `preferences set watch_silence_hours 6` and a YAML `6` land alike.
+        # spelling, so `preferences set watch_silence_hours 6` and a TOML `6` land alike.
         for choice in choices:
             if text.lower() == str(choice).lower():
                 return choice
@@ -564,6 +572,9 @@ def range_hint(spec: PrefSpec) -> str:
 
 # --- the store ----------------------------------------------------------------
 
+#: The file's name inside the config directory — one spelling for every place that opens it.
+PREFERENCES_FILENAME = "preferences.toml"
+
 #: The file's opening comment. It says the one thing a reader hand-editing the file needs
 #: to know — that absence means "use the default", so deleting a line is how a preference
 #: is undone — and points at the two neighbouring kinds of setting so nobody looks for a
@@ -576,9 +587,34 @@ _HEADER = """\
 # Preferences page) hands the value back to the code. `meshterm preferences show` prints
 # every preference, what it is set to, and what it defaults to.
 #
+# One `key = value` per line: text in quotes ("DEBUG"), numbers and true/false bare.
+#
 # Device profiles, the database location, and the rest of the machine setup stay in
 # config.toml; the radio's own settings live on the radio, under Device config.
 """
+
+
+def _salvage(text: str) -> dict[str, Any]:
+    """Read a file TOML refused as a document, one ``key = value`` line at a time.
+
+    MeshTerm writes the file flat — no tables, one entry to a line — so a line is a whole
+    entry and can be judged on its own. A line TOML accepts keeps its typed value. One it
+    refuses keeps its right-hand side as text, which is exactly what :func:`parse_value`
+    takes from the command line, so the likeliest hand edit of all — a word left unquoted,
+    ``log_level = DEBUG`` — is still understood. Whatever the spec then refuses is dropped
+    by :meth:`Preferences.update`, the same as any other bad value.
+    """
+    data: dict[str, Any] = {}
+    for line in text.splitlines():
+        entry = line.strip()
+        if not entry or entry.startswith(("#", "[")) or "=" not in entry:
+            continue
+        try:
+            data.update(tomllib.loads(entry))
+        except tomllib.TOMLDecodeError:
+            key, _, value = entry.partition("=")
+            data[key.strip()] = value.split("#", 1)[0].strip()
+    return data
 
 
 class Preferences:
@@ -610,21 +646,27 @@ class Preferences:
 
     @classmethod
     def load(cls, path: Path) -> Preferences:
-        """Read ``path``, returning all-defaults for a missing, empty, or corrupt file.
+        """Read ``path``, returning all-defaults for a missing, empty, or unreadable file.
+
+        TOML refuses a whole document over one bad line, and a hand edit should cost the
+        line it is on, not the file: a document TOML refuses is read again a line at a
+        time (:func:`_salvage`), keeping every entry that still makes sense.
 
         Args:
-            path: The YAML file to read.
+            path: The TOML file to read.
 
         Returns:
             The loaded preferences, bound to ``path`` for a later :meth:`save`.
         """
-        import yaml
-
         try:
-            data = yaml.safe_load(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError, yaml.YAMLError):
+            text = path.read_text(encoding="utf-8")
+        except (OSError, ValueError):
             return cls(path)
-        return cls(path, data if isinstance(data, Mapping) else None)
+        try:
+            data: dict[str, Any] = tomllib.loads(text)
+        except tomllib.TOMLDecodeError:
+            data = _salvage(text)
+        return cls(path, data)
 
     @property
     def path(self) -> Path | None:
@@ -712,14 +754,14 @@ class Preferences:
         self._values.clear()
         return count
 
-    def as_yaml(self) -> str:
+    def as_toml(self) -> str:
         """Render the current overrides as the file's text: header, then grouped entries.
 
         Each group holding an override gets its own comment heading, and each entry its
         help line and its default above it, so the file reads the way the page does
         rather than as a bare map someone has to look up elsewhere.
         """
-        import yaml
+        import tomli_w
 
         lines = [_HEADER]
         for group, specs in by_group():
@@ -728,12 +770,7 @@ class Preferences:
                 continue
             lines.append(f"# --- {group} ---")
             for spec in present:
-                entry = yaml.safe_dump(
-                    {spec.key: self._values[spec.key]},
-                    default_flow_style=False,
-                    sort_keys=False,
-                    allow_unicode=True,
-                ).rstrip("\n")
+                entry = tomli_w.dumps({spec.key: self._values[spec.key]}).rstrip("\n")
                 lines.append(f"# {spec.help}")
                 lines.append(f"# default: {format_value(spec, spec.default)}")
                 lines.append(entry)
@@ -751,7 +788,7 @@ class Preferences:
         """
         if self._path is None:
             raise RuntimeError("these preferences have no file to save to")
-        write_atomically(self._path, self.as_yaml())
+        write_atomically(self._path, self.as_toml())
 
 
 #: The set installed for this process. Starts as a defaults-only, file-less instance so

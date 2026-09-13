@@ -214,7 +214,7 @@ def test_the_preference_is_offered_on_the_handheld_only() -> None:
 def test_the_preference_round_trips_on_every_platform(tmp_path: Path, platform: Any) -> None:
     """A file written on the handheld loads, keeps its value, and saves back on a desktop."""
     set_platform(platform)
-    path = tmp_path / "preferences.yaml"
+    path = tmp_path / "preferences.toml"
     written = Preferences(path)
     written.set("console_font", "6x8")
     written.save()

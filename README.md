@@ -364,7 +364,7 @@ $ meshterm preferences set history_days 90
 $ meshterm preferences reset --yes          # back to the built-in defaults
 ```
 
-They are kept in `~/.meshterm/preferences.yaml`, which lists only what you have changed;
+They are kept in `~/.meshterm/preferences.toml`, which lists only what you have changed;
 delete a line and the default takes over again.
 
 **Config** is where things live and which device to talk to. MeshTerm runs with none of it
@@ -510,9 +510,8 @@ respective project for the authoritative terms):
 | [Rich](https://github.com/Textualize/rich) | Console rendering | MIT |
 | [prompt_toolkit](https://github.com/prompt-toolkit/python-prompt-toolkit) | Full-screen interactive TUI | BSD-3-Clause |
 | [markdown-it-py](https://github.com/executablebooks/markdown-it-py) | CommonMark parser behind the written About pages | MIT |
-| [PyYAML](https://pyyaml.org/) | The preferences file | MIT |
 | [Segno](https://github.com/heuer/segno) | Pure-Python QR codes (channel share links) | BSD-3-Clause |
-| [tomli](https://github.com/hukkin/tomli) / [tomli-w](https://github.com/hukkin/tomli-w) | TOML config read/write | MIT |
+| [tomli](https://github.com/hukkin/tomli) / [tomli-w](https://github.com/hukkin/tomli-w) | TOML config, preferences and device-config backups | MIT |
 
 ## License
 

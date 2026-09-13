@@ -44,10 +44,9 @@ dependencies = [
     "rich>=13.7",         # modern console rendering (progress, tables, panels)
     "markdown-it-py>=3.0", # CommonMark parser behind the written About pages
     "prompt_toolkit>=3.0",  # full-screen interactive TUI (terminal, input, resize)
-    "PyYAML>=6.0",        # the preferences file (meshterm.core.preferences)
     "segno>=1.6",         # pure-Python QR codes (channel share links)
     "tomli>=2.0; python_version < '3.11'",  # TOML config reader on 3.10
-    "tomli-w>=1.0",       # TOML writer for device-config backups
+    "tomli-w>=1.0",       # TOML writer: preferences and device-config backups
 ]
 
 [project.optional-dependencies]

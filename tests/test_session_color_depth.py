@@ -94,7 +94,7 @@ def test_the_preference_is_consulted_below_the_env_override(monkeypatch) -> None
 
 
 def test_an_unrecognised_preference_value_changes_nothing(monkeypatch) -> None:
-    """A hand-edited YAML value we cannot read is not grounds for guessing."""
+    """A hand-edited preference value we cannot read is not grounds for guessing."""
     from types import SimpleNamespace
 
     _auto(monkeypatch)

@@ -26,7 +26,7 @@ from .core.connection import DeviceCommandError, is_connection_lost
 from .core.device_config import DeviceConfigError
 from .core.device_store import DeviceStore
 from .core.instancelock import InstanceBusy, hold_instance_lock
-from .core.preferences import PreferenceError, Preferences
+from .core.preferences import PREFERENCES_FILENAME, PreferenceError, Preferences
 from .core.selection import DeviceSelectionError
 from .persistence.logging import configure_logging, get_logger, level_from_name, log_path
 from .persistence.repository import Repository
@@ -240,7 +240,7 @@ def main_callback(
     console = script.console() if scripted else make_console()
     # Loaded before logging is configured, because how much goes in the file is one of
     # them — and handed to the context afterwards so the file is not read twice.
-    prefs = Preferences.load(settings.config_dir / "preferences.yaml")
+    prefs = Preferences.load(settings.config_dir / PREFERENCES_FILENAME)
     if absolute:
         # An override of the preference rather than a second switch beside it: *how
         # MeshTerm behaves* is a preference by this project's own rule, and a flag that

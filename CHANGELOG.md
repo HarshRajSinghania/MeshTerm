@@ -43,13 +43,23 @@ allowed to change behaviour, not just add to it.
   the way out — from the session's teardown and from an `atexit` hook, so quitting, an
   unwind and a crash all leave the console as they found it. Off the handheld, off a real
   VT, or with no `setfont`, none of it happens and the log says which. The row is drawn on
-  the PicoCalc only, while the value round-trips through `preferences.yaml` everywhere.
+  the PicoCalc only, while the value round-trips through `preferences.toml` everywhere.
 
   The 6×8 font's build moved into `scripts/calculinux-console-font-6x8.sh`, on its own
   because its base bitmap is the Linux kernel's `font_6x8` and therefore GPL-2.0 — marked
   as such, with the licence beside it, and reading the donor, alias and keeper tables out
   of the 6×12 script rather than keeping a second copy of them. Running the 6×12 script
   still builds both.
+
+### Changed
+
+- **Preferences are kept in `preferences.toml`.** The same file as before — only what you
+  have changed, grouped and commented the way the Preferences page reads — in the format
+  `config.toml` and the device-config backups already use, so every file you edit by hand
+  speaks one syntax and MeshTerm no longer needs PyYAML. A `preferences.yaml` from an
+  earlier build is not read: set those preferences again, or copy the lines across as
+  `key = value` with text in quotes. A line TOML refuses costs only that line, and a word
+  left unquoted (`log_level = DEBUG`) is still understood.
 
 ## [0.3.2] — 2026-09-11
 

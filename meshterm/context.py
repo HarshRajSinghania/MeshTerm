@@ -22,7 +22,7 @@ from .core.courier_store import CourierStore
 from .core.device_store import DeviceStore
 from .core.discovery import DiscoveredDevice, discover_devices
 from .core.mute_store import MuteStore
-from .core.preferences import Preferences
+from .core.preferences import PREFERENCES_FILENAME, Preferences
 from .core.preferences import install as install_preferences
 from .core.remote_store import RemoteStore
 from .core.selection import resolve_device
@@ -55,7 +55,7 @@ class AppContext:
             talk to (config directory, database, named profiles). *How MeshTerm behaves*
             is ``preferences``, not this.
         preferences: MeshTerm's own preferences, backed by
-            ``<config_dir>/preferences.yaml`` and edited on the Preferences page. Defaults
+            ``<config_dir>/preferences.toml`` and edited on the Preferences page. Defaults
             to a set loaded from that file when not injected, and is installed as the
             process-wide :func:`~meshterm.core.preferences.current` set so the render
             layer — which has no context to reach through — reads the same values.
@@ -168,7 +168,7 @@ class AppContext:
         stores built without a context still have to read them.
         """
         if self.preferences is None:
-            self.preferences = Preferences.load(self.settings.config_dir / "preferences.yaml")
+            self.preferences = Preferences.load(self.settings.config_dir / PREFERENCES_FILENAME)
         install_preferences(self.preferences)
         if self.advert_store is None:
             self.advert_store = AdvertStore(self.settings.config_dir / "adverts.json")

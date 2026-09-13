@@ -58,7 +58,7 @@ sortable list you pick from is `contactlist.py` (`ContactListScreen`/`ContactRow
 Setting vs preference — the other boundary, three-way and never blurred: a **setting** is
 the *radio's* (`core/device_config.py`, read live from the companion, edited on Device
 config); a **preference** is *MeshTerm's own behaviour* (`core/preferences.py`, defaults in
-code, overrides in `preferences.yaml`, edited on the Preferences page — `ctx.preferences`,
+code, overrides in `preferences.toml`, edited on the Preferences page — `ctx.preferences`,
 or `preferences.current()` where there is no context to reach through); and **config** is
 machine setup — paths and device profiles (`core/config.py`, `config.toml`, a text editor
 only). A behaviour value belongs in the preference registry, not as a module constant and

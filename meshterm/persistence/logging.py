@@ -61,7 +61,7 @@ def level_from_name(name: str, *, fallback: int = logging.WARNING) -> int:
 
     Args:
         name: A level name, in any case.
-        fallback: Used when the name is unrecognised — a hand-edited ``preferences.yaml``
+        fallback: Used when the name is unrecognised — a hand-edited ``preferences.toml``
             with a typo in it should lose some log detail, not stop the app from starting.
 
     Returns:

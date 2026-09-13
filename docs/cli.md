@@ -98,7 +98,7 @@ of two directories from the same shell.
 | --- | --- |
 | `meshterm.db` | The history: every packet overheard, every trace walked, every message. **The one file `--db` moves.** |
 | `config.toml` | Machine setup — device profiles, where the database lives. Yours to write; MeshTerm only reads it. |
-| `preferences.yaml` | Your overrides of MeshTerm's own behaviour. Lists only what you changed. |
+| `preferences.toml` | Your overrides of MeshTerm's own behaviour. Lists only what you changed. |
 | `courier.json` | The outbox — queued messages, waiting and finished. |
 | `admin.json` | Remembered repeater-admin passwords. |
 | `devices.json` | The remembered default companion, and every device proven to speak the protocol. |
@@ -1420,7 +1420,7 @@ opening the menu to find out what one does. Values print in the form `preference
 accepts back — no unit suffix on a number, `on`/`off` for a boolean. Where `VALUE` differs
 from `DEFAULT`, this install has an override.
 
-Overrides live in `preferences.yaml` in [MeshTerm's state
+Overrides live in `preferences.toml` in [MeshTerm's state
 directory](#where-meshterm-keeps-its-state), which lists only what you have changed; delete
 a line and the default takes over again.
 
@@ -1438,7 +1438,7 @@ wanted it would be rendering a settings screen. A boolean prints `on`/`off` plai
 a mapping; every other `.value | tostring` goes straight back in.
 
 `set` and `reset --yes` answer `{"changes":…,"applied":[…],"path":…}`, `path` being the
-`preferences.yaml` that was written.
+`preferences.toml` that was written.
 
 #### `meshterm about`, `about-author`, `discord`, `support`
 

@@ -3,7 +3,7 @@
 #
 # How MeshTerm itself behaves — transmit cooldown, message retries, how much history it
 # keeps, whether it connects at launch — is *not* here. Those are preferences: they live
-# in ~/.meshterm/preferences.yaml, and are edited on the Preferences page (or with
+# in ~/.meshterm/preferences.toml, and are edited on the Preferences page (or with
 # `meshterm preferences set <key> <value>`). Every one has a built-in default, so that
 # file only ever lists what you have changed.
 #
