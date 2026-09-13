@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The shared contact list: one sortable, filterable lane layout for every screenful of contacts.
 
 Extracted from the Time Machine's subject picker so the app has exactly one way to draw "a

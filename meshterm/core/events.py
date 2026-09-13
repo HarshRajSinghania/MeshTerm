@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Typed events carried by the always-on mesh event hub.
 
 These are the domain-level events that flow from the connected companion device out to

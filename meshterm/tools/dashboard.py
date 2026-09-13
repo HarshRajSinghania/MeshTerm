@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The ``dashboard`` tool: the live mesh overview, at the top of the Watch section.
 
 Opens the full-screen dashboard (see :mod:`meshterm.ui.dashboard_screen`): the two-hour

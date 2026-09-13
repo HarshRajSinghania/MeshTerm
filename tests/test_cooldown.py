@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Tests for the transmit cooldown: the shared clock, the countdown, and the way out.
 
 Three layers again — what the clock owes (:mod:`meshterm.core.transmit_gate`), what the

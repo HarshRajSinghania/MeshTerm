@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Braille charts: the one way MeshTerm draws a value-over-time row or a meter.
 
 Every timeline in the app — the header's activity pulse, the channel manager's

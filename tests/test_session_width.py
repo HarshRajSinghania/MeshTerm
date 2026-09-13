@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Session width tests: reclaiming the terminal's final column.
 
 Some terminals (and prompt_toolkit's size probe on them) report the window one column

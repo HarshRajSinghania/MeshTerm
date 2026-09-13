@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Shared fixtures and helpers: plain-text screen reading, and pinned path rendering.
 
 :func:`plain` is THE way a test reads a rendered screen — every screen test needs the

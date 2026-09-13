@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Tests for MeshTerm's own preferences: the registry, the TOML file, and the page.
 
 Three layers, in that order — what a preference *is* (spec, default, validation), where it

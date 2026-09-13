@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Message-paths tests: matching a chat message back to its logged arrivals.
 
 Channel arrivals are matched by decrypting overheard GRP_TXT frames with the channel's

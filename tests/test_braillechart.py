@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Braille chart widget tests: orientation, the zero baseline, scaling, and styles.
 
 The module is pure Text-in/Text-out, so every behaviour is asserted straight off

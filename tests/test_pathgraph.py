@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Unit tests for the shared route-graph widget (the diverge/converge braille renderer)."""
 
 from __future__ import annotations

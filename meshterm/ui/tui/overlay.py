@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The busy skeleton: a titled card floated between screens while a load runs.
 
 A :class:`BusyOverlay` is the model behind :meth:`~meshterm.ui.tui.session.TuiSession.

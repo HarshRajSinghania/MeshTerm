@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Interactive companion-device picker: the startup splash shown before the menu.
 
 Shown once at the start of the interactive menu when no port was given explicitly. Unlike the

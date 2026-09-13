@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Private handles on the Windows DLLs, because ``ctypes.windll`` is shared with everyone.
 
 ``ctypes.windll.kernel32`` is a cache. Every caller in the process gets the *same*

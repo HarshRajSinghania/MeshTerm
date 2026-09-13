@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """DeviceState session-cache tests: read once, serve cached, invalidate on write.
 
 The cache exists to keep screen navigation off the slow radio round-trips (contacts,

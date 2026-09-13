@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Tests for the channel-management feature: pure logic, QR rendering, and the tool.
 
 The logic (secret derivation, share-URL round-tripping) is hardware-free; the tool actions

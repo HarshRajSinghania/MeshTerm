@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Unit tests for the live Trace and TX-optimize screens.
 
 These drive the two full-screen tools' pure logic — trace/sweep state machines, key

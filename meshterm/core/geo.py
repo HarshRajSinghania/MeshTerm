@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Pure geographic helpers for the terminal map: Web Mercator, tiles, and viewports.
 
 This module is deliberately I/O-free and rendering-free so it can be unit-tested without a

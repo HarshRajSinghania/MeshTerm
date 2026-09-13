@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The application context: a small dependency container passed to every tool.
 
 ``AppContext`` owns the shared, expensive singletons (console, settings, repository,

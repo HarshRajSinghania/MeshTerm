@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Trophy-case dialog tests: one record's full story, headless.
 
 Driven like the other screen tests — ``render_body`` is pure lines-out and ``handle``

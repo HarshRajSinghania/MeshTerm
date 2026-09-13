@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The PicoCalc visual-language contracts: palette, glyph map, fold, and bindings.
 
 P3's deliverables are promises about *output* — only 16 palette slots, only glyphs the

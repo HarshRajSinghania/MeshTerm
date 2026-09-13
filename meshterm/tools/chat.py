@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The ``chat`` tool: channel and direct messaging over the mesh.
 
 Interactively it opens a conversation picker and then a live, full-screen chat (see

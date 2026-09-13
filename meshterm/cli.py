@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Typer entry point.
 
 Global options are parsed once in the callback, which builds the shared

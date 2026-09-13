@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Waiting out a transmit cooldown, visibly and cancellably.
 
 MeshTerm holds itself back between transmissions (see

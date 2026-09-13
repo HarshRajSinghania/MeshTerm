@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Align Rich's emoji cell-width table with the terminal's *actual* rendering.
 
 Emoji column width is not standardized. Whether a variation-selector-16 sequence

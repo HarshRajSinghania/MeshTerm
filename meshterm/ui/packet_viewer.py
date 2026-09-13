@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The packet viewer: one floating popup that can open any packet a list shows.
 
 Everywhere MeshTerm lists packets (the dashboard feed today; any future packet list)

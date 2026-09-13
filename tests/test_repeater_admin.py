@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Tests for repeater admin.
 
 The settings catalog (checked against the firmware's own CLI), the per-node store, the

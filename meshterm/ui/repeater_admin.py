@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The repeater-admin screens: configure a remote node over the mesh, editor-style.
 
 The interactive face of the ``repeater-admin`` tool. Picking a node (the shared

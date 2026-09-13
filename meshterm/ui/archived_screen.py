@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The Archived contacts list: what the sweep took off the device, and when.
 
 A purge (see :mod:`~meshterm.ui.purge_screen`) removes a contact from the *device* — the

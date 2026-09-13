@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The shared mark constants: node-type glyphs, their colours, and path sentinels.
 
 The app's spatial surfaces — the map, the path graph, the braille rasters, the node

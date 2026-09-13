@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Unit tests for the reusable text-UI library (``meshterm.ui.tui``).
 
 These exercise the pure logic — ANSI rendering/slicing, selection filtering and navigation,

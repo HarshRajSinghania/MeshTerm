@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Reopening the session in Windows Terminal, which is where MeshTerm looks like itself.
 
 MeshTerm is drawn with emoji icons, braille charts and powerline path chips. Whether any

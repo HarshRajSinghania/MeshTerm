@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Shared-widget helper tests: the canonical formatting primitives every screen leans on.
 
 Most widgets are exercised through their host screens' tests; what lives here are the

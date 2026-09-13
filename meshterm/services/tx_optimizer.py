@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Remote-admin TX-power optimization.
 
 This tunes the transmit power of a *remote* node we have admin rights on — the node

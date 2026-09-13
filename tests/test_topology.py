@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Unit tests for the observed-topology graph, path scenarios, and the path composer.
 
 The graph is pure data-in/data-out, so these run headless: evidence rows are built by

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Time Machine tests: the history queries, the bucketing math, and the pages.
 
 Pages are built against a real (temporary) repository seeded with canned

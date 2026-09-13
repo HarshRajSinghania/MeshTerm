@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Tests for the node map: MVT decoding, projection, the braille canvas, and the tool.
 
 The vector-tile decoder and geometry are exercised against a real cached tile fixture

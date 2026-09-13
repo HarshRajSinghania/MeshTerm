@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Write an already-composed frame straight to the terminal, one changed row at a time.
 
 MeshTerm composes every frame itself: :func:`~meshterm.ui.tui.frame.compose_base` returns

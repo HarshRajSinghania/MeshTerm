@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """THE way MeshTerm replaces a file it owns: all of the new contents, or none of them.
 
 Every store under ``core/`` keeps its state in one file that it rewrites whole. Writing

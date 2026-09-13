@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Algorithm layer: pure logic for tracing, TX search, and path exploration.
 
 Services may depend on :mod:`meshterm.core` (the :class:`~meshterm.core.connection.Device`

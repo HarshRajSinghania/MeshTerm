@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The Live feed: every packet as it arrives, full-screen and newest first.
 
 The interactive face of the ``livefeed`` tool — the dashboard's old feed panel,

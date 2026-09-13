@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The connect-time settings offer, driven end to end over a scripted device.
 
 The scenario that motivated the position rule (JP, 2026-08-08/09): a GPS-less companion

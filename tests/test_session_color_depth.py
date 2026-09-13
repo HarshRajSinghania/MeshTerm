@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Session colour tests: how many colours the terminal is actually sent.
 
 prompt_toolkit decides this per *output class*, and its two classes disagree —

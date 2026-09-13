@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The ``info`` tool: show the connected companion device's identity and radio config."""
 
 from __future__ import annotations

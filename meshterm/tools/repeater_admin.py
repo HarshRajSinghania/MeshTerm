@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The ``repeater-admin`` tool: set up remote repeaters and room servers over the mesh.
 
 Interactively it opens the repeater-admin flow (see :mod:`meshterm.ui.repeater_admin`):

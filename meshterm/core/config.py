@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Machine setup and named device profiles.
 
 Settings are read from a TOML file (default ``~/.meshterm/config.toml``) and may

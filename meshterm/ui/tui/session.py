@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The persistent full-screen session: the heart of the TUI library.
 
 A :class:`TuiSession` owns one prompt_toolkit :class:`Application`, a stack of

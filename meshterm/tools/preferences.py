@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The ``preferences`` tool: how MeshTerm itself behaves.
 
 Interactively it opens the Preferences page (see :mod:`meshterm.ui.preferences`), which

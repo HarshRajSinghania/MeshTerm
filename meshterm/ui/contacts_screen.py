@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The interactive Contacts screen: the device's contacts in the shared sortable contact list.
 
 The Time Machine picker's presentation pointed at the companion's contact table: the same

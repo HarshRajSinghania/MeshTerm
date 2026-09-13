@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """A repeater that says nothing has not said the password is wrong.
 
 THE bug, reported after administering a repeater that happened to be down: MeshTerm forgot

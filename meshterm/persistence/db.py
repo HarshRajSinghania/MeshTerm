@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """SQLite database bootstrap and schema.
 
 The schema is intentionally generic: a central ``runs`` table records every tool

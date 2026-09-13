@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Battery gauge tests: the LiPo curve, the one-cell braille glyph, and the poller.
 
 The widget is pure (percent + flags → a coloured glyph) and the poller runs against a

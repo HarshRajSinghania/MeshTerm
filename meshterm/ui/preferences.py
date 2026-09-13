@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The Preferences page: MeshTerm's own behaviour, staged and saved.
 
 The app-side twin of the device-configuration editor (:mod:`meshterm.ui.config_editor`),

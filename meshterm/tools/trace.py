@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The trace tools: path traces, live in the menu, one-shot on the CLI.
 
 A trace is one walked path — the protocol has no destination field, so "target" is

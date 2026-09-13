@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
 """Route the RK3506 UART1 controller to the PicoCalc header pads GP4/GP5.
 
 Calculinux enables the UART1 controller (so ``/dev/ttyS1`` exists) but never wires it to any

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The PicoCalc's console font: remember what was there, switch, put it back.
 
 The handheld draws to a Linux virtual terminal, and a VT loads exactly one font for the

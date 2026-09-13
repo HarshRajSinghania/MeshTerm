@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Tests for the TUI output surface's window-or-popup presentation.
 
 :meth:`TuiUi.present` upgrades a short, text-only result ("✓ flood advertisement sent")

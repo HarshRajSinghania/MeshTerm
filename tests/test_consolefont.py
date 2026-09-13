@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Tests for the bundled console font and the machinery that installs and selects it.
 
 The Win32 half cannot be exercised off Windows, and should not be exercised *on* it by a

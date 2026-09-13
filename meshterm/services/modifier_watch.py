@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The optional Shift-state watcher behind the PicoCalc F-key lane's live flip.
 
 The PicoCalc keyboard's MCU translates Shift+F1..F5 into plain F6–F10 keycodes, so the

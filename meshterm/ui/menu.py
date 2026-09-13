@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The interactive main menu, built dynamically from the tool registry.
 
 The menu groups registered tools by category and runs the selected tool's interactive flow

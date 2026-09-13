@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Persistence for the background-advert schedule.
 
 MeshTerm announces the connected node on a cadence — a zero-hop (direct) advert for the

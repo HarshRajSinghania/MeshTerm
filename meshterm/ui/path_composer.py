@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The trace path composer: build a forced route hop by hop, guided by observed links.
 
 A floating dialog over a live trace screen. The route under construction reads across

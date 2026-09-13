@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Declarative registry of MeshTerm's own preferences, and the TOML file they live in.
 
 The distinction this module draws is between the three kinds of "setting" the app already

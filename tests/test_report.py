@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Tests for the seam between a tool's answer and its rendering.
 
 :mod:`meshterm.ui.report` is where a tool states what it found, :mod:`meshterm.ui.fields`

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Composition helpers: turn a screen + terminal size into a bounded, framed ANSI view.
 
 The session owns input and the screen stack; this module owns *layout* — slicing a screen's

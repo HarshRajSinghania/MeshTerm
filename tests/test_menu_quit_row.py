@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The main menu's Quit row shares the tool rows' icon column (JP, 2026-09-11).
 
 The menu closes on a ``🚪 Quit`` row below its tool rows, and for as long as it has existed

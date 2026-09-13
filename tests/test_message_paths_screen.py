@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Message-paths dialog tests: the graph-over-rows view behind the chat's ^P.
 
 Driven headless like the mesh walk tests: render_body is pure lines-out, handle() pure

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Tests for the background advert.
 
 The store's schedule arithmetic, the scheduler's one-send-per-pass discipline, and

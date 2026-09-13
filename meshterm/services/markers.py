@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Collecting the mesh's located nodes into map markers.
 
 One list, three surfaces: the ``map`` tool's full-screen map, the node page's preview minimap,

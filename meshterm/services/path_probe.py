@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Multi-path probing: measure candidate routes to a target and rank what actually works.
 
 The topology graph (:mod:`~meshterm.services.topology`) proposes routes from *received*

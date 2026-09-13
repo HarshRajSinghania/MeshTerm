@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Dashboard tests: the live screen's state, its chart plumbing, and its data feeds.
 
 The screen is driven headless against fake sessions and canned observations, the same

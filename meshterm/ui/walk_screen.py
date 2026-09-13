@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The Mesh walk: walk the mesh's observed shape one node at a time.
 
 The interactive face of the ``walk`` tool. The trace path composer already distills

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Unit tests for the trophy-case records: walk scoring, derivation, and persistence.
 
 The scoring layer is pure measurement (the UI owns the radio), so everything here runs

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Tests for the log file: plain text, bounded, and holding the things that went wrong.
 
 The log's one real job is being opened by a person who has hit a problem — often the

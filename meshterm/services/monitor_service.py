@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The passive-monitor history logger.
 
 Passive monitoring records every advert/telemetry frame the companion overhears to the

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The remote command line: talk to a repeater's CLI over the mesh, readline-style.
 
 A full-screen terminal onto a logged-in remote node (part of the repeater-admin

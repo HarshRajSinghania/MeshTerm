@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The ``livefeed`` tool: every packet as it arrives, right under the dashboard.
 
 Opens the full-screen live feed (see :mod:`meshterm.ui.livefeed_screen`): the

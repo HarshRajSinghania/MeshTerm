@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Pure channel logic: secret derivation, MeshCore share-URL round-tripping, and decrypt.
 
 A MeshCore channel is a name plus a 16-byte shared secret. *Public* channels (whose name

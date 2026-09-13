@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The interactive channel manager, rendered in the full-screen session.
 
 This is the user-facing channel-management experience for the ``channels`` tool: a live

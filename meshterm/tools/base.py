@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The tool plugin contract and registry.
 
 A *tool* is one menu option / CLI subcommand. Subclass :class:`Tool`, decorate it with

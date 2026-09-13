@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Tests for device discovery, the remembered-device store, and selection.
 
 All run without hardware: serial enumeration is monkeypatched, and the store/selection

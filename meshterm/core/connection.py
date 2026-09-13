@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Device connection abstraction.
 
 Services and tools depend only on the :class:`Device` interface, never on the

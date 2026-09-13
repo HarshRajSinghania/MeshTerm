@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Tests for the passive mesh monitor: listening, aggregation, and persistence.
 
 All run against the :class:`MockDevice` simulator and an on-disk SQLite database, no

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The F-key lane's Shift-state watcher: the raw flag and the shift-bank latch."""
 
 from __future__ import annotations

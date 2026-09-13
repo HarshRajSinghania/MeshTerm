@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Tests for the chat feature: device send, persistence, and the chat service.
 
 All run against the :class:`MockDevice` simulator and a temporary database; no hardware.

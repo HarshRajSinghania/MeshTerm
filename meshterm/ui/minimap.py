@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """A small, static, non-interactive map region embeddable inside any screen.
 
 The full-screen :class:`~meshterm.ui.map_screen.MapScreen` is a whole layer of its own —

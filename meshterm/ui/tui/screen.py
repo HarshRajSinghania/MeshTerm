@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The screen abstraction: one layer in the TUI's window stack.
 
 A :class:`Screen` knows how to render its body (as Rich, converted to ANSI lines by

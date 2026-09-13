@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The Watchtower: passive rules over what the hub already hears, raising alerts.
 
 A sentinel, not a prober — it transmits nothing and asks the radio for nothing. It rides

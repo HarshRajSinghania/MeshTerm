@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """What an overheard frame is *addressed to* — the packet body nobody else parses.
 
 The companion's RX packet log hands every overheard frame to the meshcore library, which

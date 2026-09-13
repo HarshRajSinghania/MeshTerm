@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Tests for the overhauled config editor: dialogs, staging, and the location picker.
 
 The pure pieces (the contact share URL, coordinate parsing, the typed-confirmation

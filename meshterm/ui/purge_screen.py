@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The Contacts sweep: rank the whole contact table, archive the weakest off the device.
 
 A companion's contact table is finite and a busy mesh fills it with whatever adverts

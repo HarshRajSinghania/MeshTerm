@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The Watchtower screens: the alert log, the watchlist, and per-node rules.
 
 The interactive face of the ``watchtower`` tool. One select-list screen carries the

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Shared menu-chrome tests: the furniture every select list builds the same way.
 
 These pin the app's exit-affordance and lane conventions at their source, so a screen

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Persistence for the Watchtower: watched nodes, their rules, and the alert log.
 
 The Watchtower (see :mod:`meshterm.services.watchtower`) is a passive sentinel: the user

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The Time Machine: the mesh's recorded history, explorable node by node.
 
 The interactive face of the ``timemachine`` tool. The database has been recording every

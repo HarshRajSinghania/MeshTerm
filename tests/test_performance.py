@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The P2 performance contracts: what must stay cheap, and what must stay off the boot path.
 
 These are behaviour tests, not benchmarks — a wall-clock assertion would be flaky on CI and

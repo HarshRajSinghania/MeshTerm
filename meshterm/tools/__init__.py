@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Pluggable tools (menu options / CLI subcommands).
 
 Importing this package eagerly imports every tool module so that each one's ``@register``

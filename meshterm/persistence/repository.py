@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Repository: the single gateway between the app and the database.
 
 Tools and services never issue SQL directly; they call typed methods here. This keeps

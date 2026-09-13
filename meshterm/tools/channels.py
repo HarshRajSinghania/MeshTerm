@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The ``channels`` tool: create, join, and manage mesh channels.
 
 Interactively it opens a full-screen channel manager (see :mod:`meshterm.ui.channels`) — a

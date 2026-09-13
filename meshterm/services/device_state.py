@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The session's device-state cache: read the radio once, reuse it everywhere.
 
 Opening a screen used to re-read the same stable facts from the companion every time —

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The plain CLI's output language — text for a person at a prompt, aligned and unadorned.
 
 MeshTerm has two front ends and a third face. The menu is read by a person sitting in

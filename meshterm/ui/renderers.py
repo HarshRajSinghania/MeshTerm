@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The two faces of one answer: a renderer turns a report into bytes.
 
 A tool states its answer as a :mod:`~meshterm.ui.report`; this module is where that

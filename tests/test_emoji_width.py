@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Terminal-aligned emoji width: VS16 sequences and curated lone-codepoint emoji.
 
 The border-alignment story lives in :mod:`meshterm.ui.tui.emoji_width`. These tests pin the

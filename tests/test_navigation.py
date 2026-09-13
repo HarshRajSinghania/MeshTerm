@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Tests for the navigation stack: strict push/pop, kept state, and the two global chords.
 
 The app's realized path is a stack — the main menu at the bottom, one frame per screen or

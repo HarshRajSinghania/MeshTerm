@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The interactive full-screen map: a pannable, zoomable slippy map in the terminal.
 
 This drives the braille street map inside the TUI. It owns a :class:`~meshterm.core.geo.

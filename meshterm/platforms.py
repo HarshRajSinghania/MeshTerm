@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The platform seam: a frozen spec every consumer binds to once, at boot.
 
 MeshTerm runs two flavours from one codebase — the regular desktop terminal and the

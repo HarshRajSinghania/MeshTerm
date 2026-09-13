@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The About MeshTerm tools: the four written pages in the menu's last section.
 
 *About MeshTerm*, *About the author*, *Join Discord*, *Support MeshTerm* — in that

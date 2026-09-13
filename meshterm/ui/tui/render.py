@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The single Rich-to-prompt_toolkit bridge.
 
 The TUI keeps rendering in Rich (all existing tables, panels, and text widgets are reused

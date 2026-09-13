@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """A reusable text spinner: one animated glyph for a "working" indicator.
 
 A small, screen-agnostic animation helper. It holds a cycle of frame glyphs and a current

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The exit statuses ``meshterm`` returns, and what each one means.
 
 A scripted run's *return value is its report*: the CLI says what happened in plain

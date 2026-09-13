@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """End-to-end tests for what the CLI actually prints and returns.
 
 :mod:`tests.test_script_output` covers the vocabulary and :mod:`tests.test_report` the

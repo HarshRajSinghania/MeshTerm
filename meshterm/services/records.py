@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Walk records: how a completed trace is measured and scored for the trophy case.
 
 A *walk* is one trace whose route starts and ends at our node — we transmit the first

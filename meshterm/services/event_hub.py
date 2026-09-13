@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The always-on mesh event hub.
 
 The hub is the single seam between the raw companion-device event stream and everything

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Persistence for device settings changed through MeshTerm, so they survive a forgetful device.
 
 Most companions keep their configuration in firmware, so MeshTerm reads settings live from the

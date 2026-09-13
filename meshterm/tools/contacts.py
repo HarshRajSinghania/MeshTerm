@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The ``contacts`` tool: list the contacts this node knows about.
 
 The menu opens the sortable Contacts screen, which leads with our own node; the CLI

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The observed mesh topology: a link graph distilled from every path we ever received.
 
 MeshCore never tells us the network's shape outright, but almost everything we *receive*

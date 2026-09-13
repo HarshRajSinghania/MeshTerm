@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The ``devices`` tool: enumerate attached serial and in-range Bluetooth companions.
 
 Discovery never opens the radio — it only lists what is attached or advertising. This is a

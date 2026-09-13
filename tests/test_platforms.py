@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Tests for the platform seam.
 
 Resolution order, the active-platform singleton, and the two platform specs' own

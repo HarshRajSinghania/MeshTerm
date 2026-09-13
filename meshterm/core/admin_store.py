@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Persistence for remembered remote-node admin passwords.
 
 The remote-admin optimizer logs in to a repeater to tune its TX power; storing the

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Input screens: text, confirm, and autocomplete — the ``questionary`` replacements.
 
 These reimplement the small slice of ``questionary`` the app uses (a validated line editor,

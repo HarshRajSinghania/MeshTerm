@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The Device config page: every setting of the companion, and the operations on the box.
 
 Behind the ``config`` tool (:func:`edit_config`), and shaped deliberately like the

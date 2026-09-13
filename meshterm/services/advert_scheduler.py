@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The background-advert scheduler: keep this node announced without anyone asking.
 
 A quiet session-long task that sends a zero-hop (direct) advert and a flood advert on

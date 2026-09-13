@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Shared Rich theme and console factory for a consistent, modern look.
 
 Two palettes, one vocabulary: every style *name* here exists in both

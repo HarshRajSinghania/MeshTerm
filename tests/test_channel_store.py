@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Tests for remembering channels across sessions (``core.channel_store``).
 
 Covers the durable store itself (per-device, memory-first JSON), the ``reconcile`` replay that

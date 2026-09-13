@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The ``walk`` tool: the mesh's observed shape, explored one node at a time.
 
 Opens the full-screen Mesh walk (see :mod:`meshterm.ui.walk_screen`): a walkable

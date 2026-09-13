@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The admin-node picker: choose a remote node you hold (or will enter) credentials for.
 
 Shared by the tools that administer remote nodes over the mesh — TX optimize and the

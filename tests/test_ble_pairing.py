@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Tests for the BLE connect path's ownership of its meshcore client.
 
 The bug these pin down: ``MeshCore.create_ble`` builds a client, calls ``connect()`` on it,

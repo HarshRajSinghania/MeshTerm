@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Tests for the PicoCalc's console-font switch: the gate, the three verbs, and the wiring.
 
 Nothing here runs ``setfont`` — the point of the module under test is that it shells out,

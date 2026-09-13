@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Reusable Rich widgets: banner, status pill, trace tables, and progress bars."""
 
 from __future__ import annotations

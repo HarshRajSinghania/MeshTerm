@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Watchtower tests: the store's persistence and the sentinel's rules.
 
 The service is driven synchronously through :meth:`note`/:meth:`evaluate` against a

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The ``map`` tool: plot the mesh's located nodes on an OpenStreetMap terminal map.
 
 Nodes that share their location in adverts are collected from the passive-monitor history

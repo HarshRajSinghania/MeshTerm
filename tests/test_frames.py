@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Frame-body decoding: what an overheard packet is addressed to.
 
 The companion's RX log hands us every frame's header parsed and its body raw; these

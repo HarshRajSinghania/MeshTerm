@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
 """Flash the built .uf2 onto the XIAO nRF52840 via its UF2 bootloader.
 
 Runs on your DEV MACHINE with the XIAO's own USB-C plugged into it. Works on

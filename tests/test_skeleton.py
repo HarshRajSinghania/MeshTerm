@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Smoke tests for the skeleton: models, mock device, service, and persistence.
 
 These run without hardware against the :class:`MockDevice` simulator.

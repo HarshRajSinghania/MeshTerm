@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Tests for the private Windows DLL handles.
 
 These pin a crash that only ever appeared in a frozen build on Windows, which is the

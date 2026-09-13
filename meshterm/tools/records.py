@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The Trophy case tool: the record-setting walks the trace tools have turned up.
 
 The menu face opens the browser (:mod:`meshterm.ui.records_screen`): every discipline's

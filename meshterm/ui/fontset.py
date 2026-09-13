@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The PicoCalc console font's codepoint inventory — the glyph contract.
 
 The PicoCalc panel draws through the kernel console with one 512-glyph PSF font

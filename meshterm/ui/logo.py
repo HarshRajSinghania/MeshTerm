@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The MeshTerm wordmark for the startup splash, loaded from the assets folder.
 
 The art itself lives in ``meshterm/assets/splash`` as pre-coloured ``.ans`` files — the

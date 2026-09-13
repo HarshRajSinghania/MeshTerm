@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Terminal capability detection — what can this terminal actually draw?
 
 Two questions, both answered out-of-band because a terminal cannot be asked in-band: a

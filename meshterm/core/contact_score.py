@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Rating contacts by how much they are worth a slot in the device's contact table.
 
 A companion's contact table is finite, and a mesh fills it with whatever adverts happen to

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Fetch and cache OpenStreetMap vector tiles for the terminal map.
 
 This is the only networked part of the map. It resolves a tile source's (versioned) tile-URL

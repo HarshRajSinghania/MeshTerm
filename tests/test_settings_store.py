@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Tests for remembering device settings across sessions (``core.settings_store``).
 
 Covers the durable per-device store, the drift detection that compares remembered values to a

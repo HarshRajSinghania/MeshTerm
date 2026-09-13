@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The dual-platform gallery.
 
 Every screen the interactive menu can open, checked for width discipline under both

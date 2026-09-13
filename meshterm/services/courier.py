@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The Courier: store-and-forward delivery for the outbox.
 
 A session-long background loop over the :class:`~meshterm.core.courier_store.

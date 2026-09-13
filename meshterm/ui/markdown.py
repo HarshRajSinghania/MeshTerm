@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Markdown drawn in MeshTerm's own hand — the renderer behind the About pages.
 
 A page of prose is the one kind of screen the app can't build out of rows, lanes and

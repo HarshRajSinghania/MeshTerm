@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Path lines — the flexible hop-sequence text widget (powerline chips or arrows).
 
 This is the successor to :func:`~meshterm.ui.widgets.path_text` as THE way a hop

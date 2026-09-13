@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Tests for rating contacts by how much they are worth a device slot (``core.contact_score``).
 
 The scoring is pure — no device, no database, no screen — so these exercise the rules the

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Persistence for contacts heard through MeshTerm, so they survive a device that forgets them.
 
 Most companions keep their contact table in firmware, so MeshTerm reads contacts live from the

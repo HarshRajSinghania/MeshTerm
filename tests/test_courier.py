@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Courier tests: the outbox store, delivery eligibility, and the attempt flow.
 
 The service is driven synchronously (eligibility) and through stubbed chat sends

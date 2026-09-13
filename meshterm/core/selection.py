@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Non-interactive device selection: turn discovery + memory into a chosen port.
 
 This is the logic used on the scripted CLI path (and as the fallback when the interactive

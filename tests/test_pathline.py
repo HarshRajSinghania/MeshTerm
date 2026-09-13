@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Path-line widget tests: same words in both modes, three overflow shapes.
 
 The widget's contract is exactness — plain mode must reproduce the app-wide arrow

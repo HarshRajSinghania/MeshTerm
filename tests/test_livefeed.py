@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Live feed tests: the promoted feed screen's state, rows, and windowing.
 
 The screen is driven headless against fake sessions and canned observations — the

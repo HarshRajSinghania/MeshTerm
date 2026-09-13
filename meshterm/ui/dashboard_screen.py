@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The live mesh dashboard: everything going on around this node, on one screen.
 
 The interactive face of the ``dashboard`` tool. One full-screen, always-repainting view

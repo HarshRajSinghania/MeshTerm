@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The Courier screens: the outbox, queueing flow, and per-message actions.
 
 The interactive face of the ``courier`` tool. One select-list screen carries the whole

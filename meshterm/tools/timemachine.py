@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The ``timemachine`` tool: explore everything the recorder ever heard.
 
 Opens the Time Machine (see :mod:`meshterm.ui.timemachine_screen`): pick the whole mesh

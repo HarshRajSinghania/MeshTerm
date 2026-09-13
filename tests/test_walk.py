@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Mesh walk tests: the focus-and-walk browser over a hand-built topology.
 
 The screen is driven headless against a fake session, the same approach as the

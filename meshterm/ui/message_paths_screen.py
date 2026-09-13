@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The Message paths dialog: every way one chat message reached this radio.
 
 The interactive face of :mod:`~meshterm.services.message_paths`, opened from the chat

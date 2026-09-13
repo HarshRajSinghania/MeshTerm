@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """THE route-graph widget: hop sequences drawn as a left-to-right flow of paths.
 
 Extracted from the Message paths dialog so every screen that draws walked (or planned)

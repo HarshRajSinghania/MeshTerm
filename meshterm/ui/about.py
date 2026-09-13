@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The About MeshTerm pages: the app, the person who wrote it, and how to help it along.
 
 Four read-only pages hung under the main menu's *About MeshTerm* section — the one

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Persistence for confirmed companion devices.
 
 Every device that has ever spoken the MeshCore protocol to us successfully is remembered

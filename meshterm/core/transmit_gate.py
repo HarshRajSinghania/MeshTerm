@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The shared transmit clock: how long ago we last put something on the air.
 
 MeshTerm has always paced its own bursts — a trace waits between samples, a TX sweep

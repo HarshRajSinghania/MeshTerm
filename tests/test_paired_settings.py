@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Tests for settings that share one device command, and for the PIN's readback.
 
 Both were found restoring a reflashed companion from its own backup.

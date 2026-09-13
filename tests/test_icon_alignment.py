@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The icon-column guard: in any one list, every icon-led row starts its words in one cell.
 
 The terminal draws some of the app's icons in one cell (``🗑 ✎ ⚙ ▶ ★ ↻ ↕ ⇄ ⌨ # ✓ ✗ ⚠``)

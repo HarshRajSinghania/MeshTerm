@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Shared select-menu chrome: the pieces every list screen builds the same way.
 
 MeshTerm's list screens (the config editors, the channel manager, Watchtower, Courier,

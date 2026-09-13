@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The remote-node settings catalog: what a repeater can be asked and told over the mesh.
 
 Repeaters and room servers are administered through their text CLI — ``get``/``set``

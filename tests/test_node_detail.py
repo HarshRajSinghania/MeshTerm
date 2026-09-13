@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Node detail screen tests: the mini-map, the tabbed page, and its route/topology helpers.
 
 The screen is a pure render-and-route view, so these drive it headless — display data is

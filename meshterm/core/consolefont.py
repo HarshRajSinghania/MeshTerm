@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 r"""Installing and selecting a console font on Windows, for one user, without admin.
 
 The classic Windows console does no font fallback: a character its configured font lacks

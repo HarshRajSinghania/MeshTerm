@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The Device info page: everything the companion reports, its pairing PIN concealed.
 
 The page itself is the ``info`` tool's — a live status panel over the full configuration

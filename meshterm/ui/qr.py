@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Render a string as a scannable QR code in the terminal, using half-block characters.
 
 Each character cell stacks two vertical modules — ``▀`` (upper only), ``▄`` (lower only),

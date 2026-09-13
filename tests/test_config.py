@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Tests for machine-setup loading (where things live, and which device to talk to).
 
 MeshTerm's *behaviour* settings are preferences and live in ``tests/test_preferences.py``;

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Persistence for channels created through MeshTerm, so they survive a device that forgets.
 
 Most companions keep their own channel table in firmware, so MeshTerm reads channels live from

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The ``watchtower`` tool: a passive sentinel over the nodes you care about.
 
 Opens the Watchtower screen (see :mod:`meshterm.ui.watchtower_screen`): the alert log

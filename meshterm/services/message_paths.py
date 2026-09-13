@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Recover the paths a chat message rode in on, from the stored packet log.
 
 The radio's RX log records every frame it decodes — including the relay path each one

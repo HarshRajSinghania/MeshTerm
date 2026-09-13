@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The Node detail screen: one node's whole story on a single page, and the ways into it.
 
 Reached by pressing Enter on any contact in the Contacts list (see

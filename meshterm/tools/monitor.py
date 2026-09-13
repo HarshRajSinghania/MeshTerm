@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The ``monitor`` tool: a bounded foreground capture of what the mesh is saying.
 
 Passive monitoring records every advert and telemetry frame the companion overhears —

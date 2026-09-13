@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Tests for graceful handling of a lost device connection.
 
 Covers the exception classifier that distinguishes a dropped serial link from an ordinary

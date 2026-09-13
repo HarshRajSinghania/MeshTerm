@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The selectable-list screen: the reusable replacement for ``questionary.select``.
 
 A :class:`SelectScreen` shows grouped, arrow-navigable choices with type-to-filter, bounded

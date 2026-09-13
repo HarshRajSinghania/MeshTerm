@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """A tiny, dependency-free Mapbox Vector Tile (MVT) decoder.
 
 Vector tiles are Protocol-Buffer messages (spec: github.com/mapbox/vector-tile-spec). Rather

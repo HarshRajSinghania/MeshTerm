@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Launcher for the frozen builds.
 
 PyInstaller freezes a *script*, not a console-script entry point, so this is the script:

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """About MeshTerm tests: the four pages, their placeholders, and their menu section.
 
 The pages carry no state and no controls, so what is worth pinning is what they *say*

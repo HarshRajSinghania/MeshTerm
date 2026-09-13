@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Tests for the always-on event hub: fan-out, filtering, streaming, and lifecycle.
 
 All run against the :class:`MockDevice` simulator; no hardware required.

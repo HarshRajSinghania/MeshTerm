@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Packet viewer tests: per-kind flavouring, the raw-field dedup, and channel decrypt.
 
 The viewer is pure Rich-in, ANSI-lines-out (``render_body``), so it's driven headless

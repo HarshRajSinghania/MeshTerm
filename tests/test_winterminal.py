@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Tests for reopening the session in Windows Terminal.
 
 Nothing here starts a terminal. What is pinned is the command that *would* be run — which

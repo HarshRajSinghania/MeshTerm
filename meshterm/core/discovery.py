@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Companion-device discovery across transports (serial + Bluetooth LE + TCP).
 
 Discovery enumerates the companion kinds that can be *found* automatically:

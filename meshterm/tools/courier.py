@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The ``courier`` tool: store-and-forward messaging for contacts that aren't there yet.
 
 Interactively it opens the outbox screen (see :mod:`meshterm.ui.courier_screen`):

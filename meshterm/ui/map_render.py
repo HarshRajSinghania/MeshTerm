@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Compose a rendered map frame: basemap geometry, labels, and mesh nodes.
 
 Given a :class:`~meshterm.core.geo.Viewport` and the decoded vector tiles covering it, this

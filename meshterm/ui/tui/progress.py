@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """A progress screen whose handle mimics the slice of ``rich.progress`` the tools use.
 
 Trace and TX-optimize sweeps drive progress with ``add_task`` / ``advance`` / ``update`` on a

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Tests for the device-configuration registry, backup/restore, and safety gating.
 
 All run against :class:`MockDevice` — no hardware required.

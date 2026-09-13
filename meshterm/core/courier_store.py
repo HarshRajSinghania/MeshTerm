@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Persistence for the Courier: the store-and-forward outbox.
 
 The Courier (see :mod:`meshterm.services.courier`) queues direct messages for contacts

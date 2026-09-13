@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """A colored Unicode-braille canvas for the terminal map.
 
 Each character cell holds a 2×4 grid of braille dots, so the drawable resolution is twice

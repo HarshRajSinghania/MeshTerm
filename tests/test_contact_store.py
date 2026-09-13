@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Tests for remembering contacts across sessions (``core.contact_store``).
 
 Covers the durable per-device store, the ``RememberedContact`` <-> ``Contact`` round-trip, the

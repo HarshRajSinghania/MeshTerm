@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Domain models shared across services, tools, persistence, and visualizations.
 
 These are plain dataclasses with no I/O dependencies so they can be constructed by the

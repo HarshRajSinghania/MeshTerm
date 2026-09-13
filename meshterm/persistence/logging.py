@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Logging setup: a plain text file you can open, and a console that stays out of the way.
 
 Two sinks. The console handler is Rich-formatted and shows what a person watching the

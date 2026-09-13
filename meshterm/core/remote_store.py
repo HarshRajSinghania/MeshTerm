@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Persistence for remote-node admin state: last-read settings and CLI history.
 
 Reading a repeater's configuration costs one paced mesh round trip per value, so the

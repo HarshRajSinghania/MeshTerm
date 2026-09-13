@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The ``config`` tool: every device setting, and the operations on the box itself.
 
 Interactively it opens the Device config page (see :mod:`meshterm.ui.config_editor`) —

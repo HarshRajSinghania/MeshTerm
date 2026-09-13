@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Tests for the one-interactive-session-per-directory guard, and the atomic writer.
 
 Both exist for the same reason: every copy of MeshTerm on a machine shares one data

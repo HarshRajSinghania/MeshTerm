@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Terminal-font detection tests: the recommended list, the ladder, the verdict.
 
 Every verdict runs against injected environments, temp settings files and injected

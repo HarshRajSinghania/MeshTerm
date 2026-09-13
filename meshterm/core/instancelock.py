@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """One interactive MeshTerm per data directory, and a clear answer when you want two.
 
 Every copy of MeshTerm on a machine reads and writes the same ``~/.meshterm`` — a

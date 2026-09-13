@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Repeated-trace execution with duty-cycle pacing, plus trace parsing helpers.
 
 :func:`run_traces` is the measurement primitive the TX optimizer and the path probe

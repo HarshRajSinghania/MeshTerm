@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The live chat screen and its launcher.
 
 This is the interactive, full-screen chat experience: a scrolling transcript with an input

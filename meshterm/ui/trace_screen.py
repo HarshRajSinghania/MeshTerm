@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The live trace screens: compose a route from observed topology, then watch it answer.
 
 This is the interactive face of the two trace tools (the scripted CLI keeps its one-shot

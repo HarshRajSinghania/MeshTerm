@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The ``tx-optimize`` tool: tune a remote node's TX power for the best signal at a target.
 
 You force a path (just like ``trace``) ending at the **target** node where SNR is

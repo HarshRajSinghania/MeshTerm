@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """TOML backup and restore for device configuration.
 
 A backup captures every registry setting's current value plus experimental custom

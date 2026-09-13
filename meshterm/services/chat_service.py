@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The chat service: message persistence, unread tracking, and the send path.
 
 Like the passive monitor, this service is not a listener in its own right — the always-on

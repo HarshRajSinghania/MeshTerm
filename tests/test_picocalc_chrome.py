@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """P4 chrome contracts: borderless frame, slim header, the F-key lane, dialog gate."""
 
 from __future__ import annotations

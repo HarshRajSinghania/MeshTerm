@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The arithmetic a trace is sized and flagged by.
 
 Two pure functions and the four constants behind them: how a per-hop path-hash width is

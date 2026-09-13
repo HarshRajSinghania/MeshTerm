@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The markdown renderer: what each construct becomes in MeshTerm's visual language.
 
 The About pages are written rather than composed (see :mod:`meshterm.ui.markdown`), so

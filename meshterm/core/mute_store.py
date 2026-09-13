@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Persistence for muted channel notifications.
 
 Some channels carry traffic you want *recorded* but not *notified* about — an automated

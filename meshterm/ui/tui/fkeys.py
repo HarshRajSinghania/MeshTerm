@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The PicoCalc F-key lane: a fixed footer row of five coloured chips, F1-F5.
 
 The PicoCalc keyboard has five dedicated function keys; its MCU translates Shift+F1..F5

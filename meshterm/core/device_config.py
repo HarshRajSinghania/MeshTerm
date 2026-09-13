@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Declarative registry of every settable device configuration value.
 
 Each :class:`SettingSpec` describes one tunable setting: how to read its current value

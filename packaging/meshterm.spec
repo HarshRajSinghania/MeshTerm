@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 # PyInstaller spec for the downloadable builds. Run from the repository root:
 #
 #     pyinstaller packaging/meshterm.spec

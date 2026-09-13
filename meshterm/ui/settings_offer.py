@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The connect-time offer to reconcile a device's settings with what MeshTerm remembers.
 
 A firmware-less radio bridge forgets its configuration whenever it restarts, so the settings you

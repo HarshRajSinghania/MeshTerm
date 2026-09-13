@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The ``advert`` tool: announce this node to the mesh, straight from the main menu.
 
 Opens the Send advert flow (see :func:`meshterm.ui.config_editor.send_advert`) — a

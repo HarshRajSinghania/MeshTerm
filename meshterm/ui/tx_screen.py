@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The live TX-optimization screen: pick the link, arm the sweep, watch levels land.
 
 The interactive face of the ``tx-optimize`` tool (the scripted CLI keeps its one-shot

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The shared shapes a report is built out of — one constructor per concept.
 
 A node means the same thing in ``contacts``, ``monitor``, ``courier list``, ``trace`` and

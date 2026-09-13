@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The UI surface: one small API tools use for input and output, in either front-end.
 
 Tools never touch ``questionary`` or a raw console anymore — they talk to ``ctx.ui``. Two

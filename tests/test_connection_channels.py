@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Regression tests for serialized, index-validated channel reads.
 
 The meshcore library's ``get_channel`` waits for "the next CHANNEL_INFO event" with no

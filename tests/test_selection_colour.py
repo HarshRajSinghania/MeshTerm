@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """White is what "you picked this" looks like — and nothing else says it.
 
 Three surfaces used to answer the question in the wordmark's teal: the cursor row (fixed

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The visual-language specimen: every mark, icon, colour and fold on one screen.
 
 ``meshterm specimen`` prints this through the platform's real machinery — the active

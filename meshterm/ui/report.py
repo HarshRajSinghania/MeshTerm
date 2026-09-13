@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """What a tool answers with, stated as data before anything decides how it looks.
 
 A scripted run used to say its answer by *printing* it: ``Tool.run`` called

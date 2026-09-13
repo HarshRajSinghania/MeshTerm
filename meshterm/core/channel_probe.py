@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Reading the device's channel slots back off the radio.
 
 One configured channel slot (:class:`ChannelSlot`) and the two reads that discover them.

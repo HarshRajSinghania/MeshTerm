@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """A small, centralized, reusable full-screen text-UI library.
 
 Built on prompt_toolkit (for the terminal, input, and resize handling) and Rich (for all

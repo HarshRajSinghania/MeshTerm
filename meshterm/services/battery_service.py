@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The battery poller: keep the status bar's fuel gauge current, quietly.
 
 A session-long task that reads the connected companion's battery voltage on a slow

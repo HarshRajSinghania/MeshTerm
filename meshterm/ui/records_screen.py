@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The Trophy case: the record-setting walks the trace tools have turned up.
 
 A read-only board over the ``discovered_paths`` table (:meth:`Repository.discoveries`),
