@@ -9,6 +9,10 @@ other serial companion. No BLE, no USB host, no SD-slot sacrifice.
 drive, what the register poke does, troubleshooting, and what has only been proven on one
 bench. This page is the bench card.
 
+**Licensing.** The firmware is MeshCore, under the MIT License. The `meshcore-uart1.patch`
+modifies MeshCore source and `build-firmware.sh` produces a MeshCore binary; the licence is
+[`LICENSE.MeshCore`](LICENSE.MeshCore) in this directory.
+
 Three steps on two machines:
 
 ```bash
