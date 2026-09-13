@@ -102,11 +102,19 @@ font: the script and the inventory move in the same commit or the test fails.
 > **Licensing.** The installed 6×12 font is a **derivative of Terminus**, which is under the
 > SIL Open Font Licence 1.1 with "Terminus" as a Reserved Font Name — so the output is named
 > `meshterm`, which is exactly what the OFL requires of a renamed derivative, and it must not
-> be called Terminus. Nothing Terminus itself is in this repo. The optional 6×8 candidate is
+> be called Terminus. Nothing Terminus itself is in this repo. The 6×8 companion is
 > different: its base bitmap is the Linux kernel's `font_6x8`, which is **GPL-2.0**, embedded
-> base64 in the script. That sits awkwardly beside an Apache-2.0 repo and a decision on it is
-> pending; the 6×12 Terminus-derived font is the installed default, and the 6×8 build is an
-> A/B candidate you flip to by hand.
+> base64 in the script. So that material lives in one file of its own,
+> [`calculinux-console-font-6x8.sh`](../scripts/calculinux-console-font-6x8.sh), marked
+> `SPDX-License-Identifier: GPL-2.0-only` with the licence beside it as
+> [`scripts/LICENSE.GPL-2.0`](../scripts/LICENSE.GPL-2.0) — and that is the end of the
+> awkwardness. Nothing GPL-2.0 enters the Apache-2.0 program: the script is excluded from
+> the Python distribution, it runs **on the device**, and what it produces is a PSF **data
+> file the kernel's console driver loads** with `setfont`. MeshTerm never links it, never
+> bundles it and never redistributes it; it names a path on the console's own filesystem.
+> The two scripts share one copy of the donor, alias and keeper tables — the 6×8 one reads
+> them out of the 6×12 one, between its `shared generator` marker lines — so a glyph added
+> in one place lands in both fonts.
 
 ---
 
@@ -192,12 +200,34 @@ glyph:
 sh calculinux-console-font.sh
 ```
 
-It builds both fonts, applies the 6×12 one live with `setfont` on `/dev/tty1`, and persists
-it as `FONT=meshterm` in `/etc/vconsole.conf` so systemd loads it at boot. If `setfont`
-fails it aborts *before* persisting, so you are never left with a font that only exists in
-`vconsole.conf`. It prints the A/B commands as it finishes — `setfont
-/usr/share/consolefonts/meshterm8.psf.gz` for 53×40, the same with `meshterm.psf.gz` for
-53×26 — and whichever you prefer goes in `vconsole.conf` by hand.
+It builds both fonts — the 6×8 one by handing off to
+[`calculinux-console-font-6x8.sh`](../scripts/calculinux-console-font-6x8.sh) beside it, or
+telling you it is missing; `SKIP_6X8=1` builds only the default — applies the 6×12 one live
+with `setfont` on `/dev/tty1`, and persists it as `FONT=meshterm` in `/etc/vconsole.conf` so
+systemd loads it at boot. If `setfont` fails it aborts *before* persisting, so you are never
+left with a font that only exists in `vconsole.conf`. A 6×8 build that fails is a warning
+and nothing more: the default is installed either way.
+
+**Choosing between them is a preference, not a command.** *Display → Console font* on the
+Preferences page offers `6x12 (53x26)` and `6x8 (53x40)`, and it is drawn on the PicoCalc
+only — it is a row about hardware no desktop has, though the value round-trips through
+`preferences.yaml` on any machine. Picking one loads it immediately: the kernel raises
+SIGWINCH on a font change, so the whole frame repaints at the new row count without a
+relaunch.
+
+MeshTerm puts the font back when it exits. Before the first paint it saves the console's
+current font with `setfont -O ~/.meshterm/console-font-before.psf` — whatever the *shell*
+was in, not whatever we assume it was — and reloads that file on the way out, from the
+session's own teardown and from an `atexit` hook, so ^Q and a crash both leave the console
+as they found it. Then the file is deleted. No `sudo` anywhere: the VT is the process's
+controlling terminal and belongs to the logged-in user. Every part of this is optional and
+silent — off the PicoCalc, off a real VT (an ssh session is a pty, not a console), or with
+no `setfont` on `PATH`, it does nothing and says so once in the log. A permanent choice
+still goes in `vconsole.conf` by hand: `FONT=meshterm8` for 53×40, `FONT=meshterm` for 53×26.
+
+> **The 6×8 font has no Cyrillic.** Its base is CP437, where the 6×12 Terminus base is not,
+> so a node named in Cyrillic draws as tofu boxes on it. That is a known and accepted cost
+> of the fourteen extra rows, not a bug to report.
 
 The same script owns the sixteen colour slots. A **default run restores the stock kernel VT
 palette** and removes any previous remap: it disables and deletes the `meshterm-vtrgb`

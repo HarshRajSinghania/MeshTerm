@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
 # calculinux-console-font.sh -- build, install, and persist the "meshterm" console fonts
 # and the 16-slot palette.
 #
@@ -7,17 +8,27 @@
 # and every font Calculinux ships is a classic 256-glyph VGA font -- so out of the box the
 # panel cannot draw what MeshTerm's UI leans on hardest: braille charts (U+2800-U+28FF),
 # the node/status marks, the P3 compact-icon marks, rounded panel corners, or the list
-# cursor. This script synthesizes TWO 512-glyph PSF2 fonts:
+# cursor. This script synthesizes the 512-glyph PSF2 font MeshTerm runs in:
 #
 #   * meshterm.psf.gz   6x12 (Terminus base)     -> 53x26 -- the installed default
-#   * meshterm8.psf.gz  6x8  (kernel font_6x8)   -> 53x40 -- the A/B candidate
 #
 # meshterm.psf.gz is a derivative of Terminus Font (OFL-1.1) and must not itself be called
 # "Terminus" -- the stock ter-u12n.psf.gz base keeps its own OFL-1.1 licence, distinct from
 # this repository's Apache-2.0.
 #
-# Flip live with `setfont /usr/share/consolefonts/meshterm8.psf.gz` (and back with
-# meshterm.psf.gz); persist the winner via FONT= in /etc/vconsole.conf.
+# The taller-screen companion, meshterm8.psf.gz (6x8 -> 53x40), is built by
+# calculinux-console-font-6x8.sh, which this script runs for you when it sits alongside
+# (set SKIP_6X8=1 to build only the default). It lives in its own file because its base
+# bitmap is the Linux kernel's font_6x8 and therefore GPL-2.0: keeping that material in one
+# clearly marked file is the point of the split. The two scripts share ONE copy of the
+# donor / alias / keeper tables and the whole generator -- the block between the
+# "shared generator" markers below, which the 6x8 script extracts from this file and execs.
+# Edit those tables here and both fonts move together.
+#
+# Both fonts install into /usr/share/consolefonts. Flip live with
+# `setfont /usr/share/consolefonts/meshterm8.psf.gz` (and back with meshterm.psf.gz), or
+# from MeshTerm's own Preferences page (Display -> Console font); persist a permanent
+# choice via FONT= in /etc/vconsole.conf.
 #
 # Why 512 and not more: fbcon caps a font at 512 glyphs. Braille alone is 256 and the base
 # set is another 256 -- the budget is already full, so every extra mark is drawn into a
@@ -26,11 +37,6 @@
 # (donating pi once erased Cyrillic pe), so a donor miss aborts the build and a keeper list
 # is verified after it. The rounded corners and the midline ellipsis cost no glyph: they
 # are aliased onto existing bitmaps.
-#
-# The 6x8 base is the Linux kernel's own font_6x8 (lib/fonts/font_6x8.c, GPL-2.0),
-# embedded below -- CP437 coverage, so unlike the Terminus base it has NO Cyrillic;
-# its keeper list drops the Cyrillic canary accordingly. Note: this bitmap's GPL-2.0
-# licence differs from this repository's own (Apache-2.0); it is embedded as data.
 #
 # Everything else is pure geometry, generated on-device; only the stock Terminus font and
 # python3 are required. Run as root on the Lyra (serial console is fine):
@@ -47,8 +53,10 @@ FONT_NAME=meshterm
 CONSOLEFONTS=/usr/share/consolefonts
 BASE="$CONSOLEFONTS/ter-u12n.psf.gz"          # stock Terminus 6x12, 256 glyphs
 OUT="$CONSOLEFONTS/$FONT_NAME.psf.gz"          # the 6x12 default
-OUT8="$CONSOLEFONTS/${FONT_NAME}8.psf.gz"      # the 6x8 A/B candidate
+OUT8="$CONSOLEFONTS/${FONT_NAME}8.psf.gz"      # the 6x8 companion, built by its own script
 VCONSOLE=/etc/vconsole.conf
+HERE=$(dirname "$0")
+BUILD8="$HERE/calculinux-console-font-6x8.sh"  # GPL-2.0; see its header
 
 # --- preflight: fail early with a plain reason, never half-apply -----------------------
 [ "$(id -u)" = 0 ] || { echo "error: run as root (writes $CONSOLEFONTS and $VCONSOLE)" >&2; exit 1; }
@@ -56,16 +64,22 @@ command -v python3 >/dev/null 2>&1 || { echo "error: python3 not found" >&2; exi
 command -v setfont >/dev/null 2>&1 || { echo "error: setfont not found (install kbd tools)" >&2; exit 1; }
 [ -f "$BASE" ] || { echo "error: base font not found: $BASE" >&2; exit 1; }
 
-# --- build both fonts ------------------------------------------------------------------
+# --- build the 6x12 font -----------------------------------------------------------------
 # The generator is inlined (quoted heredoc, so the shell expands nothing) and reads its
-# paths from the environment. It is the single source of truth for the synthesized glyphs.
-echo "building $OUT (6x12) and $OUT8 (6x8) ..."
-BASE="$BASE" OUT="$OUT" OUT8="$OUT8" python3 - <<'PYEOF'
-import base64, os, struct, gzip
+# paths from the environment. It is the single source of truth for the synthesized glyphs:
+# the block between the "shared generator" markers is extracted and exec'd verbatim by
+# calculinux-console-font-6x8.sh, so the donor, alias and keeper tables exist ONCE.
+echo "building $OUT (6x12) ..."
+BASE="$BASE" OUT="$OUT" python3 - <<'PYEOF'
+import os
 
-BASE = os.environ["BASE"]
-OUT = os.environ["OUT"]
-OUT8 = os.environ["OUT8"]
+# --- shared generator (BEGIN) ---------------------------------------------------------
+# Read by calculinux-console-font-6x8.sh out of this very file, between these two markers.
+# Keep it self-contained: no os.environ reads, nothing specific to one cell size, and no
+# reference to anything defined after the (END) marker.
+import gzip
+import struct
+
 PSF2_MAGIC = 0x864AB572
 
 # --- braille: 2-wide dot grid; the codepoint's low byte says which dots lit ------------
@@ -153,47 +167,6 @@ MARKS = {
         "##..##", "##..##", "######", "######", "......", "......"]),
 }
 
-# The same 18 marks redrawn for the 6x8 cell (first-draft art; a later tweak round
-# refines whichever font wins the A/B).
-MARKS8 = {
-    0x25CF: art([  # BLACK CIRCLE
-        "......", "..##..", ".####.", "######", "######", ".####.", "..##..", "......"]),
-    0x25C9: art([  # FISHEYE
-        "......", "..##..", ".#..#.", "#.##.#", "#.##.#", ".#..#.", "..##..", "......"]),
-    0x2605: art([  # BLACK STAR
-        "......", "..#...", "..#...", "######", ".####.", "..##..", ".#..#.", "......"]),
-    0x2014: art([  # EM DASH
-        "......", "......", "......", "######", "######", "......", "......", "......"]),
-    0x2713: art([  # CHECK MARK
-        "......", "......", ".....#", "....#.", "#..#..", ".##...", ".#....", "......"]),
-    0x2717: art([  # BALLOT X
-        "......", "#...#.", ".#.#..", "..#...", ".#.#..", "#...#.", "......", "......"]),
-    0x25B6: art([  # RIGHT-POINTING TRIANGLE
-        "#.....", "##....", "###...", "####..", "####..", "###...", "##....", "#....."]),
-    0x276F: art([  # HEAVY RIGHT ANGLE QUOTE -- the list cursor
-        "##....", ".##...", "..##..", "...##.", "..##..", ".##...", "##....", "......"]),
-    0x25B8: art([  # SMALL RIGHT-POINTING TRIANGLE -- reorder cursor
-        "......", "......", ".#....", ".##...", ".###..", ".##...", ".#....", "......"]),
-    0x2026: art([  # HORIZONTAL ELLIPSIS
-        "......", "......", "......", "......", "......", "#.#.#.", "#.#.#.", "......"]),
-    0x26A0: art([  # WARNING SIGN
-        "..##..", ".#..#.", "#.##.#", "#.##.#", "#....#", "#.##.#", "######", "......"]),
-    0x232B: art([  # ERASE TO THE LEFT
-        "......", "..####", ".##.##", "#..#.#", ".##.##", "..####", "......", "......"]),
-    0x21E7: art([  # UPWARDS WHITE ARROW -- shift
-        "..##..", ".#..#.", "#....#", "##..##", ".#..#.", ".#..#.", ".####.", "......"]),
-    0x2699: art([  # GEAR
-        "......", "..##..", "######", "##..##", "##..##", "######", "..##..", "......"]),
-    0x21BB: art([  # CLOCKWISE OPEN CIRCLE ARROW -- refresh
-        "....#.", ".#####", "#...#.", "#.....", "#.....", "#....#", ".####.", "......"]),
-    0x25F7: art([  # CLOCK FACE
-        "......", ".####.", "#..#.#", "#..###", "#....#", "#....#", ".####.", "......"]),
-    0x2316: art([  # POSITION INDICATOR -- crosshair
-        "..##..", "......", "#.##.#", "#.##.#", "......", "..##..", "......", "......"]),
-    0x26BF: art([  # SQUARED KEY -- padlock
-        ".####.", ".#..#.", "######", "##..##", "##..##", "######", "######", "......"]),
-}
-
 # Donor codepoints whose glyph slots we may repurpose (glyphs MeshTerm never draws).
 # Order matters: MARKS consume donors front to back, one each. See the header comment
 # for the shared-slot trap; the tail donors double as MAP TARGETS in meshterm/ui/theme
@@ -265,6 +238,11 @@ def build(glyphs, entries, charsize, height, marks, bands, keep_extra, out_path)
           % (out_path, height, len(marks), len(ALIASES)))
 
 
+# --- shared generator (END) -----------------------------------------------------------
+
+BASE = os.environ["BASE"]
+OUT = os.environ["OUT"]
+
 # --- 6x12: the Terminus base -----------------------------------------------------------
 base = gzip.open(BASE, "rb").read()
 magic, ver, hsize, flags, length, charsize, h, w = struct.unpack("<IIIIIIII", base[:32])
@@ -275,66 +253,21 @@ entries12 = base[32 + 256 * charsize:].split(b"\xff")[:256]
 # Cyrillic pe + pi: the shared-slot canaries (donating pi once erased pe).
 build(glyphs12, entries12, 12, 12, MARKS, BANDS12, [0x043F, 0x03C0], OUT)
 
-# --- 6x8: the kernel's font_6x8 (CP437 coverage -- no Cyrillic) ------------------------
-FONT8 = base64.b64decode("""
-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
-""")
-assert len(FONT8) == 2048
-glyphs8 = [FONT8[i * 8:(i + 1) * 8] for i in range(256)]
-# CP437's graphics mapping: the control range 0x00-0x1F holds pictographs, 0x7F a house;
-# the rest decodes through Python's cp437 codec.
-CP437_LOW = [
-    0x0000, 0x263A, 0x263B, 0x2665, 0x2666, 0x2663, 0x2660, 0x2022,
-    0x25D8, 0x25CB, 0x25D9, 0x2642, 0x2640, 0x266A, 0x266B, 0x263C,
-    0x25BA, 0x25C4, 0x2195, 0x203C, 0x00B6, 0x00A7, 0x25AC, 0x21A8,
-    0x2191, 0x2193, 0x2192, 0x2190, 0x221F, 0x2194, 0x25B2, 0x25BC,
-]
-entries8 = []
-for i in range(256):
-    if i < 0x20:
-        cp = CP437_LOW[i]
-    elif i == 0x7F:
-        cp = 0x2302
-    else:
-        cp = ord(bytes([i]).decode("cp437"))
-    entries8.append(chr(cp).encode("utf-8") if cp else b"")
-build(glyphs8, entries8, 8, 8, MARKS8, BANDS8, [0x03C0], OUT8)
 PYEOF
+
+# --- the 6x8 companion, out of its own (GPL-2.0) file -----------------------------------
+# Kept separate because its base bitmap is the kernel's font_6x8 and the produced PSF is
+# therefore GPL-2.0 -- see scripts/calculinux-console-font-6x8.sh and scripts/LICENSE.GPL-2.0.
+# It re-uses the shared generator block above rather than carrying a second copy of the
+# donor/alias/keeper tables, so a run here still produces both fonts, as it always did.
+# A failure there is not a failure here: the 6x12 default is the font the device boots in.
+if [ "${SKIP_6X8:-0}" = 1 ]; then
+    echo "skipping $OUT8 (SKIP_6X8=1)"
+elif [ -f "$BUILD8" ]; then
+    sh "$BUILD8" || echo "warning: the 6x8 build failed; $OUT is installed either way" >&2
+else
+    echo "note: $BUILD8 not found -- only $OUT was built (copy the whole scripts/ dir)" >&2
+fi
 
 # --- apply live: setfont re-renders the whole console immediately -----------------------
 TTY=/dev/tty1
@@ -349,7 +282,10 @@ else
     echo "FONT=$FONT_NAME" >> "$VCONSOLE"
 fi
 echo "persisted FONT=$FONT_NAME in $VCONSOLE (loads on every boot)"
-echo "A/B: 'setfont $OUT8' for 53x40, 'setfont $OUT' for 53x26; persist the winner in $VCONSOLE"
+if [ -f "$OUT8" ]; then
+    echo "taller: 'setfont $OUT8' for 53x40, 'setfont $OUT' for 53x26 -- or let MeshTerm do"
+    echo "it (Preferences -> Display -> Console font); persist a permanent choice in $VCONSOLE"
+fi
 
 # --- palette -----------------------------------------------------------------------------
 # By design, the console keeps its STANDARD kernel palette -- black

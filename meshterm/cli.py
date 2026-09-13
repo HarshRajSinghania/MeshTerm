@@ -308,6 +308,17 @@ def main_callback(
         if _offer_a_console_that_can_draw_meshterm(console, prefs):
             return
 
+        from .services import consolefont as vt_console_font
+
+        # The PicoCalc's whole console shares one font, so asking for the 6x8 build changes
+        # what the *shell* is drawn in too. Save the reader's font before the first paint
+        # and put it back on the way out — from the `finally` here, and from an `atexit`
+        # remember() arms, since ^Q and an unhandled error leave by other doors. This is
+        # the menu's boundary only: a scripted run prints into a console it was invited
+        # into and never touches its font.
+        saved_font = vt_console_font.remember()
+        vt_console_font.apply(prefs.get("console_font"))
+
         # The interactive session is the one that holds the stores in memory and rewrites
         # them whole, so it is the one that claims the directory. One-shot subcommands are
         # brief and mostly read; blocking `meshterm contacts` because a menu is open in
@@ -333,6 +344,8 @@ def main_callback(
             get_logger().exception("the interactive session raised an unhandled error")
             _report_log_location(console, settings.config_dir)
             raise
+        finally:
+            vt_console_font.restore(saved_font)
 
 
 def _offer_a_console_that_can_draw_meshterm(console: Console, prefs: Preferences) -> bool:

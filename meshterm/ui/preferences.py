@@ -43,6 +43,7 @@ from ..core.preferences import (
     parse_value,
     range_hint,
 )
+from ..platforms import get_platform
 from .menus import (
     confirm_discard,
     exit_rows,
@@ -132,9 +133,20 @@ def _resettable(prefs: Preferences, pending: dict[str, Any]) -> list[str]:
     ]
 
 
+def _page_groups() -> list[tuple[str, list[PrefSpec]]]:
+    """The groups this page draws — everything the *running* platform is offered.
+
+    A preference gated to another flavour (the PicoCalc's console font, on a desktop) is a
+    row whose question this machine cannot answer, so it is not drawn. Its value is still
+    in the registry and still round-trips through the file, which is what keeps a
+    ``preferences.yaml`` written on the handheld from being quietly emptied by a desktop.
+    """
+    return by_group(get_platform().name)
+
+
 def _all_specs() -> list[PrefSpec]:
-    """Every spec in page order (the grouping flattened)."""
-    return [spec for _, specs in by_group() for spec in specs]
+    """Every spec the page draws, in page order (the grouping flattened)."""
+    return [spec for _, specs in _page_groups() for spec in specs]
 
 
 #: Cell cap on *each side* of a VALUE lane's ``current → staged``. The lane is sized to
@@ -174,7 +186,7 @@ def _menu_items(prefs: Preferences, pending: dict[str, Any]) -> tuple[str, list]
     value), description — under one pinned header, so the page reads as the editor it is.
     """
     sections: list[tuple[str, list[tuple[str, Text, str, Any]]]] = []
-    for group, specs in by_group():
+    for group, specs in _page_groups():
         sections.append(
             (
                 group,
@@ -260,6 +272,10 @@ def preferences_table(prefs: Preferences, width: int = _DESCRIBE_FROM) -> Table:
     lists *every* preference's default beside its value, because a terminal print has no
     row to open and no reset row to infer the difference from — and it names each
     preference by its **key**, since that is what ``preferences set`` takes.
+
+    "Every" is meant literally, platform gates included (``by_group()`` with no argument):
+    a command line is regularly typed on one machine about a file that belongs to another,
+    and a key the listing hid is a key nobody would think to ``set``.
 
     Args:
         prefs: The preferences to render.

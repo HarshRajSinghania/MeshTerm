@@ -17,6 +17,28 @@ allowed to change behaviour, not just add to it.
 
 ## [Unreleased]
 
+### Added
+
+- **The PicoCalc picks its console font, and MeshTerm hands the console back.** A *Console
+  font* row under Display on the Preferences page offers `6x12 (53x26)` — the font the
+  device boots in — and `6x8 (53x40)`, fourteen more rows of the same glyph inventory in a
+  shorter cell. Choosing one loads it there and then; the kernel raises SIGWINCH on a font
+  change, so the frame repaints at the new height without a relaunch. The 6×8 base has no
+  Cyrillic, so a node named in Cyrillic draws as boxes on it.
+
+  A virtual terminal has one font for the whole console, so switching MeshTerm's switches
+  the shell's. It saves whatever font was loaded before the first paint and reloads it on
+  the way out — from the session's teardown and from an `atexit` hook, so quitting, an
+  unwind and a crash all leave the console as they found it. Off the handheld, off a real
+  VT, or with no `setfont`, none of it happens and the log says which. The row is drawn on
+  the PicoCalc only, while the value round-trips through `preferences.yaml` everywhere.
+
+  The 6×8 font's build moved into `scripts/calculinux-console-font-6x8.sh`, on its own
+  because its base bitmap is the Linux kernel's `font_6x8` and therefore GPL-2.0 — marked
+  as such, with the licence beside it, and reading the donor, alias and keeper tables out
+  of the 6×12 script rather than keeping a second copy of them. Running the 6×12 script
+  still builds both.
+
 ## [0.3.2] — 2026-09-11
 
 ### Added

@@ -91,6 +91,14 @@ class PrefSpec:
         relaunch: Whether the new value only takes hold next launch. Woven into the
             description rather than shown as its own mark — it is a caveat about one
             preference, not a status the reader scans a column for.
+        platforms: Which :class:`~meshterm.platforms.Platform` names the preference is
+            *offered* on, or ``None`` (the default) for all of them. A preference about
+            hardware only one flavour has — the PicoCalc's console font — would be a row
+            answering a question the desktop cannot ask, so the page leaves it out there.
+            Only the page: the key stays in the registry on every platform, so a file
+            written on the handheld still parses, keeps its value and saves back out on a
+            desktop rather than being silently dropped by a machine that merely cannot
+            act on it.
     """
 
     key: str
@@ -104,11 +112,23 @@ class PrefSpec:
     maximum: float | None = None
     unit: str = ""
     relaunch: bool = False
+    platforms: frozenset[str] | None = None
 
     @property
     def description(self) -> str:
         """The DESCRIPTION lane's text: the help, plus the relaunch caveat where it applies."""
         return f"{self.help} (next launch)" if self.relaunch else self.help
+
+    def offered_on(self, platform: str) -> bool:
+        """Whether the editor draws a row for this preference on ``platform``.
+
+        Args:
+            platform: A :attr:`~meshterm.platforms.Platform.name`.
+
+        Returns:
+            ``True`` unless :attr:`platforms` names a set this platform is not in.
+        """
+        return self.platforms is None or platform in self.platforms
 
 
 #: The two languages the plain CLI can print a time in. Named for what the reader sees
@@ -148,6 +168,16 @@ _CONSOLE_SETUP_CHOICES: dict[str, str] = {
     "auto": "Automatic",
     "off": "Leave it alone",
 }
+
+#: The two console fonts ``scripts/calculinux-console-font.sh`` (and its 6x8 companion)
+#: build for the PicoCalc's framebuffer panel. Each is named by its cell and by the screen
+#: that cell buys, because choosing a font here is choosing how much fits — not a bitmap.
+#: Plain ASCII ``x`` and not ``×``: the multiplication sign is not one of the 512 glyphs
+#: the console font carries, so it would draw as a tofu box on the one platform this
+#: preference is offered on. The value maps to a file in
+#: :data:`meshterm.services.consolefont.FONT_FILES`, which is where a filename belongs —
+#: a path on one device is not something a reader picks.
+_CONSOLE_FONT_CHOICES: dict[str, str] = {"6x12": "6x12 (53x26)", "6x8": "6x8 (53x40)"}
 
 #: What the log file keeps. The plain level names, which are what every other tool calls
 #: these — someone being talked through a problem is being told "set it to debug", not
@@ -365,6 +395,20 @@ PREFERENCES: tuple[PrefSpec, ...] = (
         default="auto",
         choices=_CONSOLE_SETUP_CHOICES,
     ),
+    PrefSpec(
+        key="console_font",
+        label="Console font",
+        help="Bigger text, or more rows on the handheld's panel",
+        group="Display",
+        value_type="enum",
+        # The 6x12 Terminus derivative, because it is the font the device boots with and
+        # the one every screen's row budget is designed to (Platform.readable_rows is 26).
+        # The 6x8 build is the same glyph inventory in a shorter cell — fourteen more rows
+        # for anyone who would rather see more of a list than read it comfortably.
+        default="6x12",
+        choices=_CONSOLE_FONT_CHOICES,
+        platforms=frozenset({"picocalc"}),
+    ),
     # --- Diagnostics ---------------------------------------------------------------
     PrefSpec(
         key="log_level",
@@ -402,13 +446,21 @@ def get_spec(key: str) -> PrefSpec:
         raise PreferenceError(f"unknown preference: {key!r}") from None
 
 
-def by_group() -> list[tuple[str, list[PrefSpec]]]:
+def by_group(platform: str | None = None) -> list[tuple[str, list[PrefSpec]]]:
     """Every preference grouped for display, in :data:`GROUPS` order.
+
+    Args:
+        platform: A :attr:`~meshterm.platforms.Platform.name` to draw the page for, which
+            drops the preferences that platform is not offered (see
+            :meth:`PrefSpec.offered_on`). ``None`` — the default, and what the file writer
+            uses — keeps every preference, so an override made on one flavour survives
+            being loaded and saved on another.
 
     Returns:
         ``(group, specs)`` pairs; a group holding no preferences is omitted.
     """
-    grouped = [(g, [s for s in PREFERENCES if s.group == g]) for g in GROUPS]
+    kept = [s for s in PREFERENCES if platform is None or s.offered_on(platform)]
+    grouped = [(g, [s for s in kept if s.group == g]) for g in GROUPS]
     return [(g, specs) for g, specs in grouped if specs]
 
 

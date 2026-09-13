@@ -33,6 +33,7 @@ from meshterm.core.preferences import (
 )
 from meshterm.core.watch_store import WatchStore
 from meshterm.persistence.repository import Repository
+from meshterm.platforms import get_platform
 from meshterm.ui.preferences import _menu_items, edit_preferences, preferences_table
 from meshterm.ui.theme import active_theme
 from tests.conftest import plain as _plain
@@ -257,11 +258,16 @@ def _rows(prefs: Preferences, pending: dict | None = None) -> tuple[str, list[st
 
 
 def test_the_page_groups_every_preference_under_its_own_heading() -> None:
-    """Each group is a section, and each of its preferences a row under it."""
+    """Each group is a section, and each of its preferences a row under it.
+
+    "Its preferences" is what this platform is offered: a spec gated to another flavour
+    (``PrefSpec.platforms``) has no row here, which is the gate's whole visible effect and
+    is pinned in ``tests/test_vt_console_font.py``.
+    """
     _, items = _menu_items(Preferences(), {})
     _, rows = _rows(Preferences())
     values = [item.value for item in items if hasattr(item, "value")]
-    for group, specs in by_group():
+    for group, specs in by_group(get_platform().name):
         assert any(f"── {group} ──" in row for row in rows), f"{group} has no heading"
         for spec in specs:
             assert spec.key in values, f"{spec.key} has no row"

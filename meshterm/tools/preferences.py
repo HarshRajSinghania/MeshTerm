@@ -82,6 +82,7 @@ class PreferencesTool(Tool):
             PreferenceError: If a key is unknown or a value fails its spec — reported
                 cleanly by the CLI rather than as a traceback.
         """
+        from ..services import consolefont
         from ..ui.preferences import preferences_table
         from ..ui.surface import TuiUi
 
@@ -125,6 +126,13 @@ class PreferencesTool(Tool):
 
         if changes:
             prefs.save()
+        if not scripted and any(c["key"] == consolefont.PREFERENCE_KEY for c in applied):
+            # The one preference whose effect is outside the app: the console's font is
+            # the console's, so it takes hold now rather than next launch. The kernel
+            # sends SIGWINCH on a VT font change, so prompt_toolkit repaints the whole
+            # frame at the new row count by itself. Menu-only — a scripted run was typed
+            # into a console it does not own (see meshterm.services.consolefont).
+            consolefont.apply(prefs.get(consolefont.PREFERENCE_KEY))
         if scripted and any(op[0] in ("set", "reset") for op in ops):
             blocks.append(_written(applied, prefs))
 
