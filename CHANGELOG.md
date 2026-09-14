@@ -17,10 +17,35 @@ allowed to change behaviour, not just add to it.
 
 ## [Unreleased]
 
+## [0.3.5] — 2026-09-14
+
+### Added
+
+- A release now rebuilds [meshterm.net](https://meshterm.net) from the tag, so the site
+  carries the version it links to.
+
 ### Changed
+
+- **The purge preview counts in columns.** The target ladder used to describe each rung in a
+  phrase — "keeps 45 · archives 12" — so comparing two rungs meant finding the numbers inside
+  two sentences. Keeps and archives are right-aligned columns now under a pinned
+  `TARGET / KEEPS / ARCHIVES` header, one lane measured across both sections so the numbers
+  run straight down the ladder; a rung that archives nothing shows a muted 0. The reasons a
+  contact ranks low sit in three lanes of their own under one header, instead of running on
+  from wherever the previous reason ended.
 
 - The PayPal link on the Support page, and in the repository's funding file, is PayPal's own
   donate address rather than a shortener redirect, so a reader can see where it goes.
+
+### Fixed
+
+- **A name with a skin tone or a cut-off joiner no longer pulls its row out of line.** Two
+  real contact names showed it: one carries a skin-tone modifier, which one width table
+  counted as two cells and the terminal draws as none, so the row reserved four cells for a
+  two-cell glyph; the other is a flag sequence cut at the name's byte limit just past its
+  joiner, which swallowed the padding space after it and left the name a cell short. A
+  modifier now measures zero, and a joiner joins only a pictograph. The purge preview, the
+  Contacts list and the chat picker all pad names through that one measurement.
 
 ## [0.3.4] — 2026-09-13
 
@@ -715,7 +740,8 @@ deliberately not reconstructed here.
 - Two `TYPE_CHECKING` imports the test suite referenced but never imported, on paths that
   happened never to run.
 
-[Unreleased]: https://github.com/jpmartineau/MeshTerm/compare/v0.3.4...HEAD
+[Unreleased]: https://github.com/jpmartineau/MeshTerm/compare/v0.3.5...HEAD
+[0.3.5]: https://github.com/jpmartineau/MeshTerm/releases/tag/v0.3.5
 [0.3.4]: https://github.com/jpmartineau/MeshTerm/releases/tag/v0.3.4
 [0.3.3]: https://github.com/jpmartineau/MeshTerm/releases/tag/v0.3.3
 [0.3.2]: https://github.com/jpmartineau/MeshTerm/releases/tag/v0.3.2
