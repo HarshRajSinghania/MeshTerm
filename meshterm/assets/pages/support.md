@@ -22,10 +22,10 @@ https://buymeacoffee.com/johnputer
 
 ### Donate via Paypal
 
-- *https://tinyurl.com/SupportMeshTerm*
+- *https://www.paypal.com/donate/?hosted_button_id=5RATNEJP2K5U6*
 
 ```qr
-https://tinyurl.com/SupportMeshTerm
+https://www.paypal.com/donate/?hosted_button_id=5RATNEJP2K5U6
 ```
 
 ### Become a patron

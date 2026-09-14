@@ -17,6 +17,11 @@ allowed to change behaviour, not just add to it.
 
 ## [Unreleased]
 
+### Changed
+
+- The PayPal link on the Support page, and in the repository's funding file, is PayPal's own
+  donate address rather than a shortener redirect, so a reader can see where it goes.
+
 ## [0.3.4] — 2026-09-13
 
 ### Fixed
