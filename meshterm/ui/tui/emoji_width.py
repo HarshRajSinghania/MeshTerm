@@ -74,6 +74,13 @@ single fragment (:class:`ClusterTextControl`) so it becomes one ``Char`` rather 
 cluster measures whatever its base measures, so the two curated sets above still reach it: listing a
 base in the wide set widens the whole sequence with it.
 
+Two neighbours of that rule are structural too, and corrected at either width. A **skin tone**
+(``👍🏽``, or the toned base of ``👨🏻‍💻``) recolours the glyph before it and takes no cell,
+as Rich already measures it; wcwidth gives each modifier two, so prompt_toolkit measures it zero
+here and a joined run carries it along. And a **stranded joiner** — a MeshCore name cut at its byte
+limit just past the ZWJ of ``🏴‍☠️`` — joins nothing (:func:`_joins`): both authorities used to fold
+the next character into the flag regardless, and that character is the next lane's padding.
+
 A **bare** codepoint the authorities *already agree* measures one is not a candidate for that set,
 however wide the glyph looks in a font book: without a variation selector asking for emoji
 presentation, an emoji outside Emoji_Presentation (``🛣`` U+1F6E3, ``🕸`` U+1F578) draws as a
@@ -98,6 +105,16 @@ _ZWJ = "‍"
 
 #: Variation selector 16, the request for emoji presentation.
 _VS16 = "️"
+
+#: The five Fitzpatrick skin-tone modifiers (U+1F3FB–U+1F3FF). One following an emoji base
+#: *recolours* that glyph rather than drawing one of its own — ``👍🏽`` is a thumb, not a thumb
+#: beside a swatch — so it occupies no cell. Rich's table already says zero; wcwidth says two,
+#: which is how ``👨🏻‍💻`` came to cost prompt_toolkit four cells for a two-cell glyph.
+_MODIFIERS = frozenset(chr(cp) for cp in range(0x1F3FB, 0x1F400))
+
+#: What may trail a base inside one glyph with no joiner in front of it: its variation selector
+#: and its skin tone. A joined run gathers these after its base and after every component.
+_EXTENDERS = frozenset((_VS16, *_MODIFIERS))
 
 #: Codepoints that never occupy a cell on their own: zero-width joiner and the
 #: emoji-presentation variation selector. Skipping them means a base glyph is
@@ -165,6 +182,30 @@ def _is_regional_indicator(char: str) -> bool:
     return len(char) == 1 and 0x1F1E6 <= ord(char) <= 0x1F1FF
 
 
+def _joins(char: str) -> bool:
+    """Whether a zero-width joiner in front of ``char`` really joins it to the glyph before.
+
+    Every component an emoji ZWJ sequence joins is a pictograph — ``♂``, ``☠``, ``❤``, ``💻``,
+    all at U+2000 and above — so that is the test. What it rules out is a **stranded** joiner.
+    A MeshCore advert name is cut at a byte limit, and a name that ended on a joined emoji
+    (``That's So Fetch 🏴‍☠️``) arrives cut just past the joiner, followed by whatever the row
+    puts after the name: a space of lane padding, the next lane. Both width authorities used
+    to fold that character into the flag regardless, so the padding measured nothing while the
+    terminal still drew it, and every lane after the name started a column late.
+    """
+    return char >= " " and not char.isspace()
+
+
+def _stranded_out(text: str) -> str:
+    """Drop every joiner that joins nothing (see :func:`_joins`), leaving real sequences whole."""
+    last = len(text) - 1
+    return "".join(
+        char
+        for index, char in enumerate(text)
+        if char != _ZWJ or (index < last and _joins(text[index + 1]))
+    )
+
+
 def _joined_out(text: str) -> str:
     """Drop every codepoint a ZWJ folds into the glyph before it, leaving the bases behind.
 
@@ -175,17 +216,20 @@ def _joined_out(text: str) -> str:
     set, the narrow allowlist, the flag category — measure correctly, so a cluster inherits
     whatever its base is worth and every existing lever still reaches it.
 
-    Variation selectors are left in place: both authorities already give them zero.
+    A stranded joiner (see :func:`_joins`) goes on its own: the character after it was never
+    part of the glyph, and keeps its cell. Variation selectors and skin tones are left in
+    place — both authorities give them zero.
     """
     kept = []
-    joined = False  # the previous codepoint was a joiner, so this one is part of that glyph
+    joined = False  # the previous codepoint was a joiner, so this one may belong to that glyph
     for char in text:
         if char == _ZWJ:
             joined = True
             continue
         if joined:
             joined = False
-            continue
+            if _joins(char):
+                continue
         kept.append(char)
     return "".join(kept)
 
@@ -238,8 +282,9 @@ def calibrate(*, force_width: int | None = None) -> None:
     # narrow the curated lone-codepoint emoji this terminal also draws in one cell.
     # width 2 -> Rich's default already matches, so its table is left alone (narrowing here
     # would instead pull a correctly-wide emoji's border a column short) — but prompt_toolkit
-    # still sums a ZWJ sequence's parts at either width, and that is wrong on every terminal,
-    # so the cluster rule is installed on its own.
+    # still sums a ZWJ sequence's parts and a skin tone's cells at either width, and both
+    # authorities let a stranded joiner swallow the character after it, which is wrong on
+    # every terminal, so those rules are installed on their own.
     # unknown/None -> no terminal to be aligned with; touch nothing.
     if width == 1:
         _install_terminal_widths(_narrow_lone_set(), _wide_base_set())
@@ -411,6 +456,8 @@ def _make_cell_len(narrow: frozenset[str], wide: frozenset[str]) -> Callable[[st
       (:func:`_joined_out`), so ``"🤷‍♂️"`` is measured as the one glyph it is. Rich's stock
       loop does this and the selector-skipping replacement above would otherwise lose it,
       counting the male sign as a cell of its own and pulling the row's border a column in.
+      A *stranded* joiner (:func:`_joins`) folds in nothing, where the stock loop would have
+      swallowed the padding space after a byte-cut name.
 
     Everything else keeps its ``get_character_cell_size`` value, so a lone emoji the terminal
     *does* draw two wide (a menu icon like ``📡``, never placed in ``narrow``) is left alone.
@@ -460,6 +507,11 @@ def _make_pt_cache(narrow: frozenset[str], wide: frozenset[str], *, flags: bool 
     subclass forces such a base to two; the same per-character summation then gives ``"🛩️ hi"`` its
     correct width, the trailing selector staying zero.
 
+    A **skin tone** (:data:`_MODIFIERS`) measures zero, as Rich already has it: wcwidth calls
+    each modifier two, so ``👍🏽`` cost four cells here and the joined ``👨🏻‍💻`` four as well.
+    At zero, prompt_toolkit's own layout folds the modifier into the cell before it, the way it
+    folds a variation selector — and :class:`ClusterTextControl` carries it inside a joined run.
+
     Args:
         narrow: lone codepoints to measure as one cell.
         wide: base codepoints to measure as two.
@@ -483,6 +535,9 @@ def _make_pt_cache(narrow: frozenset[str], wide: frozenset[str], *, flags: bool 
                 if len(string) <= self.LONG_STRING_MIN_LEN:
                     self[string] = total
                 return total
+            if string in _MODIFIERS:
+                self[string] = 0
+                return 0
             if string in wide:
                 self[string] = 2
                 return 2
@@ -525,21 +580,35 @@ def _install_terminal_widths(narrow: frozenset[str], wide: frozenset[str]) -> No
 
 
 def _install_cluster_widths() -> None:
-    """Correct the one thing that is wrong at *either* emoji width: a ZWJ sequence.
+    """Correct what is wrong at *either* emoji width: joined runs, skin tones, stranded joiners.
 
     A terminal that draws ``☀️`` in two cells needs none of the narrowing above — Rich's table
     already matches what it paints, and so does prompt_toolkit's for everything that stands on
     its own. A joined sequence is the exception: prompt_toolkit adds up its codepoints wherever
     it runs, so ``👨‍👩‍👧`` reserves six cells for a two-cell glyph on the widest terminal as
-    surely as on the narrowest. Only prompt_toolkit's cache is swapped (with both curated sets
-    empty and the flag category left alone, since neither has been confirmed here), and Rich is
-    not touched at all: its stock measurement handles a cluster correctly on its own.
+    surely as on the narrowest, and a skin tone costs it two more on any of them. So
+    prompt_toolkit's cache is swapped, with both curated sets empty and the flag category left
+    alone, since neither has been confirmed here.
+
+    Rich's *table* is left as it is — it measures a real cluster and a skin tone right on its
+    own — and only its loop is wrapped, for the one string it gets wrong: it skips whatever
+    follows a joiner without asking what that is, so the padding after a byte-cut ``🏴‍``
+    measured nothing (see :func:`_joins`). The wrapper takes the stranded joiners out before the
+    stock loop sees the string; every other string reaches it untouched.
     """
     global _CLUSTERS
     import prompt_toolkit.utils as ptu
+    import rich.cells as cells
 
     from .render import _ANSI_CACHE
 
+    stock = cells._cell_len
+
+    def _cell_len(text: str, unicode_version: str = "auto") -> int:
+        return stock(_stranded_out(text) if _ZWJ in text else text, unicode_version)
+
+    cells.cached_cell_len.cache_clear()
+    cells._cell_len = _cell_len
     ptu._CHAR_SIZES_CACHE = _make_pt_cache(frozenset(), frozenset(), flags=False)
     _CLUSTERS = True
     _ANSI_CACHE.clear()
@@ -573,10 +642,11 @@ def _join_zwj_clusters(line: list) -> list:
 
     The line arrives one codepoint per fragment (that is what
     :class:`~prompt_toolkit.formatted_text.ANSI` produces), so a sequence is a run to be
-    gathered: a base, its optional variation selector, then any number of *joiner + component +
-    optional selector* groups. A run with no joiner in it is handed back untouched — including a
-    lone VS16 pair, which prompt_toolkit already folds into the preceding cell on its own, and a
-    trailing joiner with nothing after it, which is not a sequence at all.
+    gathered: a base, its optional variation selector or skin tone (:data:`_EXTENDERS`), then any
+    number of *joiner + component + optional extenders* groups. A run with no joiner in it is
+    handed back untouched — including a lone VS16 pair or toned emoji, which prompt_toolkit
+    already folds into the preceding cell on its own, and a joiner with no pictograph after it
+    (see :func:`_joins`), which is not a sequence at all.
 
     The whole line is handed back unchanged when it holds no joiner, which is almost every line;
     the scan is one comparison per cell and runs only when a control's content actually changes.
@@ -588,13 +658,13 @@ def _join_zwj_clusters(line: list) -> list:
     count = len(line)
     while index < count:
         end = index + 1
-        while end < count and line[end][1] == _VS16:
+        while end < count and line[end][1] in _EXTENDERS:
             end += 1
         joined = False
-        while end + 1 < count and line[end][1] == _ZWJ:
+        while end + 1 < count and line[end][1] == _ZWJ and _joins(line[end + 1][1]):
             joined = True
             end += 2  # the joiner and the codepoint it joins
-            while end < count and line[end][1] == _VS16:
+            while end < count and line[end][1] in _EXTENDERS:
                 end += 1
         if joined:
             text = "".join(item[1] for item in line[index:end])

@@ -31,6 +31,10 @@ _WEB = "\U0001f578"  # 🕸 its untouched sibling one Trophy board down — the 
 _SHRUG = "\U0001f937‍♂️"  # 🤷‍♂️ a ZWJ sequence: base, joiner, male sign, selector — one glyph
 _FAMILY = "\U0001f468‍\U0001f469‍\U0001f467"  # 👨‍👩‍👧 three joined people, still one glyph
 _ZWJ = "‍"  # the joiner itself: the tell that its neighbours are a single glyph
+_THUMB = "\U0001f44d\U0001f3fd"  # 👍🏽 a base and its skin tone, no joiner — still one glyph
+_TECHIE = "\U0001f468\U0001f3fb‍\U0001f4bb"  # 👨🏻‍💻 a toned base, then a joined laptop
+_FLAG = "\U0001f3f4"  # 🏴 a black flag, the base of the pirate flag below
+_STRANDED = f"{_FLAG}‍"  # 🏴‍☠️ cut after its joiner by a name's byte limit: joins nothing
 
 
 def test_narrow_lone_set_defaults_extends_and_disables(monkeypatch) -> None:
@@ -226,6 +230,50 @@ def test_calibrate_width2_narrows_nothing_but_still_joins_clusters(monkeypatch) 
         # The one correction that holds at either width.
         assert get_cwidth(_SHRUG) == 2  # was 3
         assert get_cwidth(_FAMILY) == 2  # was 6
+        assert get_cwidth(_TECHIE) == 2  # was 6: a skin tone is no cell, at either width
+    finally:
+        _restore(snap)
+
+
+def test_a_skin_tone_is_part_of_its_glyph_in_both_authorities() -> None:
+    """A skin-tone modifier recolours the emoji before it and takes no cell of its own.
+
+    wcwidth counts each modifier as two, so prompt_toolkit reserved four cells for ``👍🏽`` and
+    for the joined ``👨🏻‍💻`` — a two-cell notch in every row naming such a node, and every lane
+    after the name drawn two columns off. Rich's table already says zero; the cache now agrees,
+    on both calibration paths.
+    """
+    for narrow, flags in ((frozenset(_WAVE), True), (frozenset(), False)):
+        cache = ew._make_pt_cache(narrow, frozenset(), flags=flags)
+        assert cache[_THUMB] == 2
+        assert cache[_TECHIE] == 2
+        assert cache[f"Tech {_TECHIE} x"] == len("Tech ") + 2 + len(" x")
+    assert ew._make_cell_len(frozenset(_WAVE), frozenset())(_TECHIE) == 2
+
+
+def test_a_stranded_joiner_leaves_the_next_character_its_cell(monkeypatch) -> None:
+    """A joiner with no pictograph after it joins nothing, in both authorities and both paths.
+
+    A MeshCore name is cut at a byte limit, so ``That's So Fetch 🏴‍☠️`` arrives as the flag and
+    a bare joiner. Both authorities folded whatever came next into the flag — the padding after
+    the name — so the name lane measured a cell short and every lane after it began a column
+    before the terminal drew it.
+    """
+    monkeypatch.delenv("MESHTERM_NARROW_EMOJI", raising=False)
+    padded = f"{_STRANDED}  x"  # the flag's two cells, two of padding, then the next lane
+    cell_len = ew._make_cell_len(frozenset(_WAVE), frozenset())
+    assert cell_len(padded) == 5
+    assert ew._make_pt_cache(frozenset(_WAVE), frozenset())[padded] == 5
+    # A real sequence still joins: the shrug's male sign is a pictograph, not a padding space.
+    assert cell_len(f"{_SHRUG} x") == 4
+
+    snap = _snapshot()
+    try:
+        ew._CALIBRATED = False
+        ew.calibrate(force_width=2)
+        # Rich's own loop, trusted on this path, skipped the space and counted four.
+        assert cells.cell_len(padded) == 5
+        assert cells.cell_len(_SHRUG) == 2 and cells.cell_len(_FAMILY) == 2
     finally:
         _restore(snap)
 
@@ -259,6 +307,11 @@ def test_join_zwj_clusters_merges_only_joined_runs() -> None:
     assert texts(ew._join_zwj_clusters(line(f"☀️{_SHRUG}"))) == ["☀", "️", _SHRUG]
     # A trailing joiner with nothing to join is not a sequence either.
     assert texts(ew._join_zwj_clusters(line(f"a{_ZWJ}"))) == ["a", _ZWJ]
+    # A skin tone on the base belongs to the run the way its selector does.
+    assert texts(ew._join_zwj_clusters(line(f"|{_TECHIE}|"))) == ["|", _TECHIE, "|"]
+    # A stranded joiner, followed by the name lane's padding, is not a sequence: the space
+    # after it keeps a fragment — and so a cell — of its own.
+    assert texts(ew._join_zwj_clusters(line(f"{_STRANDED} x"))) == [_FLAG, _ZWJ, " ", "x"]
 
     # A merged fragment iterates as the whole sequence, which is what makes prompt_toolkit
     # build one Char of it instead of one per codepoint.
