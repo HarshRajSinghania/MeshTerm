@@ -1180,8 +1180,10 @@ def test_gallery_map_shows_the_basemap_credit_where_its_frame_puts_it(
 
     if platform.frame_border:
         assert "OpenStreetMap" not in body, "the credit reached the drawing on a bordered frame"
-        rule = next(ln for ln in reversed(lines) if "└" in ln)
-        assert rule.endswith(f" {expected} ─┘"), rule
+        # Rounded corners, or square where Rich judges the console legacy Windows (a
+        # captured pytest run there) — either is the frame's own bottom rule.
+        rule = next(ln for ln in reversed(lines) if "╰" in ln or "└" in ln)
+        assert rule[-1] in "╯┘" and rule[:-1].endswith(f" {expected} ─"), rule
     else:
         assert body.splitlines()[-1].endswith(expected)
     assert any(expected in ln for ln in lines)

@@ -2589,6 +2589,12 @@ def _last_row(screen: MapScreen, cols: int = 80) -> str:
     return _plain(screen.render_body(cols)).splitlines()[-1]
 
 
+#: A panel's bottom corners, in both shapes Rich draws them: rounded wherever the console
+#: can take them, square where it judges the console a legacy Windows one — which a
+#: captured pytest run on Windows is. Asserting one shape passes on one OS only.
+_BOTTOM_CORNERS = ("╰╯", "└┘")
+
+
 def _bottom_rule(screen: MapScreen, cols: int = 80, rows: int = 24) -> str:
     """The composed frame's bottom border rule — the line the caption is set into."""
     from rich.text import Text
@@ -2598,7 +2604,9 @@ def _bottom_rule(screen: MapScreen, cols: int = 80, rows: int = 24) -> str:
     screen.note_viewport(max(1, rows - 4))
     composed = frame.compose_base(Text(""), screen, screen.footer_hint, cols, rows)
     return next(
-        ln for ln in reversed([Text.from_ansi(x).plain for x in composed.split("\n")]) if "└" in ln
+        ln
+        for ln in reversed([Text.from_ansi(x).plain for x in composed.split("\n")])
+        if any(pair[0] in ln for pair in _BOTTOM_CORNERS)
     )
 
 
@@ -2651,9 +2659,10 @@ def test_a_bordered_frame_sets_the_credit_in_its_bottom_rule_and_spares_the_draw
     set_platform(REGULAR)
     screen = _credited_map(72)
     # Right-justified with exactly one rule cell before the corner, as a title sits in the
-    # top rule: "└──… © OpenMapTiles · Data from OpenStreetMap ─┘".
+    # top rule: "╰──… © OpenMapTiles · Data from OpenStreetMap ─╯".
     rule = _bottom_rule(screen, 72)
-    assert rule.startswith("└") and rule.endswith(f" {attribution.CREDIT_FULL} ─┘")
+    assert rule[0] + rule[-1] in _BOTTOM_CORNERS, rule
+    assert rule[:-1].endswith(f" {attribution.CREDIT_FULL} ─"), rule
     assert cell_len(rule) == 72
     # And nothing of it reached the drawing: the map's own rows are pure picture.
     assert "OpenStreetMap" not in _plain(screen.render_body(72))
