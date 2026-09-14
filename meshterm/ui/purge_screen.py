@@ -53,6 +53,7 @@ import time
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
+from rich.cells import cell_len
 from rich.text import Text
 
 from ..core.connection import ContactNotOnDeviceError
@@ -62,7 +63,7 @@ from ..core.contact_score import (
     sweep_candidates,
 )
 from ..core.models import Contact
-from .menus import Lane, column_header, fit_cells, menu_rows, section_heading
+from .menus import Lane, column_header, fit_cells, section_heading
 from .theme import name_style
 from .tui import Choice, Separator
 from .tui.screen import CANCEL
@@ -129,7 +130,13 @@ def _pctl_cell(percentile: int) -> Text:
 
 
 def _preview_header(width: int) -> str:
-    """The preview's pinned column header, fitted to the terminal."""
+    """The preview's pinned column header, fitted to the terminal.
+
+    ``WHY IT RANKS LOW`` heads all three reason lanes at once rather than naming each: a
+    lane holds a contact's *n*-th weakest reason, so its phrases are of mixed kinds — a
+    message count over an age over a hop count — and a per-lane word would claim a kind the
+    column does not keep.
+    """
     return column_header(
         [
             Lane("PCTL", _PCTL_W),
@@ -140,12 +147,30 @@ def _preview_header(width: int) -> str:
     )
 
 
-def _victim_row(scored: ScoredContact) -> Text:
+def _reason_lanes(victims: list[ScoredContact]) -> tuple[int, ...]:
+    """Each reason lane's width: the widest phrase any victim puts in it.
+
+    Measured against the list rather than fixed, so the lanes are only as wide as the words
+    in them — and remeasured whenever a spared row leaves, which can only tighten them.
+    """
+    count = max((len(scored.reasons) for scored in victims), default=0)
+    return tuple(
+        max((cell_len(s.reasons[i]) for s in victims if len(s.reasons) > i), default=0)
+        for i in range(count)
+    )
+
+
+def _victim_row(scored: ScoredContact, reason_lanes: tuple[int, ...]) -> Text:
     """One preview line: percentile, the contact's name in its own hue, then why it ranks low.
 
     The name keeps its key-derived colour like everywhere else in the app — this is a list
     of nodes, and a reader picking one out of thirty rows should not have to read it letter
     by letter because the screen it is on happens to be about deleting things.
+
+    The reasons sit in lanes of their own (``reason_lanes``, see :func:`_reason_lanes`),
+    weakest first, so each one starts in the same column on every row instead of wherever
+    the phrase before it happened to end. The last phrase on a row is left unpadded, as a
+    trailing lane is: nothing follows it to line up.
     """
     contact = scored.contact
     row = _pctl_cell(scored.percentile)
@@ -157,23 +182,57 @@ def _victim_row(scored: ScoredContact) -> Text:
         fit_cells(name, _NAME_W - 2) + "  ",
         style=name_style(name, contact.public_key or contact.key_prefix),
     )
-    row.append(" · ".join(scored.reasons), style="muted")
+    last = len(scored.reasons) - 1
+    for index, phrase in enumerate(scored.reasons):
+        cell = phrase if index == last else fit_cells(phrase, reason_lanes[index]) + "  "
+        row.append(cell, style="muted")
     return row
 
 
-def _rung_desc(kept: int, archived: int) -> str:
-    """A rung's description lane, in the number the reader is actually choosing.
+#: The ladder's two count lanes, headed by these words. Each lane is exactly as wide as its
+#: word, and the count right-aligns in it, so a number ends under its header's last letter.
+_KEEPS = "KEEPS"
+_ARCHIVES = "ARCHIVES"
 
-    **How many contacts you keep**, not how many go. The device's contact table is the
-    scarce thing and the whole reason to sweep at all, so the useful number is the one that
-    has to fit in it — how many are archived is the arithmetic left over, and it follows in
-    the muted half rather than leading. A percentile cutoff led this lane for one round and
-    was the wrong unit twice over: it answered a question nobody asked at this step, and at
-    53 columns it did not fit anyway.
+
+def _ladder_header(label_w: int, width: int) -> str:
+    """The target ladder's pinned column header, over the rung lane and its two counts."""
+    return column_header(
+        [
+            Lane("TARGET", label_w + 2),
+            Lane(_KEEPS, len(_KEEPS) + 2),
+            Lane(_ARCHIVES),
+        ],
+        width,
+    )
+
+
+def _rung_row(label: str, kept: int, archived: int, label_w: int) -> Text:
+    """One rung: its label, then how many contacts it keeps and how many it archives.
+
+    **Keeps leads**, not archives. The device's contact table is the scarce thing and the
+    whole reason to sweep at all, so the useful number is the one that has to fit in it —
+    how many are archived is the arithmetic left over, and it follows. A percentile cutoff
+    led here for one round and was the wrong unit twice over: it answered a question nobody
+    asked at this step, and at 53 columns it did not fit anyway.
+
+    Both are columns rather than a phrase (``keeps 45 · archives 12``), so the ladder reads
+    down as a table: every count sits right-aligned under its own header, and comparing two
+    rungs is a glance down a lane rather than finding the number inside each sentence. A
+    rung that archives nothing shows its ``0`` muted, so the rungs that do something stand
+    out from the ones that don't.
+
+    Args:
+        label: The rung's own label.
+        kept: Contacts left on the device, protected ones included.
+        archived: Contacts the rung would archive.
+        label_w: The rung lane's width in cells — the widest label across both sections.
     """
-    if not archived:
-        return f"keeps all {kept}"
-    return f"keeps {kept} · archives {archived}"
+    row = Text(label)
+    row.append(" " * (label_w - cell_len(label) + 2))
+    row.append(f"{kept:>{len(_KEEPS)}}  ")
+    row.append(f"{archived:>{len(_ARCHIVES)}}", style=None if archived else "muted")
+    return row
 
 
 async def _rank(ctx: AppContext, contacts: list[Contact]) -> list[ScoredContact]:
@@ -340,23 +399,34 @@ def _target_screen(ranked: list[ScoredContact], sweepable: list[ScoredContact]):
     from .tui import SelectScreen
 
     protected = len(ranked) - len(sweepable)
+    sections: list[tuple[str, list[tuple[str, tuple]]]] = [
+        (
+            "By standing",
+            [(f"Keep the strongest {share}%", ("keep", share)) for share in KEEP_RUNGS],
+        ),
+        (
+            "Long silent",
+            [(label, ("age", secs)) for label, secs in AGE_RUNGS]
+            + [("Never heard at all", ("age", _NEVER))],
+        ),
+    ]
+    # One rung lane across both sections, so the counts stand in two columns down the whole
+    # ladder rather than restarting under each heading.
+    label_w = max(cell_len(label) for _, rungs in sections for label, _ in rungs)
 
-    def rung(label: str, value: tuple) -> tuple:
-        victims = victims_for(ranked, sweepable, value)
-        # What remains on the device: every protected contact, plus the sweepable ones this
-        # rung doesn't take. Counted from the ranking rather than from the rung's own
-        # percentage, because a protection is never a victim and the two would disagree.
-        return (label, _rung_desc(len(ranked) - len(victims), len(victims)), value)
-
-    items: list = [section_heading("By standing")]
-    items += menu_rows(
-        [rung(f"Keep the strongest {share}%", ("keep", share)) for share in KEEP_RUNGS]
-    )
-    items.append(section_heading("Long silent"))
-    items += menu_rows(
-        [rung(label, ("age", secs)) for label, secs in AGE_RUNGS]
-        + [rung("Never heard at all", ("age", _NEVER))]
-    )
+    # Pinned like the editors' header (menus.lane_header), so a scrolled ladder keeps its
+    # column words overhead along with the section it is in.
+    items: list = [Separator(lambda w: _ladder_header(label_w, w), pinned=True)]
+    for heading, rungs in sections:
+        items.append(section_heading(heading))
+        for label, value in rungs:
+            victims = victims_for(ranked, sweepable, value)
+            # What remains on the device: every protected contact, plus the sweepable ones
+            # this rung doesn't take. Counted from the ranking rather than from the rung's
+            # own percentage, because a protection is never a victim and the two would
+            # disagree.
+            kept = len(ranked) - len(victims)
+            items.append(Choice(title=_rung_row(label, kept, len(victims), label_w), value=value))
     held = f" · {protected} protected" if protected else ""
     return SelectScreen(
         f"Purge contacts — {len(ranked)} known{held}",
@@ -377,11 +447,16 @@ def _preview_items(victims: list[ScoredContact]) -> list:
     percentile lane out of the ``←→`` scroll (``hscroll_from``): the number is the reader's
     place in a list ordered by it, and sliding it away to read a long reasons lane would
     cost the row its bearing to gain nothing — the percentile is the part that already fits.
+
+    The reason lanes are measured here, across every victim, which is also why a spared row
+    rebuilds the rows through this function rather than dropping one: the lanes it leaves
+    behind may have been sized by the phrase that just left.
     """
+    lanes = _reason_lanes(victims)
     return [
         Separator(_preview_header, pinned=True),
         *(
-            Choice(title=_victim_row(v), value=v, deletable=True, hscroll_from=_PCTL_W)
+            Choice(title=_victim_row(v, lanes), value=v, deletable=True, hscroll_from=_PCTL_W)
             for v in victims
         ),
         # The same shape ``exit_rows`` draws, in this flow's own words: Apply has no key of

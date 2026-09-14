@@ -481,8 +481,9 @@ async def test_purge_sweeps_under_a_progress_bar_and_reports_in_a_dialog() -> No
     # ever takes a whole table.
     ladder = await _step_until_screen(session, lambda s: s.title.startswith("Purge contacts"))
     body = _screen_text(ladder)
-    # A rung is described by what it *keeps* — the number that has to fit the device.
-    assert "keeps" in body
+    # A rung is counted in columns, and what it *keeps* — the number that has to fit the
+    # device — leads what it archives.
+    assert body.index("KEEPS") < body.index("ARCHIVES")
     for _ in range(9):
         ladder.handle("down")
     ladder.handle("enter")
