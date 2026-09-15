@@ -42,13 +42,13 @@ have the bridge running as a background service and MeshTerm talking to it.
 
 ## What you need
 
-**Hardware** — one of:
+**Hardware:**
 
-| Board | Notes |
+| Part | Notes |
 | --- | --- |
-| ClockworkPi **uConsole** (CM4 module) + hackergadgets **AIO** LoRa board | SX1262 on SPI bus 1. This guide's defaults are tuned for it. |
-| A Raspberry Pi + **Waveshare SX1262 LoRa HAT** | Also supported. Its pins differ from the AIO's, so set them through the `MESHCORE_*` variables in [Hardware knobs](#hardware-knobs). |
-| An antenna for your region's LoRa band | Required either way. |
+| ClockworkPi **uConsole** (CM4 module) | Any uConsole with a Compute Module 4. |
+| hackergadgets **AIO** expansion board | The board this guide is written for and the one we recommend: an SX1262 on SPI bus 1, plus GPS, an RTL-SDR and a USB hub you don't need here. The bridge's defaults are its wiring. |
+| An antenna for your region's LoRa band | Required. |
 
 Installing the AIO board into the uConsole is out of scope here — follow
 [hackergadgets' own setup guide](https://hackergadgets.com/pages/hackergadgets-uconsole-rtl-sdr-lora-gps-rtc-usb-hub-all-in-one-extension-board-setup-guide)
@@ -147,9 +147,8 @@ python3 -m venv ~/.local/share/meshterm-spi-bridge/venv
 ~/.local/share/meshterm-spi-bridge/venv/bin/pip install "openhop-core[hardware]"
 ```
 
-This is also the route to take on any Debian-family host that isn't running the
-`meshcore-uconsole` package at all (a Waveshare HAT on a plain Raspberry Pi OS install, for
-example).
+This is also the route to take if you'd rather not install the `meshcore-uconsole` package
+at all.
 
 You'll confirm which runtime the bridge actually found in [Step 4](#step-4--run-the-preflight) —
 its first check line names the interpreter and the runtime.
@@ -336,8 +335,9 @@ that block by hand if you no longer want it.
 
 ## Hardware knobs
 
-The defaults match the hackergadgets uConsole AIO. For another SPI board, export what
-differs before launching the bridge (or put the lines in the service's environment).
+The defaults match the hackergadgets uConsole AIO, so a stock AIO needs none of these. They
+exist for a revision or a board that differs: export what differs before launching the
+bridge, or put the lines in the service's environment.
 
 | Variable | What it sets |
 | --- | --- |
@@ -346,7 +346,7 @@ differs before launching the bridge (or put the lines in the service's environme
 | `MESHCORE_FREQUENCY`, `MESHCORE_TX_POWER` | frequency in Hz, power in dBm |
 | `MESHCORE_SPREADING_FACTOR`, `MESHCORE_BANDWIDTH`, `MESHCORE_CODING_RATE` | the modem preset — all three must match the mesh you are joining |
 | `MESHCORE_TXEN_PIN`, `MESHCORE_RXEN_PIN`, `MESHCORE_EN_PINS` | the RF-switch and power-enable lines a board may need (`-1` for none; `EN_PINS` is a comma list — the AIO v2 wants `27`) |
-| `MESHCORE_USE_DIO2_RF`, `MESHCORE_USE_DIO3_TCXO`, `MESHCORE_IS_WAVESHARE` | whether DIO2 drives the RF switch and DIO3 the TCXO (both on for the uConsole), and the Waveshare HAT's own wiring |
+| `MESHCORE_USE_DIO2_RF`, `MESHCORE_USE_DIO3_TCXO`, `MESHCORE_IS_WAVESHARE` | whether DIO2 drives the RF switch and DIO3 the TCXO (both on for the AIO), and a flag for a different vendor's wiring the runtime knows about |
 | `MESHCORE_GPIO_CHIP`, `MESHCORE_USE_GPIOD_BACKEND`, `MESHCORE_PREAMBLE_LENGTH` | which gpiochip, whether to drive it through `gpiod`, and the LoRa preamble |
 | `MESHTERM_PYMC_PYTHON` | force a specific interpreter instead of letting the bridge discover one |
 
