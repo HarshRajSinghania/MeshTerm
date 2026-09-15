@@ -406,11 +406,8 @@ ip addr show wlan0
 ping -c 3 1.1.1.1
 ```
 
-You should see an `inet` address on `wlan0`, and replies from the ping.
-
-If you'd rather not type this by hand every time, `calculinux-setup.sh` (the next step) can
-provision the network for you: export `WIFI_SSID` and `WIFI_PSK` before running it and it
-writes the credential itself, so this manual step becomes optional.
+You should see an `inet` address on `wlan0`, and replies from the ping. `iwd` remembers
+the network, so this is a one-time step; to change networks later, run `uwific` again.
 
 ### Step 8 — Copy the setup scripts to the device
 
@@ -460,27 +457,24 @@ out on its own, both covered by environment variables read at the top of the scr
 | `REPO_URL` | the project's HTTPS URL | cloned when there's no deploy key |
 | `REPO_SSH` | the project's SSH URL | cloned when there is one |
 | `KEY_PATH` | `/home/$DEPLOY_USER/.ssh/id_ed25519` | a read-only GitHub deploy key, if you want SSH instead of HTTPS |
-| `WIFI_SSID`, `WIFI_PSK` | empty | set **both** to have `iwd`'s credentials written for you |
 
 You don't need to set any of these for a normal install — the defaults clone MeshTerm's
 public repository over plain HTTPS, which needs no credential at all.
 
-The nine phases, one line each:
+What it does, one line per phase:
 
-1. **opkg packages** — installs `python3-modules`, `python3-pip`, `git`, `kbd`, because
-   Calculinux ships a stripped Python missing `pip`, `venv` and several stdlib modules.
-2. **Wi-Fi kick** — installs a boot-time service that works around a cold-boot race between
-   the Wi-Fi dongle's firmware and `iwd`'s first scan.
-3. **Time sync** — installs a boot-time service that sets the clock over the network, since
-   this board has no battery-backed real-time clock.
-4. **Timezone** — sets `$TIMEZONE` (Eastern by default).
-5. **Deploy user** — creates the `meshterm` login and puts it in the groups it needs.
-6. **Clone** — checks out MeshTerm to `/home/meshterm/MeshTerm`.
-7. **venv and install** — builds a Python virtual environment and `pip install -e .`s
-   MeshTerm into it.
-8. **Login PATH** — puts that venv's `bin` on the `meshterm` user's PATH.
-9. **Console font** — builds and installs the console font MeshTerm's UI needs (braille
-   charts, node glyphs, rounded corners).
+- **opkg packages** — installs `python3-modules`, `python3-pip`, `git`, `kbd`, because
+  Calculinux ships a stripped Python missing `pip`, `venv` and several stdlib modules.
+- **Time sync** — installs a boot-time service that sets the clock over the network, since
+  this board has no battery-backed real-time clock.
+- **Timezone** — sets `$TIMEZONE` (Eastern by default).
+- **Deploy user** — creates the `meshterm` login and puts it in the groups it needs.
+- **Clone** — checks out MeshTerm to `/home/meshterm/MeshTerm`.
+- **venv and install** — builds a Python virtual environment and `pip install -e .`s
+  MeshTerm into it.
+- **Login PATH** — puts that venv's `bin` on the `meshterm` user's PATH.
+- **Console font** — builds and installs the console font MeshTerm's UI needs (braille
+  charts, node glyphs, rounded corners).
 
 This takes a few minutes on a good connection — most of it is `pip install` compiling
 things. It ends with `done` and tells you to log in as `meshterm`. That user has no
@@ -490,11 +484,6 @@ password yet, so set one first:
 # on the PicoCalc, as root
 passwd meshterm
 ```
-
-> **No Wi-Fi dongle attached takes about six minutes to boot past the kick service.**
-> That's expected — it's giving a slow-enumerating radio every chance before giving up.
-> Nothing is broken; see [Day-to-day](#day-to-day) for how to skip this if the device is
-> going to run wired or offline permanently.
 
 ### Step 10 — Log in as meshterm
 
@@ -834,21 +823,7 @@ If an update adds new glyphs to the console font, rebuild it on its own afterwar
 sh calculinux-console-font.sh
 ```
 
-**Changing Wi-Fi.** Run the interactive join script any time — it lists known and nearby
-networks, then asks for an SSID and password:
-
-```bash
-# on the PicoCalc, as root (or it re-execs itself under sudo)
-sh calculinux-wifi-set.sh
-```
-
-**The six-minute boot without a dongle.** If the device is going to run permanently wired
-or fully offline, the Wi-Fi kick service is just wasted time on every boot. Disable it:
-
-```bash
-# on the PicoCalc, as root
-systemctl disable --now wifi-kick.service
-```
+**Changing Wi-Fi.** Run `uwific` as root, as in [Step 7](#step-7--join-wi-fi).
 
 **The console font restores itself.** MeshTerm saves whatever font the console was using
 before it starts, and puts it back when it exits — on a normal quit and on a crash alike.
@@ -861,7 +836,7 @@ You don't need to do anything to keep the shell's own font intact.
 | Symptom | Check |
 | --- | --- |
 | Nothing on the PicoCalc's screen at all | Is the SD card in the **Lyra's own slot**, not the PicoCalc's front slot? Is a "Lyra B" (SPI NAND) erased? Is it the **128 MB RAM, Pico-form-factor** variant — other RAM sizes have incompatible pinouts? |
-| Wi-Fi never comes up | Is the dongle one of the tested chipsets (RTL8192CU / R8712U / RTL8188EU)? Remember the Lyra's USB port is **3.3 V** — a 5 V dongle won't work. Give it the full six minutes on a cold boot before assuming it's stuck. |
+| Wi-Fi never comes up | Is the dongle one of the tested chipsets (RTL8192CU / R8712U / RTL8188EU)? Remember the Lyra's USB port is **3.3 V** — a 5 V dongle won't work. |
 | `pip install` fails with `ENOSPC` | `/tmp` is a small RAM disk. `calculinux-setup.sh` already sets `TMPDIR=$HOME/tmp` for its own install; if you're running `pip` by hand, do the same. |
 | `meshterm: command not found` after setup | Log out and back in — the PATH line is added to `~/.profile`, which only takes effect on a fresh login shell. |
 | Tofu boxes instead of braille charts or node glyphs | The console font script hasn't run, or didn't persist. Re-run `sh calculinux-console-font.sh`, and check `/etc/vconsole.conf` has a `FONT=` line. |
