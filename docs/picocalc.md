@@ -9,6 +9,16 @@ two phases, most of it spent waiting for a toolchain to download; the radio phas
 soldering iron and can be done later — MeshTerm's `--mock` mode runs perfectly well without
 a radio in the meantime.
 
+> ⚠ **Read this first.** This build takes the PicoCalc apart, swaps its core board, and
+> solders to it. It assumes you can already solder cleanly, use a multimeter, and work with
+> small electronics without forcing anything. There is a real risk of damaging the
+> hardware if a step goes wrong — a cracked screen, a snapped shell post, a dead board, or
+> an overcharged lithium cell — and some of that damage is not repairable. You do this at
+> your own risk. The author accepts no responsibility for any damage, loss or injury that
+> results from following this guide, and nothing in it is a warranty that your parts, your
+> tools or your hands will behave the way the author's did. If you are not comfortable
+> with any step, stop and get help from someone who is.
+
 - [Shopping list](#shopping-list)
 - [Before you start](#before-you-start)
 - [Three ways to break it](#three-ways-to-break-it)
@@ -704,8 +714,11 @@ Four wires, TX and RX crossed:
 > header. Every signal here is 3.3 V, and there is **no 5 V rail** on this board — power the
 > XIAO from 3V3 only.
 
-With the PicoCalc powered off, solder the four wires between the XIAO's pads and the Lyra's
-header pins as above. Attach the LoRa antenna to the Wio-SX1262's u.FL connector before you
+With the PicoCalc powered off and the back of the shell removed, solder the four wires
+between the XIAO's pads and the Lyra's header pins as above. The Lyra can stay seated in
+its socket: the tops of its header pins are reachable from inside the case, so solder to
+those. Keep the iron on each pin only as long as it takes, and don't press down on the
+board. Attach the LoRa antenna to the Wio-SX1262's u.FL connector before you
 power anything back on — running the radio without an antenna attached can damage it.
 Wrap the XIAO + Wio-SX1262 stack in Kapton tape so no pad can touch the Lyra, the
 mainboard or a battery, then tuck it into the shell wherever it fits without straining the
