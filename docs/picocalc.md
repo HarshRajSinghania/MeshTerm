@@ -14,10 +14,16 @@ a radio in the meantime.
 > small electronics without forcing anything. There is a real risk of damaging the
 > hardware if a step goes wrong — a cracked screen, a snapped shell post, a dead board, or
 > an overcharged lithium cell — and some of that damage is not repairable. You do this at
-> your own risk. The author accepts no responsibility for any damage, loss or injury that
-> results from following this guide, and nothing in it is a warranty that your parts, your
-> tools or your hands will behave the way the author's did. If you are not comfortable
-> with any step, stop and get help from someone who is.
+> your own risk.
+>
+> This is a guide, not a prescription. Despite the author's best efforts it may contain
+> errors, and parts of it will go out of date as boards, images and firmware change. It is
+> up to you to check every fact in it against your own hardware and the current sources
+> before you act on it, and every decision along the way is yours. The author accepts no
+> responsibility for any damage, loss or injury that results from following this guide,
+> and nothing in it is a warranty that your parts, your tools or your hands will behave the
+> way the author's did. If you are not comfortable with any step, stop and get help from
+> someone who is.
 
 - [Shopping list](#shopping-list)
 - [Before you start](#before-you-start)
