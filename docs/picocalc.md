@@ -47,7 +47,7 @@ a radio in the meantime.
 | microSD card | 16 GB+, Class 10 or better | $6–10 | — | The PicoCalc's stock 32 GB card works fine — it's more than the 8 GB minimum. You can reuse it instead of buying a new one. |
 | Two 18650 batteries | e.g. Samsung 30Q, Molicel P26A, Sony VTC6 (examples, not endorsements) | $10–20 | — | **Unprotected**, flat-top or button-top, Ø18 × 65–69 mm. See [the battery note](#a-note-on-batteries) below. |
 | USB Wi-Fi dongle | TP-Link TL-WN725N (an RTL8188EU nano dongle), or search the **chipset name**: RTL8192CU, R8712U, RTL8188EU | $5–10 | [amazon.ca/dp/B008IFXQFU](https://www.amazon.ca/dp/B008IFXQFU) | The TL-WN725N is the dongle this guide was built with. Must run at **3.3 V** — see [Step 3](#step-3--attach-the-wi-fi-dongle). Only needed for setup and updates; MeshTerm itself runs offline. |
-| USB-C OTG adapter | "USB-C male to USB-A female OTG adapter" | $3–6 | — | Plugs the Wi-Fi dongle into the Lyra's USB-C port. |
+| USB adapter cable | "MX1.25 4-pin to USB-A female" cable | $3–6 | [luckfox.com/Luckfox-Lyra](https://www.luckfox.com/Luckfox-Lyra) | Plugs the Wi-Fi dongle into the tiny 4-pin USB host socket on top of the Lyra. Luckfox sells one as an accessory; any MX1.25 4P to USB-A female lead works. |
 
 ### The radio
 
@@ -72,7 +72,7 @@ a radio in the meantime.
 | Item | Why |
 | --- | --- |
 | A second 18650 battery | The holder takes two; one is enough to run, two roughly double your runtime. |
-| Powered USB hub | If you want the Wi-Fi dongle and something else on the Lyra's single USB-C port at once. |
+| Powered USB hub | If you want the Wi-Fi dongle and something else on the Lyra's single USB host socket at once, or a 5 V dongle. |
 | Foam tape | To secure the XIAO board inside the shell once it's wired in. |
 
 Approximate total: **$130–150** for the machine and radio together, before batteries — most
@@ -163,8 +163,11 @@ board exposed.
 
 ### Step 3 — Attach the Wi-Fi dongle
 
-Plug the USB-C-to-USB-A OTG adapter into the Lyra's USB-C port (through the same back
-cutout), then plug your Wi-Fi dongle into the adapter.
+The Lyra has two USB connectors. The USB-C on its edge is for power and flashing and is
+not used here. The **tiny 4-pin socket on top of the board** (an MX1.25 connector) is the
+USB host. Plug the MX1.25 to USB-A adapter cable into that socket, then plug your Wi-Fi
+dongle into the cable's USB-A end. Cable and dongle stay inside the shell; tuck them where
+they don't press on the board.
 
 > **The Lyra's USB port is 3.3 V, not 5 V.** A standard 5 V USB Wi-Fi dongle will not work
 > and may damage the board. Stick to the tested chipsets — RTL8192CU, R8712U, or RTL8188EU
