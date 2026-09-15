@@ -82,7 +82,8 @@ a radio in the meantime.
 | 2.5 mm hex key | Comes with the PicoCalc kit. |
 | USB-C data cable | For the serial console, and later for flashing the XIAO. A charge-only cable won't do; it has to carry data. |
 | microSD card reader | For writing the Calculinux image from your PC. |
-| Small side cutters | For trimming wire ends. |
+| Small side cutters | For trimming wire ends, and a section of the case grille if the Wi-Fi lead needs the room. |
+| Small needle file | To open the back panel's USB-C cutout a little if the Lyra's connector doesn't clear it. |
 | Kapton (polyimide) tape | Wraps the XIAO stack and the DIY USB lead so nothing bare touches the board or the shell. Heat-proof, thin, and it peels off cleanly. |
 | A PC (Windows/macOS/Linux) with Python 3 and git | Runs the image-writing, firmware-build and flashing steps. |
 
@@ -246,6 +247,11 @@ screwed down.
 You should see the Lyra sitting flat on the socket with no gap at either end, and, once
 the mainboard is back in, its USB-C port centred in the back-panel cutout.
 
+The cutout was made for the Pico's micro-USB, and the Lyra's USB-C connector is a
+different shape. Depending on the connector Luckfox fitted to your board, the back panel
+may not close over it. If it catches, open the hole a little with a small needle file,
+testing the fit as you go, until the panel sits down without pressing on the board.
+
 Leave the back off for now. The microSD card goes into the **Lyra's own slot** in
 [Step 4](#step-4--write-the-image-to-the-microsd), and that slot is easier to reach with the
 board exposed.
@@ -280,6 +286,12 @@ Once soldered, wrap the socket's solder side and the exposed wire in Kapton tape
 MX1.25 end into the socket on the Lyra — it is keyed and only goes in one way — and the
 Wi-Fi dongle into the USB-A end. Lead and dongle stay inside the shell; tuck them where
 they don't press on the board.
+
+The MX1.25 socket sits on top of the Lyra, and the lead leaves it upward, which is where
+the back panel's grille is. The wire may interfere with the grille when the back goes on.
+If it does, snip a small section out of the grille with the side cutters where the wire
+passes and shape the edge until nothing presses on the plug or the wire. Better to remove a
+sliver of plastic than to close the case against a connector.
 
 > **The Lyra's USB port is 3.3 V, not 5 V.** A standard 5 V USB Wi-Fi dongle will not work
 > and may damage the board. Stick to the tested chipsets — RTL8192CU, R8712U, or RTL8188EU
