@@ -6,9 +6,11 @@ MeshCore radio over UART, and fronting an SPI-attached LoRa chip as if it were a
 device. They run **on the device**, most of them as root, and they are meant to be read
 before they are run.
 
-**[`docs/hardware.md`](../docs/hardware.md) is the manual** — what each target is, what the
-scripts assume about the machine, why each step is the way it is, and what has only ever
-been proven on one bench. Start there and pick your target; the table below is the index.
+**Start with the manual for your device**: [`docs/picocalc.md`](../docs/picocalc.md) walks a
+stock PicoCalc from the shopping list to a working radio, and [`docs/uconsole.md`](../docs/uconsole.md)
+installs the SPI bridge on a uConsole. [`docs/hardware.md`](../docs/hardware.md) is the
+reference behind both — what the scripts assume about the machine, why each step is the way
+it is, and what has only ever been proven on one bench. The table below is the index.
 
 | File | Runs on | What it does |
 | --- | --- | --- |

@@ -17,6 +17,16 @@ allowed to change behaviour, not just add to it.
 
 ## [Unreleased]
 
+- **Two installation manuals, one per handheld.** [`docs/picocalc.md`](docs/picocalc.md)
+  takes a stock ClockworkPi PicoCalc from a shopping list to a Linux handheld running
+  MeshTerm with a LoRa radio soldered inside — the Lyra swap, writing Calculinux, the setup
+  script, building and flashing the XIAO firmware (the patch it still needs, explained
+  hunk by hunk), the wiring, and the Lyra setup. [`docs/uconsole.md`](docs/uconsole.md)
+  installs the SPI bridge on a uConsole with the AIO LoRa board and connects MeshTerm to
+  it. Both are step-by-step in plain language; [`docs/hardware.md`](docs/hardware.md) stays
+  as the reference behind them, and the README's new **Documentation** table points at all
+  of it.
+
 ## [0.3.5] — 2026-09-14
 
 ### Added

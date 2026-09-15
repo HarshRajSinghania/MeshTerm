@@ -1,0 +1,753 @@
+# MeshTerm on the PicoCalc
+
+You start with a stock ClockworkPi PicoCalc — the kit that ships with a Raspberry Pi Pico —
+and a short shopping list. You end with a Linux handheld: MeshTerm running full-screen on
+the PicoCalc's own display and keyboard, a LoRa radio soldered inside, and no laptop needed
+to use it day to day. There are three phases: build the machine (swap the Pico for a Linux
+board), install the OS and MeshTerm, and add the radio. Budget an afternoon for the first
+two phases, most of it spent waiting for a toolchain to download; the radio phase needs a
+soldering iron and can be done later — MeshTerm's `--mock` mode runs perfectly well without
+a radio in the meantime.
+
+- [Shopping list](#shopping-list)
+- [Before you start](#before-you-start)
+- [Phase 1 — Build the machine](#phase-1--build-the-machine)
+  - [Step 1 — Assemble the PicoCalc](#step-1--assemble-the-picocalc)
+  - [Step 2 — Swap the Pico for the Lyra](#step-2--swap-the-pico-for-the-lyra)
+  - [Step 3 — Attach the Wi-Fi dongle](#step-3--attach-the-wi-fi-dongle)
+- [Phase 2 — Install Calculinux and MeshTerm](#phase-2--install-calculinux-and-meshterm)
+  - [Step 4 — Write the image to the microSD](#step-4--write-the-image-to-the-microsd)
+  - [Step 5 — First boot](#step-5--first-boot)
+  - [Step 6 — Open the serial console](#step-6--open-the-serial-console)
+  - [Step 7 — Join Wi-Fi](#step-7--join-wi-fi)
+  - [Step 8 — Copy the setup scripts to the device](#step-8--copy-the-setup-scripts-to-the-device)
+  - [Step 9 — Run calculinux-setup.sh](#step-9--run-calculinux-setupsh)
+  - [Step 10 — Log in as meshterm](#step-10--log-in-as-meshterm)
+- [Phase 3 — Add the radio](#phase-3--add-the-radio)
+  - [Step 11 — Install PlatformIO](#step-11--install-platformio)
+  - [Step 12 — Build the firmware](#step-12--build-the-firmware)
+  - [Step 13 — Flash the XIAO](#step-13--flash-the-xiao)
+  - [Step 14 — Wire the radio](#step-14--wire-the-radio)
+  - [Step 15 — Set up the Lyra](#step-15--set-up-the-lyra)
+  - [Step 16 — Run it](#step-16--run-it)
+- [Day-to-day](#day-to-day)
+- [Troubleshooting](#troubleshooting)
+- [What has been tested](#what-has-been-tested)
+
+---
+
+## Shopping list
+
+### The machine
+
+| Item | Product / what to search for | Approx. price | Link | Note |
+| --- | --- | --- | --- | --- |
+| PicoCalc kit | ClockworkPi PicoCalc | $89 | [clockworkpi.com/product-page/picocalc](https://www.clockworkpi.com/product-page/picocalc) | Comes with a Raspberry Pi Pico 1H, screen, keyboard, shell, hex key and a 32 GB SD card. **18650 batteries are not included.** |
+| Luckfox Lyra | "Luckfox Lyra 128MB, pre-soldered header, no NAND" | $20–25 | [luckfox.com/Luckfox-Lyra](https://www.luckfox.com/Luckfox-Lyra) | Buy the **plain 128 MB RAM, Pico-form-factor** variant, **with the header pre-soldered**. See the note below — this is the one part of the list where the wrong SKU won't work. |
+| microSD card | 16 GB+, Class 10 or better | $6–10 | — | The PicoCalc's stock 32 GB card works fine — it's more than the 8 GB minimum. You can reuse it instead of buying a new one. |
+| Two 18650 batteries | e.g. Samsung 30Q, Molicel P26A, Sony VTC6 (examples, not endorsements) | $10–20 | — | **Unprotected**, flat-top or button-top, Ø18 × 65–69 mm. See [the battery note](#a-note-on-batteries) below. |
+| USB Wi-Fi dongle | search the **chipset name**: RTL8192CU, R8712U, or RTL8188EU | $5–10 | — | Must run at **3.3 V** — see [Step 3](#step-3--attach-the-wi-fi-dongle). Only needed for setup and updates; MeshTerm itself runs offline. |
+| USB-C OTG adapter | "USB-C male to USB-A female OTG adapter" | $3–6 | — | Plugs the Wi-Fi dongle into the Lyra's USB-C port. |
+
+### The radio
+
+| Item | Product / what to search for | Approx. price | Link | Note |
+| --- | --- | --- | --- | --- |
+| XIAO nRF52840 + Wio-SX1262 kit | "XIAO nRF52840 & Wio-SX1262 Kit for Meshtastic", SKU 102010710 | $13.49 | [seeedstudio.com](https://www.seeedstudio.com/XIAO-nRF52840-Wio-SX1262-Kit-for-Meshtastic-p-6400.html) | Includes the XIAO nRF52840, the Wio-SX1262 LoRa board (stacked and wired together) and an antenna. Covers both 868 and 915 MHz. Plain or Sense XIAO both work. **Do not** buy the "-N" variant — it has no antenna connector. |
+
+### Tools and consumables
+
+| Item | Note |
+| --- | --- |
+| Soldering iron, fine tip, and solder | For the four radio wires. |
+| Hookup wire, 26–30 AWG, four short lengths | TX and RX get crossed — see [Step 14](#step-14--wire-the-radio). |
+| 2.5 mm hex key | Comes with the PicoCalc kit. |
+| USB-C data cable, ×2 | One is convenient for the serial console, a second for flashing the XIAO — you can get by with one and swap it. |
+| microSD card reader | For writing the Calculinux image from your PC. |
+| Small side cutters | For trimming wire ends. |
+| A PC (Windows/macOS/Linux) with Python 3 and git | Runs the image-writing, firmware-build and flashing steps. |
+
+### Optional
+
+| Item | Why |
+| --- | --- |
+| A second 18650 battery | The holder takes two; one is enough to run, two roughly double your runtime. |
+| Powered USB hub | If you want the Wi-Fi dongle and something else on the Lyra's single USB-C port at once. |
+| Foam tape | To secure the XIAO board inside the shell once it's wired in. |
+
+Approximate total: **$130–150** for the machine and radio together, before batteries — most
+of that is the two boards ($89 + ~$22) and the radio kit ($13.49).
+
+**What you do NOT need:**
+
+- A level shifter. Every signal in this build — the Lyra's header, the XIAO, the SX1262 — is
+  3.3 V.
+- A separate USB-to-serial adapter. The PicoCalc mainboard already has one built in.
+- Bluetooth anything. Neither the Lyra nor this radio path uses it.
+- A new SD card, if your stock 32 GB card is handy — it's well over the 8 GB minimum
+  Calculinux asks for.
+
+### A note on batteries
+
+ClockworkPi has not published an official battery spec for the PicoCalc — a
+[still-open GitHub issue](https://github.com/clockworkpi/PicoCalc/issues/6) asking for one
+has gone unanswered. What's known from the kit itself: the holder takes two 18650 cells, one
+cell is enough to power the board, and the physical envelope is about Ø18 mm × 65–69 mm,
+which rules out most *protected* cells — the protection circuit adds length that doesn't
+fit. Unprotected flat-top or button-top cells both work; the PicoCalc mainboard has its own
+charge circuit built in. Buy from a reputable brand rather than a cheap unbranded listing —
+Samsung 30Q, Molicel P26A and Sony VTC6 are commonly recommended examples, not an
+endorsement of any one of them.
+
+---
+
+## Before you start
+
+Work happens on two machines, and it helps to keep straight which is which:
+
+- **Your PC** writes the Calculinux image to the microSD card, builds the radio firmware,
+  and flashes the XIAO. Nothing in these three jobs touches the PicoCalc itself.
+- **The PicoCalc** (really, the Luckfox Lyra inside it) does everything else — setup,
+  Wi-Fi, running MeshTerm — either over the serial console from your PC or on its own
+  screen and keyboard. Both work identically; the serial console is just easier for pasting
+  long commands.
+
+The device has two logins you'll use for different things: **`root`**, which you use once
+to run the setup script and fix Wi-Fi, and **`meshterm`**, the unprivileged account
+MeshTerm actually runs under day to day.
+
+Calculinux is a console-only Linux — no desktop, no window manager. That's deliberate: the
+PicoCalc's screen and keyboard are a terminal, and MeshTerm is a full-screen terminal
+program built for exactly that.
+
+---
+
+## Phase 1 — Build the machine
+
+### Step 1 — Assemble the PicoCalc
+
+Follow ClockworkPi's own
+[assembly guidelines](https://github.com/clockworkpi/PicoCalc/blob/master/Clockwork_PicoCalc_Assembly_Guidelines.pdf)
+(a PDF in the [PicoCalc repository](https://github.com/clockworkpi/PicoCalc), which also
+has a wiki) to put the kit together: mainboard, screen, keyboard, speakers and shell. Insert your two
+18650 batteries, watching the `+`/`-` marks in the battery compartment. Be careful when you
+tighten the shell's screws near the display — a misaligned screen can crack under the
+screws, and you'll be opening the shell again in the next step regardless.
+
+Power it on once with the **stock Pico still in place**. You should see the stock BASIC
+firmware boot on the screen, and the keyboard should respond. This confirms the screen,
+keyboard and battery are all good before you start swapping boards.
+
+Power it back off.
+
+### Step 2 — Swap the Pico for the Lyra
+
+Remove the back of the shell with the hex key. Lift the Raspberry Pi Pico straight out of
+its socket — **keep it**, you're not damaging or discarding it, just setting it aside.
+
+If your Luckfox Lyra has SPI NAND on board (a "Lyra B"), erase it first — the boot ROM
+otherwise ignores the SD card entirely and boots the on-board flash instead. See
+[Calculinux's hardware requirements page](https://calculinux.org/getting-started/hardware-requirements/)
+for how.
+
+Seat the Lyra into the same socket the Pico came out of, in the same orientation — its USB-C
+port should line up with the cutout in the back of the shell where the Pico's USB port used
+to be. Press it down fully; a Lyra that isn't fully seated won't boot.
+
+You should see the Lyra's USB-C port sitting flush in the back-panel cutout, with no rocking
+or gap at either end of the board.
+
+Leave the back off for now. The microSD card goes into the **Lyra's own slot** in
+[Step 4](#step-4--write-the-image-to-the-microsd), and that slot is easier to reach with the
+board exposed.
+
+### Step 3 — Attach the Wi-Fi dongle
+
+Plug the USB-C-to-USB-A OTG adapter into the Lyra's USB-C port (through the same back
+cutout), then plug your Wi-Fi dongle into the adapter.
+
+> **The Lyra's USB port is 3.3 V, not 5 V.** A standard 5 V USB Wi-Fi dongle will not work
+> and may damage the board. Stick to the tested chipsets — RTL8192CU, R8712U, or RTL8188EU
+> — which is why the shopping list tells you to search by chipset name rather than by
+> brand.
+
+Don't power the device on yet — Wi-Fi is set up later, once Calculinux is installed.
+
+---
+
+## Phase 2 — Install Calculinux and MeshTerm
+
+### Step 4 — Write the image to the microSD
+
+On your PC, download the latest `calculinux-image-luckfox-lyra.rootfs.wic.gz` from the
+[Calculinux releases page](https://github.com/Calculinux/meta-calculinux/releases).
+
+Decompress it:
+
+```bash
+# on the PC
+gunzip calculinux-image-luckfox-lyra.rootfs.wic.gz
+```
+
+(The Calculinux installation page mentions `unxz`, but the file is a `.gz`, so use
+`gunzip`. 7-Zip works on any platform if you'd rather not use the command line.)
+
+Write the resulting `.wic` file to your microSD card. Three options:
+
+- **Balena Etcher** (recommended, all platforms) — open it, select the `.wic` file, select
+  your SD card, click Flash.
+- **`dd`**, on Linux/macOS. Check the device name first — writing to the wrong device
+  destroys its contents:
+
+```bash
+# on the PC
+lsblk                                        # find your SD card's device, e.g. /dev/sdb
+sudo dd if=calculinux-image-luckfox-lyra.rootfs.wic of=/dev/sdX bs=4M status=progress conv=fsync
+```
+
+- **Rufus**, on Windows — select the device and the image, choose the **MBR** partition
+  scheme, and start.
+
+This erases everything already on the card. Once it finishes, eject it and put it in the
+**Luckfox Lyra's own microSD slot** — not the PicoCalc's front-facing slot. The Lyra boots
+from its own slot; the front slot is only reachable once MeshTerm (or anything else) is
+already running on Linux.
+
+### Step 5 — First boot
+
+With the card in the Lyra, power the PicoCalc on. Give it 30–60 seconds — the first boot is
+slower than later ones. You should see boot messages scroll on the PicoCalc's own screen,
+ending in a `Calculinux GNU/Linux` login prompt.
+
+Log in:
+
+```
+login: root
+Password: root
+```
+
+Change the password immediately:
+
+```bash
+# on the PicoCalc, as root
+passwd
+```
+
+### Step 6 — Open the serial console
+
+The PicoCalc's own screen and keyboard work fine, so you can skip this step. The serial
+console makes pasting the longer commands in this guide much easier, though, so it is
+recommended.
+
+The PicoCalc mainboard's USB-C port carries a USB-to-UART bridge (a CH340 chip). Plug a
+USB-C cable from that port into your PC. It shows up as:
+
+- `/dev/ttyUSB0` on Linux (you may need to be in the `dialout` group),
+- a `COM` port on Windows,
+- `/dev/cu.usbserial-*` on macOS.
+
+Settings: **1500000 8N1**, no flow control. Using `pyserial`'s `miniterm`:
+
+```bash
+# on the PC
+pip install pyserial
+python3 -m serial.tools.miniterm /dev/ttyUSB0 1500000
+```
+
+minicom and PuTTY work too, at the same settings. To leave `miniterm`, press **Ctrl+]**.
+
+You should see the same login prompt you saw on the PicoCalc's screen, now in your PC's
+terminal.
+
+### Step 7 — Join Wi-Fi
+
+Calculinux manages Wi-Fi with `iwd`. The easiest way is its text-mode picker: run `uwific`,
+highlight your network, press Enter and type the passphrase (`Q` quits). Or do the same
+from the command line:
+
+```bash
+# on the PicoCalc, as root
+iwctl station wlan0 scan
+iwctl station wlan0 get-networks
+iwctl station wlan0 connect "<your SSID>"
+```
+
+It'll prompt for the passphrase. Check you're online:
+
+```bash
+ip addr show wlan0
+ping -c 3 1.1.1.1
+```
+
+You should see an `inet` address on `wlan0`, and replies from the ping.
+
+If you'd rather not type this by hand every time, `calculinux-setup.sh` (the next step) can
+provision the network for you: export `WIFI_SSID` and `WIFI_PSK` before running it and it
+writes the credential itself, so this manual step becomes optional.
+
+### Step 8 — Copy the setup scripts to the device
+
+You need this repository's `scripts/` directory on the Lyra. Three ways to get it there,
+in order of ease:
+
+- **`scp` from your PC**, once Wi-Fi is up. Find the Lyra's IP address with `ip addr show
+  wlan0` on the device, then from your PC:
+
+```bash
+# on the PC, from your MeshTerm checkout
+scp -r scripts root@<lyra-ip>:/root/
+```
+
+  If root is refused over SSH, copy as the `pico` user (password `calc`) instead, then
+  move the directory as root on the device:
+
+```bash
+# on the PC
+scp -r scripts pico@<lyra-ip>:/home/pico/
+# on the PicoCalc, as root
+mv /home/pico/scripts /root/
+```
+
+- **The microSD card.** Pull the card, copy `scripts/` onto it from your PC's card reader,
+  put it back.
+- **`git clone` on the device.** Only once `git` is installed, and the setup script is what
+  installs it — so this is a route for later updates, not the first copy.
+
+`scp` is the recommended route.
+
+### Step 9 — Run calculinux-setup.sh
+
+```bash
+# on the PicoCalc, as root, with scripts/ copied over
+cd scripts
+sh calculinux-setup.sh
+```
+
+It's idempotent — safe to re-run — and it checks before it acts. Two things it can't figure
+out on its own, both covered by environment variables read at the top of the script:
+
+| Knob | Default | Effect |
+| --- | --- | --- |
+| `DEPLOY_USER` | `meshterm` | the login MeshTerm runs under |
+| `TIMEZONE` | `America/Toronto` | any IANA zone |
+| `REPO_URL` | the project's HTTPS URL | cloned when there's no deploy key |
+| `REPO_SSH` | the project's SSH URL | cloned when there is one |
+| `KEY_PATH` | `/home/$DEPLOY_USER/.ssh/id_ed25519` | a read-only GitHub deploy key, if you want SSH instead of HTTPS |
+| `WIFI_SSID`, `WIFI_PSK` | empty | set **both** to have `iwd`'s credentials written for you |
+
+You don't need to set any of these for a normal install — the defaults clone MeshTerm's
+public repository over plain HTTPS, which needs no credential at all.
+
+The nine phases, one line each:
+
+1. **opkg packages** — installs `python3-modules`, `python3-pip`, `git`, `kbd`, because
+   Calculinux ships a stripped Python missing `pip`, `venv` and several stdlib modules.
+2. **Wi-Fi kick** — installs a boot-time service that works around a cold-boot race between
+   the Wi-Fi dongle's firmware and `iwd`'s first scan.
+3. **Time sync** — installs a boot-time service that sets the clock over the network, since
+   this board has no battery-backed real-time clock.
+4. **Timezone** — sets `$TIMEZONE` (Eastern by default).
+5. **Deploy user** — creates the `meshterm` login and puts it in the groups it needs.
+6. **Clone** — checks out MeshTerm to `/home/meshterm/MeshTerm`.
+7. **venv and install** — builds a Python virtual environment and `pip install -e .`s
+   MeshTerm into it.
+8. **Login PATH** — puts that venv's `bin` on the `meshterm` user's PATH.
+9. **Console font** — builds and installs the console font MeshTerm's UI needs (braille
+   charts, node glyphs, rounded corners).
+
+This takes a few minutes on a good connection — most of it is `pip install` compiling
+things. It ends with `done` and tells you to log in as `meshterm`. That user has no
+password yet, so set one first:
+
+```bash
+# on the PicoCalc, as root
+passwd meshterm
+```
+
+> **No Wi-Fi dongle attached takes about six minutes to boot past the kick service.**
+> That's expected — it's giving a slow-enumerating radio every chance before giving up.
+> Nothing is broken; see [Day-to-day](#day-to-day) for how to skip this if the device is
+> going to run wired or offline permanently.
+
+### Step 10 — Log in as meshterm
+
+Log out of `root`, and log in as `meshterm` with the password you just set. Try the app:
+
+```bash
+# on the PicoCalc, as meshterm
+meshterm --mock
+```
+
+You should see MeshTerm's full-screen interface come up at **53 columns**, with a simulated
+radio behind it, drawing braille charts and node glyphs cleanly — no empty tofu boxes. Along
+the bottom you should see the **F-key lane**: five labelled chips instead of the footer hint
+line a desktop terminal shows.
+
+Have a look around. **Esc** backs out of any screen, and **Quit** on the main menu leaves
+the app.
+
+Then look at the whole visual language on one card:
+
+```bash
+# on the PicoCalc, as meshterm
+meshterm specimen
+```
+
+There are two console fonts available — a 6×12 one (53×26 rows) and a 6×8 one (53×40 rows,
+more rows but no Cyrillic glyphs). Try both from *Preferences → Display → Console font* —
+picking one previews it immediately, and the screen repaints at the new row count so you can
+see the choice before you keep it.
+
+---
+
+## Phase 3 — Add the radio
+
+This phase can wait. Everything above already gives you a working MeshTerm in `--mock`
+mode. Come back to this when you have the soldering iron out.
+
+### Step 11 — Install PlatformIO
+
+On your PC:
+
+```bash
+# on the PC
+pip install platformio
+```
+
+(or use the
+[official installer script](https://docs.platformio.org/en/latest/core/installation/methods/installer-script.html)
+if you'd rather not touch your system Python). Confirm `pio` is on your PATH:
+
+```bash
+# on the PC
+pio --version
+```
+
+The first firmware build downloads the nRF52 toolchain — several hundred megabytes — so do
+this somewhere with a decent connection.
+
+### Step 12 — Build the firmware
+
+```bash
+# on the PC (Git Bash or WSL on Windows)
+cd scripts/xiao-radio
+sh build-firmware.sh
+```
+
+You should see it clone MeshCore, apply a patch, build, and finish with:
+
+```
+DONE.  Firmware: /path/to/scripts/xiao-radio/meshcore-xiao-radio.uf2
+Next: put the XIAO in bootloader (double-tap reset) and run:  python flash.py
+```
+
+Here's what it did, so you could do it by hand if you needed to:
+
+1. Cloned [MeshCore](https://github.com/meshcore-dev/MeshCore) into
+   `scripts/xiao-radio/_meshcore-build`.
+2. Checked out the pinned commit `e9edfc8e` on the `dev` branch — the commit this patch is
+   known to apply cleanly to and build against.
+3. Applied `meshcore-uart1.patch`.
+4. Built the `Xiao_nrf52_companion_radio_serial` PlatformIO environment:
+   `pio run -e Xiao_nrf52_companion_radio_serial`.
+5. Converted the resulting `.hex` to a `.uf2` with MeshCore's own converter, using the
+   nRF52840 UF2 family id:
+   `python bin/uf2conv/uf2conv.py firmware.hex -c -f 0xADA52840 -o meshcore-xiao-radio.uf2`.
+
+#### What the patch changes, and why it is still needed
+
+`meshcore-uart1.patch` touches two files, and both hunks are required:
+
+- **`examples/companion_radio/main.cpp`.** MeshCore's companion-over-serial code declares
+  `HardwareSerial companion_serial(1)` — a numbered constructor. On the Adafruit nRF52 core,
+  `HardwareSerial` is an abstract base class with no numbered constructor at all, so this
+  line simply doesn't compile for the XIAO nRF52840. The patch adds an `#if
+  defined(NRF52_PLATFORM)` branch that binds `companion_serial` to `Serial1` instead — the
+  concrete UART object the nRF52 core always provides. `Uart::setPins(rx, tx)`, called later
+  in the same file, takes the same arguments either way, so nothing else needs to change.
+- **`variants/xiao_nrf52/platformio.ini`.** This adds a new
+  `Xiao_nrf52_companion_radio_serial` build environment that puts the companion serial link
+  on pins **D6 (TX)** and **D7 (RX)**. It also **moves I²C off those same two pads**, onto
+  two internal pins, 16 and 17, that nothing in this build uses. This second change is the one that matters: the
+  stock `Xiao_nrf52` environment maps I²C onto D6/D7 by default, and both the board's
+  `begin()` and the sensor code start the I²C bus on them automatically. Without the move,
+  I²C seizes the UART pins at boot — the wiring is correct, the firmware builds and runs,
+  and the serial link is still completely silent, because something else already owns the
+  pins.
+
+Both changes have been submitted upstream to MeshCore, but as of this writing they are
+**not merged**, and there's no sign that will happen soon — upstream `dev` still declares
+the bare `HardwareSerial(1)` with no nRF52 branch, and the XIAO's `platformio.ini` still has
+no `_serial` companion environment. Building with the patch is the normal route here, not a
+stopgap; when the patch does land, the `git apply` step (and the patch file itself) can be
+deleted.
+
+#### Building by hand
+
+If you want to track newer MeshCore instead of the pinned commit:
+
+```bash
+# on the PC
+git clone https://github.com/meshcore-dev/MeshCore.git
+cd MeshCore
+git checkout dev                            # or MESHCORE_COMMIT=dev sh build-firmware.sh
+git apply /path/to/scripts/xiao-radio/meshcore-uart1.patch
+pio run -e Xiao_nrf52_companion_radio_serial
+python bin/uf2conv/uf2conv.py .pio/build/Xiao_nrf52_companion_radio_serial/firmware.hex \
+    -c -f 0xADA52840 -o meshcore-xiao-radio.uf2
+```
+
+If `git apply` fails — upstream has moved and the patch context no longer lines up — the two
+hunks are small enough to make by hand:
+
+1. In `examples/companion_radio/main.cpp`, find the line
+   `HardwareSerial companion_serial(1);` and replace it with:
+
+   ```cpp
+   #if defined(NRF52_PLATFORM)
+     Uart& companion_serial = Serial1;
+   #else
+     HardwareSerial companion_serial(1);
+   #endif
+   ```
+
+2. At the end of `variants/xiao_nrf52/platformio.ini`, add a new environment:
+
+   ```ini
+   [env:Xiao_nrf52_companion_radio_serial]
+   extends = Xiao_nrf52
+   board_build.ldscript = boards/nrf52840_s140_v7_extrafs.ld
+   board_upload.maximum_size = 708608
+   build_flags =
+     ${Xiao_nrf52.build_flags}
+     -I examples/companion_radio/ui-orig
+     -D MAX_CONTACTS=350
+     -D MAX_GROUP_CHANNELS=40
+     -D OFFLINE_QUEUE_SIZE=256
+     -D QSPIFLASH=1
+     -D SERIAL_TX=D6
+     -D SERIAL_RX=D7
+     -D PIN_WIRE_SCL=16
+     -D PIN_WIRE_SDA=17
+   build_unflags =
+     -D PIN_WIRE_SCL=D6
+     -D PIN_WIRE_SDA=D7
+   build_src_filter = ${Xiao_nrf52.build_src_filter}
+     +<../examples/companion_radio/*.cpp>
+     +<../examples/companion_radio/ui-orig/*.cpp>
+   lib_deps =
+     ${Xiao_nrf52.lib_deps}
+     densaugeo/base64 @ ~1.4.0
+   ```
+
+Only the pinned commit (`e9edfc8e`) is known to build cleanly with this patch — a newer
+`dev` may need small further adjustments.
+
+### Step 13 — Flash the XIAO
+
+Plug the **XIAO's own USB-C port** into your PC — it doesn't matter yet whether it's also
+wired to the Lyra. Then:
+
+```bash
+# on the PC
+python flash.py
+```
+
+It first tries a 1200-baud "touch" over USB serial to reset the XIAO into its bootloader —
+this only ever targets Seeed's own USB vendor id, so it won't disturb another nRF52840 board
+on the same bench. If that doesn't take, **double-tap the XIAO's reset button** and run it
+again.
+
+Once it finds the bootloader, it checks two things before writing anything:
+
+- **`INFO_UF2.TXT`'s `Model` field** must say a XIAO — a drive letter isn't an identity, and
+  another board could have inherited the letter your XIAO just gave up.
+- **`SoftDevice` must not be `6.1.1`.** This firmware links for SoftDevice S140 v7 (app at
+  `0x27000`); a S140 6.1.1 bootloader wants the app at `0x26000` and would flash successfully
+  and then simply never boot.
+
+`--force` overrides both checks, if you're certain. A clean flash ends with:
+
+```
+DONE. XIAO flashed and rebooting into the radio firmware.
+```
+
+**If no UF2 drive ever appears**, that's not necessarily wrong — some XIAO bootloaders
+expose only a serial port, no mass-storage drive at all. `flash.py` recognises this case and
+prints the fallback command instead of failing silently:
+
+```bash
+# on the PC, from your MeshCore checkout
+pio run -e Xiao_nrf52_companion_radio_serial -t upload --upload-port <bootloader port>
+```
+
+That command ends in `Device programmed.` and the XIAO reboots itself into the radio
+firmware.
+
+Afterwards, the XIAO's USB serial port goes **silent** to companion frames — the companion
+protocol now lives on D6/D7, not on USB. That silence is correct; it doesn't mean the flash
+failed.
+
+### Step 14 — Wire the radio
+
+Four wires, TX and RX crossed:
+
+| XIAO pad | → | Lyra header | Physical pin | Carries |
+| --- | --- | --- | --- | --- |
+| **D7** (Serial1 RX) | → | **GP4** | pin **6** | Lyra UART1 **TX** → XIAO RX |
+| **D6** (Serial1 TX) | → | **GP5** | pin **7** | XIAO **TX** → Lyra UART1 RX |
+| **GND** | → | **GND** | pin **8** | common ground |
+| **3V3** | → | **3V3 OUT** | pin **36** | power, so it runs without USB |
+
+> **The Lyra does not use Raspberry Pi Pico GPIO numbering.** The 40-pin header is
+> physically Pico-shaped, but each pad's function is Luckfox's own RK3506 mapping: GP4 is
+> `gpio0-0` and GP5 is `gpio0-1`. Don't reach for a Pico pinout for anything else on this
+> header. Every signal here is 3.3 V, and there is **no 5 V rail** on this board — power the
+> XIAO from 3V3 only.
+
+With the PicoCalc powered off, solder the four wires between the XIAO's pads and the Lyra's
+header pins as above. Attach the LoRa antenna to the Wio-SX1262's u.FL connector before you
+power anything back on — running the radio without an antenna attached can damage it.
+Tuck the XIAO + Wio-SX1262 stack into the shell wherever it fits without straining the
+wires; a strip of foam tape holds it in place against the inside of the case.
+
+### Step 15 — Set up the Lyra
+
+With the wiring done and the shell closed back up, copy `scripts/` to the device if you
+haven't already (Step 8), then:
+
+```bash
+# on the PicoCalc, as root
+sh scripts/xiao-radio/lyra-setup.sh          # MT_USER=meshterm by default
+```
+
+It does three idempotent things:
+
+1. Installs `uart1-mux.py` as `/usr/local/bin/uart1-radio-mux.py`, run by a oneshot
+   `uart1-radio-mux.service` on every boot. This is the part that actually makes
+   `/dev/ttyS1` reach the header pins — Calculinux enables the UART1 controller but never
+   wires it to a physical pad on its own, and the RK3506's flexible pin matrix needs a
+   direct register poke to route it onto GP4/GP5 instead.
+2. Adds `$MT_USER` to the `dialout` group, so it can open the serial port. **This needs a
+   fresh login before it takes effect.**
+3. Writes a MeshTerm profile, *only if none exists yet*, at
+   `/home/$MT_USER/.meshterm/config.toml`:
+
+```toml
+default_profile = "picocalc"
+
+[profiles.picocalc]
+port = "/dev/ttyS1"
+baudrate = 115200
+transport = "serial"
+default_tx_power = 22
+description = "XIAO nRF52840 + SX1262 via Lyra UART1 on GP4/GP5"
+```
+
+If a `config.toml` already exists, it prints those lines instead of touching your file —
+paste them in yourself.
+
+### Step 16 — Run it
+
+Log out and back in as `meshterm` (so the `dialout` group membership takes effect), then:
+
+```bash
+# on the PicoCalc, as meshterm
+meshterm
+```
+
+Because `default_profile` is set, a bare `meshterm` connects straight to the radio. You
+should see your node come up under whatever name the firmware advertises — both the device
+page and the dashboard header show it.
+
+If you want to prove the wiring itself before suspecting anything else, there's a deeper
+check described in [`docs/hardware.md`](hardware.md#run-it-and-check-the-link): open
+`/dev/ttyS1` at 115200 as root and send a raw `APP_START` frame — a live radio answers with
+a framed `SELF_INFO` reply. That's a lower-level check than running MeshTerm itself and
+mostly useful for isolating a wiring problem.
+
+---
+
+## Day-to-day
+
+**Powering off.** Shut down cleanly rather than pulling the batteries:
+
+```bash
+# on the PicoCalc
+sudo poweroff
+```
+
+**Updating MeshTerm.** Either re-run the setup script from root (it pulls the repository,
+reinstalls, and rebuilds the console font):
+
+```bash
+# on the PicoCalc, as root
+sh calculinux-setup.sh
+```
+
+or, as the `meshterm` user, do just the update:
+
+```bash
+# on the PicoCalc, as meshterm
+cd ~/MeshTerm && git pull && .venv/bin/pip install -e .
+```
+
+If an update adds new glyphs to the console font, rebuild it on its own afterwards:
+
+```bash
+# on the PicoCalc, as root
+sh calculinux-console-font.sh
+```
+
+**Changing Wi-Fi.** Run the interactive join script any time — it lists known and nearby
+networks, then asks for an SSID and password:
+
+```bash
+# on the PicoCalc, as root (or it re-execs itself under sudo)
+sh calculinux-wifi-set.sh
+```
+
+**The six-minute boot without a dongle.** If the device is going to run permanently wired
+or fully offline, the Wi-Fi kick service is just wasted time on every boot. Disable it:
+
+```bash
+# on the PicoCalc, as root
+systemctl disable --now wifi-kick.service
+```
+
+**The console font restores itself.** MeshTerm saves whatever font the console was using
+before it starts, and puts it back when it exits — on a normal quit and on a crash alike.
+You don't need to do anything to keep the shell's own font intact.
+
+---
+
+## Troubleshooting
+
+| Symptom | Check |
+| --- | --- |
+| Nothing on the PicoCalc's screen at all | Is the SD card in the **Lyra's own slot**, not the PicoCalc's front slot? Is a "Lyra B" (SPI NAND) erased? Is it the **128 MB RAM, Pico-form-factor** variant — other RAM sizes have incompatible pinouts? |
+| Wi-Fi never comes up | Is the dongle one of the tested chipsets (RTL8192CU / R8712U / RTL8188EU)? Remember the Lyra's USB port is **3.3 V** — a 5 V dongle won't work. Give it the full six minutes on a cold boot before assuming it's stuck. |
+| `pip install` fails with `ENOSPC` | `/tmp` is a small RAM disk. `calculinux-setup.sh` already sets `TMPDIR=$HOME/tmp` for its own install; if you're running `pip` by hand, do the same. |
+| `meshterm: command not found` after setup | Log out and back in — the PATH line is added to `~/.profile`, which only takes effect on a fresh login shell. |
+| Tofu boxes instead of braille charts or node glyphs | The console font script hasn't run, or didn't persist. Re-run `sh calculinux-console-font.sh`, and check `/etc/vconsole.conf` has a `FONT=` line. |
+| `meshterm` can't open `/dev/ttyS1` | Is the `meshterm` user in `dialout` (`groups`)? Group changes need a fresh login to take effect. |
+| Port opens but the radio never answers | Re-flash with the **`_serial`** environment, not `_ble` or `_usb` — only it defines `SERIAL_RX`/`SERIAL_TX`. The XIAO's USB serial should be silent once it's running the radio firmware; that's expected, not a fault. |
+| Still silent with wiring confirmed | Confirm the firmware actually carries the I²C remap (`PIN_WIRE_SCL=16`, `PIN_WIRE_SDA=17`) — a build without the patch's second hunk looks identical until you check this. |
+| Flashed fine, XIAO never comes back | Wrong board, or the wrong SoftDevice — `INFO_UF2.TXT` must report a XIAO and **S140 v7**, not `6.1.1`. `flash.py` refuses to flash either mismatch without `--force`. |
+| `flash.py` finds no UF2 drive | Expected on a CDC-only bootloader — use the `pio … -t upload --upload-port` command it prints instead. |
+| Nothing on `/dev/ttyS1` after a reboot | `systemctl status uart1-radio-mux`, then `journalctl -b -u uart1-radio-mux` — the pin-mux poke has to run every boot, and a failed oneshot says why. |
+
+---
+
+## What has been tested
+
+This whole path — from a stock PicoCalc kit through a running radio — has been exercised on
+one maintainer's bench: one Luckfox Lyra, one PicoCalc, one XIAO + Wio-SX1262 pair. It
+works. What hasn't been independently confirmed — the exact RK3506 register map behind the
+UART1 pin-mux poke, whether the Calculinux kernel's `/dev/mem` permissions are guaranteed
+rather than observed, the PicoCalc header's physical pin numbers, and a handful of other
+specifics — is listed honestly in
+["What is verified and what is not"](hardware.md#what-is-verified-and-what-is-not) in
+`docs/hardware.md`. If you build this and something disagrees with what's written here,
+that's worth reporting — a second board is the only way to learn which parts of this were
+about the hardware and which were about the one unit it was built on.

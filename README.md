@@ -167,6 +167,17 @@ question is still being sorted out ([why](https://github.com/pypi/support/issues
 
 Setting up for development instead? That's in [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## Documentation
+
+| Read | For |
+| --- | --- |
+| **[The command line](docs/cli.md)** | Every subcommand and option, what each prints on the plain and JSON faces, the exit statuses, recipes. |
+| **[MeshTerm on the PicoCalc](docs/picocalc.md)** | Building the handheld from a stock PicoCalc: the shopping list, swapping in the Lyra, installing Calculinux and MeshTerm, the soldered LoRa radio. |
+| **[MeshTerm on the uConsole](docs/uconsole.md)** | A uConsole with the AIO LoRa board: installing the bridge that fronts its SPI radio as a companion, and connecting to it. |
+| **[Hardware reference](docs/hardware.md)** | Behind the two manuals: what each device-side script does and why, and what has only ever been proven on one bench. |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | The development setup and the house rules. |
+| [CHANGELOG.md](CHANGELOG.md) | What changed, newest first. |
+
 ## Quick start
 
 ```bash
@@ -189,9 +200,12 @@ meshterm --mock --platform picocalc
 meshterm specimen
 ```
 
-Putting MeshTerm on that handheld — the console font, the boot services, a soldered radio for
-it, and the bridge that fronts a uConsole's SPI LoRa chip as a companion — is
-[`scripts/`](scripts/), and **[`docs/hardware.md`](docs/hardware.md) is its manual**.
+Putting MeshTerm on a handheld has its own manuals. **[MeshTerm on the
+PicoCalc](docs/picocalc.md)** takes a stock PicoCalc from the shopping list to a Linux
+handheld with a LoRa radio soldered inside; **[MeshTerm on the uConsole](docs/uconsole.md)**
+connects a uConsole's SPI LoRa board through a small bridge. The device-side scripts both
+manuals run are in [`scripts/`](scripts/), and [`docs/hardware.md`](docs/hardware.md) is the
+reference behind them.
 
 ## Features
 
