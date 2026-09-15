@@ -15,7 +15,7 @@
 #
 # WHERE THE SHARED PARTS LIVE. The donor, alias and keeper tables, the braille generator
 # and the PSF2 writer are NOT duplicated here. They are read out of
-# calculinux-console-font.sh (Apache-2.0), between its "shared generator (BEGIN)" and
+# calculinux-console-font-6x12.sh (Apache-2.0), between its "shared generator (BEGIN)" and
 # "(END)" marker lines, and exec'd -- so the two fonts can never drift, and a repo test
 # that parses those tables has exactly one file to parse. That file must sit beside this
 # one; point SHARED at it if it does not. The shared generator is additionally offered
@@ -28,7 +28,7 @@
 # named in Cyrillic draws as tofu in this font. The keeper list drops the Cyrillic canary
 # accordingly, and only pi is checked.
 #
-# Run as root on the Lyra, either on its own or through calculinux-console-font.sh, which
+# Run as root on the Lyra, either on its own or through calculinux-console-font-6x12.sh, which
 # calls it:
 #
 #     sh calculinux-console-font-6x8.sh
@@ -43,7 +43,7 @@ FONT_NAME=meshterm
 CONSOLEFONTS=/usr/share/consolefonts
 OUT8="$CONSOLEFONTS/${FONT_NAME}8.psf.gz"
 HERE=$(dirname "$0")
-SHARED=${SHARED:-"$HERE/calculinux-console-font.sh"}   # Apache-2.0; holds the shared tables
+SHARED=${SHARED:-"$HERE/calculinux-console-font-6x12.sh"}   # Apache-2.0; holds the shared tables
 
 # --- preflight: fail early with a plain reason, never half-apply -----------------------
 [ "$(id -u)" = 0 ] || { echo "error: run as root (writes $CONSOLEFONTS)" >&2; exit 1; }
@@ -57,7 +57,7 @@ import os
 import re
 
 # --- the shared generator, borrowed rather than copied ---------------------------------
-# Everything between the two marker lines in calculinux-console-font.sh: the braille
+# Everything between the two marker lines in calculinux-console-font-6x12.sh: the braille
 # generator, art(), DONORS, ALIASES, KEEP_COMMON, BANDS8 and build(). One copy of those
 # tables, in the Apache-2.0 file, both fonts built from it.
 SHARED = os.environ["SHARED"]

@@ -825,7 +825,7 @@ If an update adds new glyphs to the console font, rebuild it on its own afterwar
 
 ```bash
 # on the PicoCalc, as root
-sh calculinux-console-font.sh
+sh calculinux-console-font-6x12.sh
 ```
 
 **Changing Wi-Fi.** Run `uwific` as root, as in [Step 7](#step-7--join-wi-fi).
@@ -844,7 +844,7 @@ You don't need to do anything to keep the shell's own font intact.
 | Wi-Fi never comes up | Is the dongle one of the tested chipsets (RTL8192CU / R8712U / RTL8188EU)? Remember the Lyra's USB port is **3.3 V** — a 5 V dongle won't work. |
 | `pip install` fails with `ENOSPC` | `/tmp` is a small RAM disk. `calculinux-setup.sh` already sets `TMPDIR=$HOME/tmp` for its own install; if you're running `pip` by hand, do the same. |
 | `meshterm: command not found` after setup | Log out and back in — the PATH line is added to `~/.profile`, which only takes effect on a fresh login shell. |
-| Tofu boxes instead of braille charts or node glyphs | The console font script hasn't run, or didn't persist. Re-run `sh calculinux-console-font.sh`, and check `/etc/vconsole.conf` has a `FONT=` line. |
+| Tofu boxes instead of braille charts or node glyphs | The console font script hasn't run, or didn't persist. Re-run `sh calculinux-console-font-6x12.sh`, and check `/etc/vconsole.conf` has a `FONT=` line. |
 | `meshterm` can't open `/dev/ttyS1` | Is the `meshterm` user in `dialout` (`groups`)? Group changes need a fresh login to take effect. |
 | Port opens but the radio never answers | Re-flash with the **`_serial`** environment, not `_ble` or `_usb` — only it defines `SERIAL_RX`/`SERIAL_TX`. The XIAO's USB serial should be silent once it's running the radio firmware; that's expected, not a fault. |
 | Still silent with wiring confirmed | Confirm the firmware actually carries the I²C remap (`PIN_WIRE_SCL=16`, `PIN_WIRE_SDA=17`) — a build without the patch's second hunk looks identical until you check this. |

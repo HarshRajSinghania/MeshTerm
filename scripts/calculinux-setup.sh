@@ -34,7 +34,7 @@
 #   7. venv + install  A venv + `pip install -e .`. pip's C builds hit ENOSPC because /tmp
 #                      is a tiny RAM tmpfs, so TMPDIR is redirected to $HOME/tmp on /data.
 #   8. PATH            Put the venv's `meshterm` on that user's login PATH via ~/.profile.
-#   9. console font    Hand off to calculinux-console-font.sh (braille + node glyphs +
+#   9. console font    Hand off to calculinux-console-font-6x12.sh (braille + node glyphs +
 #                      rounded frame corners + the list cursor the bare console can't draw).
 #
 # Two prerequisites this script cannot safely embed and will check for / guide you through:
@@ -348,10 +348,10 @@ fi
 
 # --- 8. console font -------------------------------------------------------------------
 log "9/9  console font"
-if [ -f "$SCRIPT_DIR/calculinux-console-font.sh" ]; then
-    sh "$SCRIPT_DIR/calculinux-console-font.sh"
+if [ -f "$SCRIPT_DIR/calculinux-console-font-6x12.sh" ]; then
+    sh "$SCRIPT_DIR/calculinux-console-font-6x12.sh"
 else
-    info "calculinux-console-font.sh not alongside this script -- skipping (run it separately)"
+    info "calculinux-console-font-6x12.sh not alongside this script -- skipping (run it separately)"
 fi
 
 # --- done ------------------------------------------------------------------------------

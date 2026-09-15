@@ -17,6 +17,9 @@ allowed to change behaviour, not just add to it.
 
 ## [Unreleased]
 
+- **The 6×12 console-font script carries its size in its name**, `calculinux-console-font-6x12.sh`,
+  like its 6×8 sibling always did. Same script, every reference updated.
+
 - **Two installation manuals, one per handheld.** [`docs/picocalc.md`](docs/picocalc.md)
   takes a stock ClockworkPi PicoCalc from a shopping list to a Linux handheld running
   MeshTerm with a LoRa radio soldered inside — the Lyra swap, writing Calculinux, the setup

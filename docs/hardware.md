@@ -79,7 +79,7 @@ preview the handheld layout on a desktop, alongside `meshterm specimen` for the 
 visual language on one card.
 
 The console font is the part that needs building, and it is built **on the device** by
-[`calculinux-console-font.sh`](../scripts/calculinux-console-font.sh) rather than shipped as
+[`calculinux-console-font-6x12.sh`](../scripts/calculinux-console-font-6x12.sh) rather than shipped as
 a binary. Its only inputs are the stock Terminus console font the Calculinux image already
 carries and `python3`; every added glyph is generated geometry in the script itself. So
 nothing binary lives in the repo, and the base font is whatever your image installed rather
@@ -187,7 +187,7 @@ the part worth reading.
 | **6. Clone** | The checkout at `/home/$DEPLOY_USER/MeshTerm`, pulled `--ff-only` if it is already there. See [Before you run it](#before-you-run-it). |
 | **7. venv and install** | `python3 -m venv ~/MeshTerm/.venv`, then `pip install -e .` with **`TMPDIR=$HOME/tmp`** — `/tmp` is a small RAM tmpfs and pip's C builds hit ENOSPC in it. |
 | **8. Login PATH** | Appends the venv's `bin` to the deploy user's `~/.profile` once, so `meshterm` is just a word. |
-| **9. Console font** | Hands off to `calculinux-console-font.sh` if it sits alongside, and otherwise tells you to run it yourself. |
+| **9. Console font** | Hands off to `calculinux-console-font-6x12.sh` if it sits alongside, and otherwise tells you to run it yourself. |
 
 > **A Lyra with no Wi-Fi dongle attached takes about six minutes to boot past the kick**,
 > which waits a minute for the interface and then burns thirty rounds before exiting 0 — and
@@ -200,7 +200,7 @@ The font script stands alone, which is what you want after a MeshTerm update tha
 glyph:
 
 ```bash
-sh calculinux-console-font.sh
+sh calculinux-console-font-6x12.sh
 ```
 
 It builds both fonts — the 6×8 one by handing off to

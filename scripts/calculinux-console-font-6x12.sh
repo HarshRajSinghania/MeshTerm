@@ -1,6 +1,6 @@
 #!/bin/sh
 # SPDX-License-Identifier: Apache-2.0
-# calculinux-console-font.sh -- build, install, and persist the "meshterm" console fonts
+# calculinux-console-font-6x12.sh -- build, install, and persist the "meshterm" console fonts
 # and the 16-slot palette.
 #
 # MeshTerm runs on a Luckfox Lyra inside a ClockworkPi PicoCalc under Calculinux, drawing
@@ -42,7 +42,7 @@
 # Everything else is pure geometry, generated on-device; only the stock Terminus font and
 # python3 are required. Run as root on the Lyra (serial console is fine):
 #
-#     sh calculinux-console-font.sh
+#     sh calculinux-console-font-6x12.sh
 #
 # Idempotent -- safe to re-run after a MeshTerm update or a font tweak. Also manages the
 # 16-slot palette: a default run restores the stock VT palette (theme._VT_SLOTS) and
@@ -294,7 +294,7 @@ fi
 # (theme._VT_SLOTS). The custom tailwind-family remap originally shipped is ARCHIVED,
 # one environment variable away for anyone who wants it back:
 #
-#     MESHTERM_CUSTOM_PALETTE=1 sh calculinux-console-font.sh
+#     MESHTERM_CUSTOM_PALETTE=1 sh calculinux-console-font-6x12.sh
 #
 # The opt-in block's values match theme.vtrgb_lines() / theme._VT_SLOTS_CUSTOM exactly (a
 # test keeps them in sync). A DEFAULT run removes any previously-installed remap and
