@@ -47,7 +47,8 @@ a radio in the meantime.
 | microSD card | 16 GB+, Class 10 or better | $6–10 | — | The PicoCalc's stock 32 GB card works fine — it's more than the 8 GB minimum. You can reuse it instead of buying a new one. |
 | Two 18650 batteries | e.g. Samsung 30Q, Molicel P26A, Sony VTC6 (examples, not endorsements) | $10–20 | — | **Unprotected**, flat-top or button-top, Ø18 × 65–69 mm. See [the battery note](#a-note-on-batteries) below. |
 | USB Wi-Fi dongle | TP-Link TL-WN725N (an RTL8188EU nano dongle), or search the **chipset name**: RTL8192CU, R8712U, RTL8188EU | $5–10 | [amazon.ca/dp/B008IFXQFU](https://www.amazon.ca/dp/B008IFXQFU) | The TL-WN725N is the dongle this guide was built with. Must run at **3.3 V** — see [Step 3](#step-3--attach-the-wi-fi-dongle). Only needed for setup and updates; MeshTerm itself runs offline. |
-| USB adapter cable | "MX1.25 4-pin to USB-A female" cable | $3–6 | [luckfox.com/Luckfox-Lyra](https://www.luckfox.com/Luckfox-Lyra) | Plugs the Wi-Fi dongle into the tiny 4-pin USB host socket on top of the Lyra. Luckfox sells one as an accessory; any MX1.25 4P to USB-A female lead works. |
+| MX1.25 4-pin pigtail | "MX1.25 4P cable with leads" (a pack of pre-crimped pigtails, 10–15 cm) | $2–4 | — | One end of the DIY USB lead in [Step 3](#step-3--attach-the-wi-fi-dongle). Pre-crimped, because MX1.25 contacts need a crimper you don't otherwise own. |
+| USB-A female socket | "USB 2.0 type A female socket, solder / through-hole" | $2–3 | — | The other end of the DIY lead. A ready-made [MX1.25 4P to USB-A cable](https://spotpear.com/shop/Luckfox-Lyra-MX1.25-4P-To-USB-A-Cable.html) (about $1, 30 cm) works too, but it is a lot of cable to fold into the shell. |
 
 ### The radio
 
@@ -65,6 +66,7 @@ a radio in the meantime.
 | USB-C data cable, ×2 | One is convenient for the serial console, a second for flashing the XIAO — you can get by with one and swap it. |
 | microSD card reader | For writing the Calculinux image from your PC. |
 | Small side cutters | For trimming wire ends. |
+| Kapton (polyimide) tape | Wraps the XIAO stack and the DIY USB lead so nothing bare touches the board or the shell. Heat-proof, thin, and it peels off cleanly. |
 | A PC (Windows/macOS/Linux) with Python 3 and git | Runs the image-writing, firmware-build and flashing steps. |
 
 ### Optional
@@ -164,9 +166,32 @@ board exposed.
 ### Step 3 — Attach the Wi-Fi dongle
 
 The Lyra has two USB connectors. The USB-C on its edge is for power and flashing and is
-not used here. The **tiny 4-pin socket on top of the board** (an MX1.25 connector) is the
-USB host. Plug the MX1.25 to USB-A adapter cable into that socket, then plug your Wi-Fi
-dongle into the cable's USB-A end. Cable and dongle stay inside the shell; tuck them where
+not used here. The **tiny 4-pin socket on top of the board** (an MX1.25 connector, next to
+the two buttons by the USB-C end) is the USB host. The Wi-Fi dongle hangs off it through a
+short lead you make yourself: a ready-made cable is 30 cm long and a struggle to fold into
+the shell, and you have the soldering iron out for the radio anyway.
+
+**Make the lead.** Solder the four wires of an MX1.25 pigtail to a USB-A female socket,
+keeping the run short — 5 to 8 cm is enough to reach a spot where the dongle sits flat.
+The pigtail's pins are in the standard USB order, which the pre-made cable's wire colours
+follow:
+
+| MX1.25 pin | USB-A socket pin | Signal | Pigtail wire colour (usually) |
+| --- | --- | --- | --- |
+| 1 | 1 | VBUS (**3.3 V** on this board) | red |
+| 2 | 2 | D− | white |
+| 3 | 3 | D+ | green |
+| 4 | 4 | GND | black |
+
+USB-A socket pins are numbered 1 to 4 across the connector's opening: VBUS on one edge,
+GND on the other, the data pair between them. Colours on a pigtail are a convention, not a
+promise, so check pin 1 before you plug anything in: with the Lyra powered, the socket's
+pin 1 reads **3.3 V** against a GND header pin and the pin at the other end reads 0 V.
+Swapping VBUS and GND is the one mistake that damages the dongle.
+
+Once soldered, wrap the socket's solder side and the exposed wire in Kapton tape. Plug the
+MX1.25 end into the socket on the Lyra — it is keyed and only goes in one way — and the
+Wi-Fi dongle into the USB-A end. Lead and dongle stay inside the shell; tuck them where
 they don't press on the board.
 
 > **The Lyra's USB port is 3.3 V, not 5 V.** A standard 5 V USB Wi-Fi dongle will not work
@@ -611,7 +636,8 @@ Four wires, TX and RX crossed:
 With the PicoCalc powered off, solder the four wires between the XIAO's pads and the Lyra's
 header pins as above. Attach the LoRa antenna to the Wio-SX1262's u.FL connector before you
 power anything back on — running the radio without an antenna attached can damage it.
-Tuck the XIAO + Wio-SX1262 stack into the shell wherever it fits without straining the
+Wrap the XIAO + Wio-SX1262 stack in Kapton tape so no pad can touch the Lyra, the
+mainboard or a battery, then tuck it into the shell wherever it fits without straining the
 wires; a strip of foam tape holds it in place against the inside of the case.
 
 ### Step 15 — Set up the Lyra
