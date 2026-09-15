@@ -64,7 +64,7 @@ a radio in the meantime.
 | Soldering iron, fine tip, and solder | For the four radio wires. |
 | Hookup wire, 26–30 AWG, four short lengths | TX and RX get crossed — see [Step 14](#step-14--wire-the-radio). |
 | 2.5 mm hex key | Comes with the PicoCalc kit. |
-| USB-C data cable, ×2 | One is convenient for the serial console, a second for flashing the XIAO — you can get by with one and swap it. |
+| USB-C data cable | For the serial console, and later for flashing the XIAO. A charge-only cable won't do; it has to carry data. |
 | microSD card reader | For writing the Calculinux image from your PC. |
 | Small side cutters | For trimming wire ends. |
 | Kapton (polyimide) tape | Wraps the XIAO stack and the DIY USB lead so nothing bare touches the board or the shell. Heat-proof, thin, and it peels off cleanly. |
