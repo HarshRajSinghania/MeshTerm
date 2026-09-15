@@ -8,9 +8,9 @@ before they are run.
 
 **Start with the manual for your device**: [`docs/picocalc.md`](../docs/picocalc.md) walks a
 stock PicoCalc from the shopping list to a working radio, and [`docs/uconsole.md`](../docs/uconsole.md)
-installs the SPI bridge on a uConsole. [`docs/hardware.md`](../docs/hardware.md) is the
-reference behind both — what the scripts assume about the machine, why each step is the way
-it is, and what has only ever been proven on one bench. The table below is the index.
+installs the SPI bridge on a uConsole. Each manual ends on what has only ever been proven
+on one bench, and each script's header says what it assumes about the machine and why each
+step is the way it is. The table below is the index.
 
 | File | Runs on | What it does |
 | --- | --- | --- |

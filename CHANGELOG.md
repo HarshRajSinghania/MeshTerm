@@ -26,9 +26,10 @@ allowed to change behaviour, not just add to it.
   script, building and flashing the XIAO firmware (the patch it still needs, explained
   hunk by hunk), the wiring, and the Lyra setup. [`docs/uconsole.md`](docs/uconsole.md)
   installs the SPI bridge on a uConsole with the AIO LoRa board and connects MeshTerm to
-  it. Both are step-by-step in plain language; [`docs/hardware.md`](docs/hardware.md) stays
-  as the reference behind them, and the README's new **Documentation** table points at all
-  of it.
+  it. Both are step-by-step in plain language and self-contained, each ending on its own
+  list of what has only been proven on one bench; [`docs/hardware.md`](docs/hardware.md)
+  shrinks to the page that says which manual is yours, and the README's new
+  **Documentation** table points at all of it.
 
 ## [0.3.5] — 2026-09-14
 

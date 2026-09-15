@@ -470,6 +470,9 @@ What it does, one line per phase:
 
 - **opkg packages** — installs `python3-modules`, `python3-pip`, `git`, `kbd`, because
   Calculinux ships a stripped Python missing `pip`, `venv` and several stdlib modules.
+- **Wi-Fi kick** — installs a boot-time service that re-scans until the dongle joins the
+  network `iwd` already knows, because on a cold boot the dongle's firmware finishes
+  loading after `iwd`'s first scan and the link would otherwise never come up.
 - **Time sync** — installs a boot-time service that sets the clock over the network, since
   this board has no battery-backed real-time clock.
 - **Timezone** — sets `$TIMEZONE` (Eastern by default).
@@ -489,6 +492,10 @@ password yet, so set one first:
 # on the PicoCalc, as root
 passwd meshterm
 ```
+
+> **With no Wi-Fi dongle attached, the next boot takes about six minutes** to get past the
+> Wi-Fi kick, which keeps trying before it gives up. Nothing is broken. If the device is
+> going to live offline, see [Day-to-day](#day-to-day) for how to switch the kick off.
 
 ### Step 10 — Log in as meshterm
 
@@ -786,10 +793,12 @@ should see your node come up under whatever name the firmware advertises — bot
 page and the dashboard header show it.
 
 If you want to prove the wiring itself before suspecting anything else, there's a deeper
-check described in [`docs/hardware.md`](hardware.md#run-it-and-check-the-link): open
-`/dev/ttyS1` at 115200 as root and send a raw `APP_START` frame — a live radio answers with
-a framed `SELF_INFO` reply. That's a lower-level check than running MeshTerm itself and
-mostly useful for isolating a wiring problem.
+check: open `/dev/ttyS1` at 115200 as root and send a raw `APP_START` frame (`3c 0e 00 01`,
+seven zero bytes, then a name) — a live radio answers with a framed `05`, `SELF_INFO`. The
+command byte and the reply code are the companion protocol's; the `<`/`>` and
+little-endian-length framing around them come from the firmware and are worth confirming
+against it. It's a lower-level check than running MeshTerm and mostly useful for isolating
+a wiring problem.
 
 ---
 
@@ -828,7 +837,16 @@ If an update adds new glyphs to the console font, rebuild it on its own afterwar
 sh calculinux-console-font-6x12.sh
 ```
 
-**Changing Wi-Fi.** Run `uwific` as root, as in [Step 7](#step-7--join-wi-fi).
+**Changing Wi-Fi.** Run `uwific` as root, as in [Step 7](#step-7--join-wi-fi). The boot-time
+kick picks up the new network on its own; it only needs `iwd` to know it.
+
+**The six-minute boot without a dongle.** If the device is going to run permanently offline,
+the Wi-Fi kick is wasted time on every boot. Disable it:
+
+```bash
+# on the PicoCalc, as root
+systemctl disable --now wifi-kick.service
+```
 
 **The console font restores itself.** MeshTerm saves whatever font the console was using
 before it starts, and puts it back when it exits — on a normal quit and on a crash alike.
@@ -841,7 +859,7 @@ You don't need to do anything to keep the shell's own font intact.
 | Symptom | Check |
 | --- | --- |
 | Nothing on the PicoCalc's screen at all | Is the SD card in the **Lyra's own slot**, not the PicoCalc's front slot? Is a "Lyra B" (SPI NAND) erased? Is it the **128 MB RAM, Pico-form-factor** variant — other RAM sizes have incompatible pinouts? |
-| Wi-Fi never comes up | Is the dongle one of the tested chipsets (RTL8192CU / R8712U / RTL8188EU)? Remember the Lyra's USB port is **3.3 V** — a 5 V dongle won't work. |
+| Wi-Fi never comes up | Is the dongle one of the tested chipsets (RTL8192CU / R8712U / RTL8188EU)? Remember the Lyra's USB port is **3.3 V** — a 5 V dongle won't work. Give it the full six minutes on a cold boot before assuming it's stuck. |
 | `pip install` fails with `ENOSPC` | `/tmp` is a small RAM disk. `calculinux-setup.sh` already sets `TMPDIR=$HOME/tmp` for its own install; if you're running `pip` by hand, do the same. |
 | `meshterm: command not found` after setup | Log out and back in — the PATH line is added to `~/.profile`, which only takes effect on a fresh login shell. |
 | Tofu boxes instead of braille charts or node glyphs | The console font script hasn't run, or didn't persist. Re-run `sh calculinux-console-font-6x12.sh`, and check `/etc/vconsole.conf` has a `FONT=` line. |
@@ -858,11 +876,39 @@ You don't need to do anything to keep the shell's own font intact.
 
 This whole path — from a stock PicoCalc kit through a running radio — has been exercised on
 one maintainer's bench: one Luckfox Lyra, one PicoCalc, one XIAO + Wio-SX1262 pair. It
-works. What hasn't been independently confirmed — the exact RK3506 register map behind the
-UART1 pin-mux poke, whether the Calculinux kernel's `/dev/mem` permissions are guaranteed
-rather than observed, the PicoCalc header's physical pin numbers, and a handful of other
-specifics — is listed honestly in
-["What is verified and what is not"](hardware.md#what-is-verified-and-what-is-not) in
-`docs/hardware.md`. If you build this and something disagrees with what's written here,
-that's worth reporting — a second board is the only way to learn which parts of this were
-about the hardware and which were about the one unit it was built on.
+works. Some of it is also checked in code: a test parses the font script and pins it to
+MeshTerm's glyph inventory, the profile keys the scripts write are tested, the pinned
+MeshCore commit exists, the patch's two hunks are still needed on `dev`, and the nRF52840
+UF2 family id and both XIAO bootloader ids match Adafruit's board files.
+
+The rest is one bench's findings, and a second device may disagree:
+
+- **The RK3506 register map** in `uart1-mux.py` — the two register blocks, the UART1 signal
+  ids, matrix mode, and that `gpio0-0`/`gpio0-1` are header GP4 and GP5 — was probed live
+  on one board, not read from a reference manual.
+- **That the Calculinux kernel permits those `/dev/mem` writes**, and that the mux oneshot
+  really runs at every boot.
+- **The header pin numbers** 6, 7, 8 and 36 for GP4, GP5, GND and 3V3. The Pico-side
+  numbering is right; the carrier's wiring is a bench observation.
+- **The MX1.25 socket's pin order.** Taken from the wire colours of Luckfox's own cable,
+  which is why [Step 3](#step-3--attach-the-wi-fi-dongle) has you check pin 1 with a meter.
+- **The 5 V path through the Lyra's USB-C.** The mechanism is read off the mainboard
+  schematic and two forum measurements on the Pico; nobody has measured it with a Lyra.
+  Treat the warning as the safe assumption it is.
+- **The Calculinux specifics the scripts assert**: the stripped Python and the package
+  names that fix it, which overlays are writable, that `/tmp` is a small RAM tmpfs, the
+  dongle's cold-boot race with `iwd`, the opkg feed's occasional 404, that the stock
+  Terminus console font is installed, and that `kbd` brings `setvtrgb`.
+- **That this board has no RTC.** Only the script says so; the clock-sync phase follows.
+- **The XIAO bootloader that exposed no mass storage**, and the S140 v7 / `0x27000`
+  requirement — public references agree, but neither is a primary source.
+- **Whether the firmware patch still applies at MeshCore `dev` HEAD.** Only the pinned
+  commit is known to build.
+- **MeshCore's serial framing** around the raw `APP_START` check in
+  [Step 16](#step-16--run-it): the command byte and reply code are from the protocol
+  documentation; the framing bytes are not.
+- **The framebuffer console's 512-glyph cap.** Well known, taken as given, not re-measured.
+
+If you build this and something disagrees with what's written here, that's worth
+reporting — a second board is the only way to learn which parts of this were about the
+hardware and which were about the one unit it was built on.

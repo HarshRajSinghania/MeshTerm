@@ -7,9 +7,23 @@ standard MeshCore companion protocol in front of it on a local TCP port. MeshTer
 connects to that port like it would any network companion. By the end of this guide you'll
 have the bridge running as a background service and MeshTerm talking to it.
 
+> ⚠ **Read this first.** This guide edits your uConsole's boot configuration, adds your
+> user to hardware groups, installs a service under your account, and then keys a LoRa
+> transmitter. It assumes you are comfortable at a Linux shell and know which frequency
+> plan and power limits apply where you live — what the radio does on air is your
+> responsibility, not the bridge's. There is a real risk of leaving the system, the radio
+> or the mesh around you in a worse state if a step goes wrong. You do this at your own
+> risk.
+>
 > **Read the whole manual through once before you start.** Which route you take in
 > Step 2 depends on your Debian release, and whether the GUI is running changes what the
 > preflight and the service will do — both are easier to get right knowing the later steps.
+>
+> This is a guide, not a prescription. Despite the author's best efforts it may contain
+> errors, and parts of it will go out of date as packages, runtimes and boards change. It
+> is up to you to check every fact in it against your own hardware and the current sources
+> before you act on it, and every decision along the way is yours. The author accepts no
+> responsibility for any damage, loss or injury that results from following this guide.
 
 - [What you need](#what-you-need)
 - [Step 1 — Prepare the system](#step-1--prepare-the-system)
@@ -20,6 +34,7 @@ have the bridge running as a background service and MeshTerm talking to it.
 - [Step 6 — Install it as a service](#step-6--install-it-as-a-service)
 - [Step 7 — Install MeshTerm and connect](#step-7--install-meshterm-and-connect)
 - [Updating and uninstalling](#updating-and-uninstalling)
+- [Hardware knobs](#hardware-knobs)
 - [Troubleshooting](#troubleshooting)
 - [What this has been tested on](#what-this-has-been-tested-on)
 
@@ -32,7 +47,7 @@ have the bridge running as a background service and MeshTerm talking to it.
 | Board | Notes |
 | --- | --- |
 | ClockworkPi **uConsole** (CM4 module) + hackergadgets **AIO** LoRa board | SX1262 on SPI bus 1. This guide's defaults are tuned for it. |
-| A Raspberry Pi + **Waveshare SX1262 LoRa HAT** | Also supported. Its pins differ from the AIO's, so set them through the `MESHCORE_*` variables in the **Hardware knobs** table of [`docs/hardware.md`](hardware.md#hardware-knobs). |
+| A Raspberry Pi + **Waveshare SX1262 LoRa HAT** | Also supported. Its pins differ from the AIO's, so set them through the `MESHCORE_*` variables in [Hardware knobs](#hardware-knobs). |
 | An antenna for your region's LoRa band | Required either way. |
 
 Installing the AIO board into the uConsole is out of scope here — follow
@@ -57,7 +72,7 @@ The bridge assumes the AIO's wiring by default:
 | Coding rate | 4/5 |
 
 Every one of these is overridable with a `MESHCORE_*` environment variable if your board or
-region differs — see the **Hardware knobs** table in [`docs/hardware.md`](hardware.md#hardware-knobs).
+region differs — see [Hardware knobs](#hardware-knobs).
 
 **Software:**
 
@@ -319,6 +334,31 @@ that block by hand if you no longer want it.
 
 ---
 
+## Hardware knobs
+
+The defaults match the hackergadgets uConsole AIO. For another SPI board, export what
+differs before launching the bridge (or put the lines in the service's environment).
+
+| Variable | What it sets |
+| --- | --- |
+| `MESHCORE_BUS_ID`, `MESHCORE_CS_ID`, `MESHCORE_CS_PIN` | which SPI bus, device and chip-select pin the radio is on |
+| `MESHCORE_RESET_PIN`, `MESHCORE_BUSY_PIN`, `MESHCORE_IRQ_PIN` | the three control lines |
+| `MESHCORE_FREQUENCY`, `MESHCORE_TX_POWER` | frequency in Hz, power in dBm |
+| `MESHCORE_SPREADING_FACTOR`, `MESHCORE_BANDWIDTH`, `MESHCORE_CODING_RATE` | the modem preset — all three must match the mesh you are joining |
+| `MESHCORE_TXEN_PIN`, `MESHCORE_RXEN_PIN`, `MESHCORE_EN_PINS` | the RF-switch and power-enable lines a board may need (`-1` for none; `EN_PINS` is a comma list — the AIO v2 wants `27`) |
+| `MESHCORE_USE_DIO2_RF`, `MESHCORE_USE_DIO3_TCXO`, `MESHCORE_IS_WAVESHARE` | whether DIO2 drives the RF switch and DIO3 the TCXO (both on for the uConsole), and the Waveshare HAT's own wiring |
+| `MESHCORE_GPIO_CHIP`, `MESHCORE_USE_GPIOD_BACKEND`, `MESHCORE_PREAMBLE_LENGTH` | which gpiochip, whether to drive it through `gpiod`, and the LoRa preamble |
+| `MESHTERM_PYMC_PYTHON` | force a specific interpreter instead of letting the bridge discover one |
+
+The bridge passes a knob only when the runtime's radio constructor accepts it, so the same
+environment works under `pymc_core` 1.0.x, which lacks the newer ones. Where the
+`meshcore-console` package is installed, the bridge builds the radio through *its* hardware
+configuration, which reads the same names plus a few more of its own — see that package's
+documentation. On a library-only install the table above is the whole of it, so an AIO v2
+without that package present may not power its radio.
+
+---
+
 ## Troubleshooting
 
 | Symptom | Check |
@@ -339,11 +379,17 @@ that block by hand if you no longer want it.
 
 This has been verified on a bookworm uConsole with `openhop-core` 1.1.3: the radio comes up,
 contacts are restored across a restart, and `info` and `contacts` answer correctly over the
-TCP connection. Tracing, sending messages, and the live packet feed under that same runtime
-have not yet been exercised end-to-end, though the runtime's own trace-push support is what
-the bridge relies on for the first of those. The older `pymc-core` 1.0.x path, with all
-three of the bridge's compatibility shims active, has been exercised in full, including
-traces and the live feed. For the complete, honest list of what is and isn't verified —
-including the on-air trace and acknowledgement behaviour — see
-["What is verified and what is not"](hardware.md#what-is-verified-and-what-is-not) in
-`docs/hardware.md`.
+TCP connection. The older `pymc-core` 1.0.x path, with all three of the bridge's
+compatibility shims active, has been exercised in full, including traces and the live feed.
+Every interface the bridge calls in both runtimes is checked by MeshTerm's test suite.
+
+What has not been confirmed:
+
+- **The bridge under `openhop_core` beyond `info` and `contacts`.** Startup, identity,
+  contact restore and those two reads were exercised; a trace, a message and the live feed
+  under the new runtime were not, though the library's own trace push is what the bridge
+  now relies on for the first.
+- **Everything on-air** — the per-hop trace semantics the bridge reassembles and the
+  acknowledgement bytes newer firmware appends after the CRC. The code is internally
+  consistent with the library's API; the wire behaviour was seen on one mesh, against the
+  radios in range of one bench.
