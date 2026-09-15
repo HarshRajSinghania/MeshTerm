@@ -7,6 +7,10 @@ standard MeshCore companion protocol in front of it on a local TCP port. MeshTer
 connects to that port like it would any network companion. By the end of this guide you'll
 have the bridge running as a background service and MeshTerm talking to it.
 
+> **Read the whole manual through once before you start.** Which route you take in
+> Step 2 depends on your Debian release, and whether the GUI is running changes what the
+> preflight and the service will do — both are easier to get right knowing the later steps.
+
 - [What you need](#what-you-need)
 - [Step 1 — Prepare the system](#step-1--prepare-the-system)
 - [Step 2 — Install the radio runtime](#step-2--install-the-radio-runtime)

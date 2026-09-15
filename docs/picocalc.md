@@ -16,6 +16,11 @@ a radio in the meantime.
 > an overcharged lithium cell — and some of that damage is not repairable. You do this at
 > your own risk.
 >
+> **Read the whole manual through once before you buy anything or open anything.** Several
+> steps only make sense in light of a later one — where the SD card goes, what must be out
+> of the case before a board is pressed in, which USB port is never to be powered — and the
+> shopping list is easier to get right when you know what each part is for.
+>
 > This is a guide, not a prescription. Despite the author's best efforts it may contain
 > errors, and parts of it will go out of date as boards, images and firmware change. It is
 > up to you to check every fact in it against your own hardware and the current sources
