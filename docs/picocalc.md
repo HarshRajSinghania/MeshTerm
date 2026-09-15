@@ -11,6 +11,7 @@ a radio in the meantime.
 
 - [Shopping list](#shopping-list)
 - [Before you start](#before-you-start)
+- [Three ways to break it](#three-ways-to-break-it)
 - [Phase 1 — Build the machine](#phase-1--build-the-machine)
   - [Step 1 — Assemble the PicoCalc](#step-1--assemble-the-picocalc)
   - [Step 2 — Swap the Pico for the Lyra](#step-2--swap-the-pico-for-the-lyra)
@@ -124,6 +125,62 @@ program built for exactly that.
 
 ---
 
+## Three ways to break it
+
+The PicoCalc is a kit, and its forum has a well-worn list of the ways people have damaged
+theirs. Three of them apply directly to this build. Read this section before you open the
+shell.
+
+> ⚠ **The screen is extremely fragile.** It is a bare glass panel with no frame of its own,
+> and when the case is closed it sits directly against the mainboard. Anything that flexes
+> the mainboard flexes the glass: pushing a board into the Pico socket, prying one out,
+> closing the shell with the screen not sitting square in its opening, or pressing a key
+> while the halves are being screwed together. Forum members have cracked screens doing
+> each of those, and the swap in [Step 2](#step-2--swap-the-pico-for-the-lyra) is the
+> classic one — pressing a new board into the socket with the mainboard still in the case
+> is enough on its own.
+> ([Before replacing the Pico](https://forum.clockworkpi.com/t/before-replacing-the-pico-read-this-to-avoid-cracked-screen/16666),
+> [Avoid breaking your screen](https://forum.clockworkpi.com/t/avoid-breaking-your-screen/18805))
+>
+> What to do instead:
+>
+> - **Never push a board into the socket, or pull one out, with the mainboard in the case.**
+>   Unplug the display's ribbon cable (the FPC) from the mainboard, lift the mainboard out,
+>   and do the swap on a flat, padded surface — a folded microfibre cloth is ideal. Ease a
+>   board out a little at each end in turn, never by levering one end.
+> - **Secure the screen with Kapton tape** along its edges so it cannot shift in the
+>   opening while you work and while the case is closed. Kapton is the right tape: thin,
+>   it stays put, and it peels off cleanly. Don't use anything that sets hard.
+> - **Before the back goes on, check the screen sits flush and square** in the front half's
+>   opening with no pressure on any corner. If the mainboard doesn't sit perfectly flush on
+>   the front half, stop and find out why before you add the back.
+> - Handle the panel as little as possible, and keep your fingers off the keyboard while
+>   closing the shell.
+
+> ⚠ **Don't overtighten the screws.** The shell's screw posts are brass inserts moulded
+> into plastic, and forcing a screw snaps the post out of the shell — a repair that needs
+> epoxy and never quite comes back
+> ([Broken screw thread](https://forum.clockworkpi.com/t/broken-screw-thread/20726)).
+> Turn each screw until it just seats, then stop. If a screw won't go in easily, the halves
+> aren't aligned, or something inside is in the way; more force is never the answer.
+
+> ⚠ **Never power the Lyra through its own USB-C while the batteries are in.** The
+> PicoCalc charges its cells only through the **mainboard's** USB-C port, under the control
+> of its power-management chip (an AXP2101). Power fed in through the core board's USB port
+> — the Pico's originally, the Lyra's now — arrives on the header's system-power pin and
+> bypasses that charge control. Forum members who powered the Pico's port directly measured
+> their cells at **4.46 V and 4.74 V** afterwards, well over the 4.2 V a lithium cell is
+> allowed to reach
+> ([New PicoCalc — battery charging](https://forum.clockworkpi.com/t/new-picocalc-battery-charging/22330)).
+> An overcharged cell is a fire risk, not just a worn one.
+>
+> Nothing in this guide needs the Lyra's USB-C: the serial console, charging and power all
+> use the mainboard's port on the side of the case, and the Wi-Fi dongle uses the 4-pin
+> socket on top of the Lyra. If you ever must plug the Lyra's USB-C into a PC — to
+> reflash it with Luckfox's tools, say — **take both batteries out first.**
+
+---
+
 ## Phase 1 — Build the machine
 
 ### Step 1 — Assemble the PicoCalc
@@ -132,9 +189,12 @@ Follow ClockworkPi's own
 [assembly guidelines](https://github.com/clockworkpi/PicoCalc/blob/master/Clockwork_PicoCalc_Assembly_Guidelines.pdf)
 (a PDF in the [PicoCalc repository](https://github.com/clockworkpi/PicoCalc), which also
 has a wiki) to put the kit together: mainboard, screen, keyboard, speakers and shell. Insert your two
-18650 batteries, watching the `+`/`-` marks in the battery compartment. Be careful when you
-tighten the shell's screws near the display — a misaligned screen can crack under the
-screws, and you'll be opening the shell again in the next step regardless.
+18650 batteries, watching the `+`/`-` marks in the battery compartment.
+
+⚠ Two of the warnings in [Three ways to break it](#three-ways-to-break-it) apply here: tape
+the screen's edges with Kapton before you close the shell and check it sits square, and
+turn the screws only until they seat. You will open the shell again in the next step, so
+there is no reason to make the screws tight now.
 
 Power it on once with the **stock Pico still in place**. You should see the stock BASIC
 firmware boot on the screen, and the keyboard should respond. This confirms the screen,
@@ -144,20 +204,28 @@ Power it back off.
 
 ### Step 2 — Swap the Pico for the Lyra
 
-Remove the back of the shell with the hex key. Lift the Raspberry Pi Pico straight out of
-its socket — **keep it**, you're not damaging or discarding it, just setting it aside.
+Remove the back of the shell with the hex key.
+
+⚠ **Do the swap with the mainboard out of the case.** This is the step that cracks screens
+(see [Three ways to break it](#three-ways-to-break-it)). Unplug the display's ribbon cable
+from the mainboard, lift the mainboard out, and lay it on a padded surface. Only then ease
+the Raspberry Pi Pico out of its socket, a little at each end in turn — **keep it**, you're
+just setting it aside.
 
 If your Luckfox Lyra has SPI NAND on board (a "Lyra B"), erase it first — the boot ROM
 otherwise ignores the SD card entirely and boots the on-board flash instead. See
 [Calculinux's hardware requirements page](https://calculinux.org/getting-started/hardware-requirements/)
 for how.
 
-Seat the Lyra into the same socket the Pico came out of, in the same orientation — its USB-C
-port should line up with the cutout in the back of the shell where the Pico's USB port used
-to be. Press it down fully; a Lyra that isn't fully seated won't boot.
+Seat the Lyra into the same socket the Pico came out of, in the same orientation — its
+USB-C port at the end where the Pico's USB port was, so it lines up with the cutout in the
+back of the shell. Press it down fully with the mainboard still on the padded surface; a
+Lyra that isn't fully seated won't boot. Then reconnect the ribbon cable and set the
+mainboard back into the front half, checking the screen sits square before anything is
+screwed down.
 
-You should see the Lyra's USB-C port sitting flush in the back-panel cutout, with no rocking
-or gap at either end of the board.
+You should see the Lyra sitting flat on the socket with no gap at either end, and, once
+the mainboard is back in, its USB-C port centred in the back-panel cutout.
 
 Leave the back off for now. The microSD card goes into the **Lyra's own slot** in
 [Step 4](#step-4--write-the-image-to-the-microsd), and that slot is easier to reach with the
@@ -698,6 +766,10 @@ mostly useful for isolating a wiring problem.
 ---
 
 ## Day-to-day
+
+**Charging.** Only through the mainboard's USB-C port on the side of the case. ⚠ Never
+through the Lyra's own USB-C at the back — see
+[Three ways to break it](#three-ways-to-break-it).
 
 **Powering off.** Shut down cleanly rather than pulling the batteries:
 
