@@ -128,8 +128,9 @@ program built for exactly that.
 ## Three ways to break it
 
 The PicoCalc is a kit, and its forum has a well-worn list of the ways people have damaged
-theirs. Three of them apply directly to this build. Read this section before you open the
-shell.
+theirs. Three of them apply directly to this build, and the first two are not theoretical:
+the author of this guide **cracked a screen and snapped screw posts** building the very
+machine it describes. Read this section before you open the shell.
 
 > ⚠ **The screen is extremely fragile.** It is a bare glass panel with no frame of its own,
 > and when the case is closed it sits directly against the mainboard. Anything that flexes
@@ -138,7 +139,7 @@ shell.
 > while the halves are being screwed together. Forum members have cracked screens doing
 > each of those, and the swap in [Step 2](#step-2--swap-the-pico-for-the-lyra) is the
 > classic one — pressing a new board into the socket with the mainboard still in the case
-> is enough on its own.
+> is enough on its own. That is exactly how the screen in this guide's own PicoCalc broke.
 > ([Before replacing the Pico](https://forum.clockworkpi.com/t/before-replacing-the-pico-read-this-to-avoid-cracked-screen/16666),
 > [Avoid breaking your screen](https://forum.clockworkpi.com/t/avoid-breaking-your-screen/18805))
 >
@@ -161,6 +162,8 @@ shell.
 > into plastic, and forcing a screw snaps the post out of the shell — a repair that needs
 > epoxy and never quite comes back
 > ([Broken screw thread](https://forum.clockworkpi.com/t/broken-screw-thread/20726)).
+> This guide's author snapped several on the first assembly; it takes less force than you
+> would think.
 > Turn each screw until it just seats, then stop. If a screw won't go in easily, the halves
 > aren't aligned, or something inside is in the way; more force is never the answer.
 
