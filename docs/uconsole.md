@@ -157,19 +157,19 @@ its first check line names the interpreter and the runtime.
 
 ## Step 3 — Get the bridge
 
-`scripts/meshterm-spi-bridge` is a single, self-contained Python file — no install step of
+`scripts/uconsole/meshterm-spi-bridge` is a single, self-contained Python file — no install step of
 its own. Either clone the MeshTerm repo:
 
 ```bash
 git clone https://github.com/jpmartineau/MeshTerm
-cd MeshTerm/scripts
+cd MeshTerm/scripts/uconsole
 ```
 
 or download just the one file:
 
 ```bash
 curl -L -o meshterm-spi-bridge \
-  https://raw.githubusercontent.com/jpmartineau/MeshTerm/main/scripts/meshterm-spi-bridge
+  https://raw.githubusercontent.com/jpmartineau/MeshTerm/main/scripts/uconsole/meshterm-spi-bridge
 ```
 
 Make it executable:

@@ -416,8 +416,8 @@ the network, so this is a one-time step; to change networks later, run `uwific` 
 
 ### Step 8 — Copy the setup scripts to the device
 
-You need this repository's `scripts/` directory on the Lyra. Three ways to get it there,
-in order of ease:
+You need this repository's `scripts/` directory on the Lyra — its `picocalc/` folder is the
+part the Lyra runs. Three ways to get it there, in order of ease:
 
 - **`scp` from your PC**, once Wi-Fi is up. Find the Lyra's IP address with `ip addr show
   wlan0` on the device, then from your PC:
@@ -448,7 +448,7 @@ mv /home/pico/scripts /root/
 
 ```bash
 # on the PicoCalc, as root, with scripts/ copied over
-cd scripts
+cd scripts/picocalc
 sh calculinux-setup.sh
 ```
 
@@ -558,21 +558,21 @@ this somewhere with a decent connection.
 
 ```bash
 # on the PC (Git Bash or WSL on Windows)
-cd scripts/xiao-radio
+cd scripts/picocalc/xiao-radio
 sh build-firmware.sh
 ```
 
 You should see it clone MeshCore, apply a patch, build, and finish with:
 
 ```
-DONE.  Firmware: /path/to/scripts/xiao-radio/meshcore-xiao-radio.uf2
+DONE.  Firmware: /path/to/scripts/picocalc/xiao-radio/meshcore-xiao-radio.uf2
 Next: put the XIAO in bootloader (double-tap reset) and run:  python flash.py
 ```
 
 Here's what it did, so you could do it by hand if you needed to:
 
 1. Cloned [MeshCore](https://github.com/meshcore-dev/MeshCore) into
-   `scripts/xiao-radio/_meshcore-build`.
+   `scripts/picocalc/xiao-radio/_meshcore-build`.
 2. Checked out the pinned commit `e9edfc8e` on the `dev` branch — the commit this patch is
    known to apply cleanly to and build against.
 3. Applied `meshcore-uart1.patch`.
@@ -619,7 +619,7 @@ If you want to track newer MeshCore instead of the pinned commit:
 git clone https://github.com/meshcore-dev/MeshCore.git
 cd MeshCore
 git checkout dev                            # or MESHCORE_COMMIT=dev sh build-firmware.sh
-git apply /path/to/scripts/xiao-radio/meshcore-uart1.patch
+git apply /path/to/scripts/picocalc/xiao-radio/meshcore-uart1.patch
 pio run -e Xiao_nrf52_companion_radio_serial
 python bin/uf2conv/uf2conv.py .pio/build/Xiao_nrf52_companion_radio_serial/firmware.hex \
     -c -f 0xADA52840 -o meshcore-xiao-radio.uf2
@@ -750,7 +750,7 @@ haven't already (Step 8), then:
 
 ```bash
 # on the PicoCalc, as root
-sh scripts/xiao-radio/lyra-setup.sh          # MT_USER=meshterm by default
+sh scripts/picocalc/xiao-radio/lyra-setup.sh          # MT_USER=meshterm by default
 ```
 
 It does three idempotent things:

@@ -240,7 +240,7 @@ _VT_SLOTS: tuple[tuple[int, str, str], ...] = (
 #: The custom 16-slot remap P3 originally shipped (tailwind-family RGBs programmed via
 #: ``setvtrgb``) — **archived, not installed**: JP chose the standard palette but asked
 #: to keep this in case he changes his mind. Reinstall with
-#: ``MESHTERM_CUSTOM_PALETTE=1 sh scripts/calculinux-console-font-6x12.sh`` (whose opt-in
+#: ``MESHTERM_CUSTOM_PALETTE=1 sh scripts/picocalc/calculinux-console-font-6x12.sh`` (whose opt-in
 #: block a test keeps byte-identical to :func:`vtrgb_lines`); MESH_THEME_16 would then
 #: want re-tuning against it (see git history at c6485c6 for the matching theme).
 _VT_SLOTS_CUSTOM: tuple[tuple[int, str, str], ...] = (

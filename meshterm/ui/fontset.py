@@ -2,7 +2,7 @@
 """The PicoCalc console font's codepoint inventory — the glyph contract.
 
 The PicoCalc panel draws through the kernel console with one 512-glyph PSF font
-(``meshterm.psf.gz``, built by ``scripts/calculinux-console-font-6x12.sh``): the stock
+(``meshterm.psf.gz``, built by ``scripts/picocalc/calculinux-console-font-6x12.sh``): the stock
 Terminus 6×12 base (a Cyrillic-coverage table — note there are **no accented Latin
 letters**), the full braille block, MeshTerm's own marks drawn into donor slots, and a
 few aliases. A character outside this set renders as a blank on the panel, so *nothing

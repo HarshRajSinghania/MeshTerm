@@ -17,7 +17,7 @@ def test_spdx_headers():
     python_files = []
 
     # Collect all Python files from the required directories
-    for directory in ["meshterm", "tests", "packaging", "scripts/xiao-radio"]:
+    for directory in ["meshterm", "tests", "packaging", "scripts/picocalc/xiao-radio"]:
         dir_path = repo_root / directory
         if dir_path.exists():
             if directory == "packaging":
@@ -27,8 +27,8 @@ def test_spdx_headers():
             else:
                 python_files.extend(dir_path.rglob("*.py"))
 
-    # Also check the extensionless scripts/meshterm-spi-bridge script
-    spi_bridge = repo_root / "scripts" / "meshterm-spi-bridge"
+    # Also check the extensionless scripts/uconsole/meshterm-spi-bridge script
+    spi_bridge = repo_root / "scripts" / "uconsole" / "meshterm-spi-bridge"
     if spi_bridge.exists():
         python_files.append(spi_bridge)
 

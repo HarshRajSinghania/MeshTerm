@@ -17,6 +17,15 @@ allowed to change behaviour, not just add to it.
 
 ## [Unreleased]
 
+- **`scripts/` is sorted by handheld.** The PicoCalc's Calculinux bring-up, its two
+  console-font builds, the GPL-2.0 text that belongs beside the 6×8 one, and the
+  `xiao-radio/` firmware kit all live under `scripts/picocalc/`; the SPI bridge is
+  `scripts/uconsole/meshterm-spi-bridge`. The folder's own README is gone — its index of
+  what every file does and which machine runs it is a section of
+  [`docs/hardware.md`](docs/hardware.md) now, beside the table that says which manual is
+  yours. Every path in the manuals, the notices, the tests and the scripts' own headers
+  follows.
+
 - **The 6×12 console-font script carries its size in its name**, `calculinux-console-font-6x12.sh`,
   like its 6×8 sibling always did. Same script, every reference updated.
 

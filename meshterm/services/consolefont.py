@@ -39,7 +39,8 @@ from ..core.config import default_config_dir
 from ..persistence.logging import get_logger
 from ..platforms import get_platform
 
-#: Where ``scripts/calculinux-console-font-6x12.sh`` and its 6x8 companion install the fonts.
+#: Where ``scripts/picocalc/calculinux-console-font-6x12.sh`` and its 6x8 companion install
+#: the fonts.
 FONT_DIR = Path("/usr/share/consolefonts")
 
 #: One preference value -> the file the build script writes for it. This map lives beside

@@ -25,10 +25,10 @@ project and is not authorized to do so.
 
 --------------------------------------------------------------------------------
 
-Device script: scripts/calculinux-console-font-6x8.sh embeds the Linux kernel's
+Device script: scripts/picocalc/calculinux-console-font-6x8.sh embeds the Linux kernel's
 font_6x8 bitmap (lib/fonts/font_6x8.c) and is therefore licensed GPL-2.0-only,
 as is the console font it builds; its terms are included beside it as
-scripts/LICENSE.GPL-2.0 and are its only license -- the Apache License above
+scripts/picocalc/LICENSE.GPL-2.0 and are its only license -- the Apache License above
 does not apply to it. Nothing GPL-2.0 reaches the MeshTerm package: that script
 is excluded from the distribution, runs on the device, and produces a PSF data
 file the Linux console driver loads, which MeshTerm neither links nor bundles.

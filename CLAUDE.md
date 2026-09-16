@@ -545,7 +545,7 @@ branch on the platform per frame, and never `from meshterm.platforms import PLAT
   `MapCanvas.to_ansi_lines`) — but the fold is the safety net, not the design.
 - The glyph contract is `ui/fontset.py` — the installed console font's exact codepoint
   inventory, device-verified. A character outside it is a test failure, not a tofu box
-  found on-device. The font itself is built by `scripts/calculinux-console-font-6x12.sh`;
+  found on-device. The font itself is built by `scripts/picocalc/calculinux-console-font-6x12.sh`;
   the two files move in the same commit.
 - The 16-slot palette is `theme._VT_SLOTS` (programmed via `/etc/vtrgb`; same script).
   `MESH_THEME_16` speaks `color(0..15)` only; backgrounds stop at slot 7. Both themes

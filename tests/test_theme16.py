@@ -22,7 +22,12 @@ from meshterm.ui import theme
 from meshterm.ui.fontset import FONT_CODEPOINTS
 from meshterm.ui.theme import MESH_THEME, MESH_THEME_16, fold_text, glyph, name_style
 
-_FONT_SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "calculinux-console-font-6x12.sh"
+_FONT_SCRIPT = (
+    Path(__file__).resolve().parent.parent
+    / "scripts"
+    / "picocalc"
+    / "calculinux-console-font-6x12.sh"
+)
 
 
 # -- the two themes -------------------------------------------------------------------
@@ -133,7 +138,7 @@ def test_deploy_script_carries_the_archived_custom_palette() -> None:
     """
     script = _FONT_SCRIPT.read_text(encoding="utf-8")
     assert "MESHTERM_CUSTOM_PALETTE" in script, "the opt-in gate vanished"
-    assert theme.vtrgb_lines() in script, "scripts/calculinux-console-font-6x12.sh vtrgb drifted"
+    assert theme.vtrgb_lines() in script, f"{_FONT_SCRIPT.name} vtrgb drifted"
     for index, (_, _, hex_) in enumerate(theme._VT_SLOTS_CUSTOM):
         sequence = f"\\033]P{index:x}{hex_.lstrip('#').lower()}"
         assert sequence in script, f"OSC fallback missing slot {index}: {sequence}"
