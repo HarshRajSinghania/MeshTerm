@@ -666,6 +666,38 @@ def test_a_seam_between_two_of_one_colour_falls_back_to_the_page() -> None:
     assert " on " not in gaps[0]  # a dimmed return leg reads as hops, not one bar
 
 
+def _seam_styles(*hops: PathHop) -> list[str]:
+    text = PathLine(list(hops), mode="powerline").text()
+    return [str(s.style) for s in text.spans if text.plain[s.start] == POWERLINE_SEP]
+
+
+def test_a_seam_between_two_near_hues_falls_back_to_the_page_too() -> None:
+    """Two hues under ``SEAM_HUE_GAP`` apart on the wheel blend like an exact match.
+
+    The wheel is the first key byte, so the gap is a byte difference — and a circular
+    one, so ``f8`` and ``04`` are neighbours. At the gap itself the interlock is back.
+    The greys are exempt: a keyless hop beside a dimmed one keeps its blend, because two
+    distinct greys are two distinct fills and the chevron between them still reads.
+    """
+    hue = _style_hex(node_style("a0"))
+    assert _seam_styles(PathHop("A", key="a0"), PathHop("B", key="af"))[0] == hue
+    assert _seam_styles(PathHop("A", key="af"), PathHop("B", key="a0"))[0] == _style_hex(
+        node_style("af")
+    )
+    assert _seam_styles(PathHop("A", key="f8"), PathHop("B", key="04"))[0] == _style_hex(
+        node_style("f8")
+    )  # the wheel wraps
+    assert _seam_styles(PathHop("A", key="a0"), PathHop("B", key="b0"))[0] == (
+        f"{hue} on {_style_hex(node_style('b0'))}"
+    )  # exactly the gap apart: distinct
+    assert _seam_styles(PathHop("A", key="a0"), PathHop("B", key="20"))[0] == (
+        f"{hue} on {_style_hex(node_style('20'))}"
+    )  # opposite sides of the wheel
+
+    mixed = _seam_styles(PathHop("A"), PathHop("B", dim=True))
+    assert " on " in mixed[0]  # keyless grey on dim slate: two greys, still interlocked
+
+
 def test_bare_self_stands_us_on_a_star_and_fades_both_ends() -> None:
     """``bare_self`` stands us on a ★ at both ends, and fades both.
 

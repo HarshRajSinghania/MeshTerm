@@ -15,13 +15,14 @@ drawn*, so every surface the survey found can eventually route through it:
   chevron: the oh-my-posh look, at one cell a seam. The chip fill is the node's
   hash-derived hue (:func:`~meshterm.ui.theme.node_style`), our own node the map's yellow
   ``★`` on a neutral dark grey, a faded hop dark slate, a keyless hop grey. Two chips that
-  land on the *same* fill — a mirrored return leg, a stretch of keyless greys — take the
-  one exception the interlock can't draw, dropping the background so the page cuts the
-  wedge (:meth:`PathLine._seam`). Hops elided out of the middle break the ribbon instead
-  of joining it: the mark sits bare on the page between a closing point and the next
-  chip's notch (:func:`elision_hop`), because a filled ``⋯`` chip would read as a node by
-  that name. A chip caught by a *cut* — a lane that ran out, a line scrolled past its
-  edge — breaks off on a half block in its own fill
+  land on the *same* fill — a mirrored return leg, a stretch of keyless greys — or on two
+  hues too close to tell apart (first key bytes under :data:`SEAM_HUE_GAP` apart on the
+  wheel) take the one exception the interlock can't draw, dropping the background so the
+  page cuts the wedge (:meth:`PathLine._seam`). Hops elided out of the middle break the
+  ribbon instead of joining it: the mark sits bare on the page between a closing point and
+  the next chip's notch (:func:`elision_hop`), because a filled ``⋯`` chip would read as a
+  node by that name. A chip caught by a *cut* — a lane that ran out, a line scrolled past
+  its edge — breaks off on a half block in its own fill
   (:func:`cut_mark`), and that crack is what says the segment continues; only chips
   crack, an arrow line still ellipsizes. A line's two *outer* ends read the same way:
   a path that begins at its origin and ends at its destination opens and closes flat (a
@@ -75,6 +76,7 @@ earned, and a cursor can never be stranded on a line break.
 
 from __future__ import annotations
 
+import colorsys
 import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -247,6 +249,51 @@ def _style_hex(style: str) -> str | None:
         except Exception:
             return None
     return None
+
+
+#: How far apart two chip hues must sit on the 256-step wheel for a seam to interlock
+#: them: closer than this and the point is drawn on the page instead, as it is for two
+#: fills that are identical (:meth:`PathLine._seam`). The wheel *is* the node's first key
+#: byte (:func:`~meshterm.ui.theme.node_style` maps ``0x00``–``0xff`` straight round it),
+#: so this is a difference in first bytes — under ``0x10`` and two neighbours are one
+#: ribbon to the eye, a chevron of one shade of green laid on the next (JP, 2026-09-15).
+#: The gap is circular: ``0xf8`` and ``0x04`` are twelve apart, not two hundred and forty.
+SEAM_HUE_GAP = 0x10
+
+#: Below this saturation a fill is a grey — a keyless hop, the dim slate, our own
+#: neutral — whose hue is noise, so it blends with nothing but its exact self. The
+#: spectrum fills and the console's six slots all sit well above it.
+_HUE_SAT_FLOOR = 0.5
+
+
+def _hue_byte(fill: str) -> int | None:
+    """Where a ``#rrggbb`` fill sits on the 256-step hue wheel, or ``None`` for a grey.
+
+    The inverse of :func:`~meshterm.ui.theme._node_style_spectrum`: every one of its 256
+    fills recovers the exact first key byte that minted it (the round trip through 8-bit
+    RGB is lossless at the spectrum's saturation), so two chips are compared by the very
+    bytes that coloured them — and an override fill or a console slot, which no byte
+    minted, is still placed on the same wheel by the hue it actually shows.
+    """
+    try:
+        r, g, b = (int(fill[i : i + 2], 16) / 255 for i in (1, 3, 5))
+    except (ValueError, IndexError):
+        return None
+    hue, sat, _ = colorsys.rgb_to_hsv(r, g, b)
+    if sat < _HUE_SAT_FLOOR:
+        return None
+    return round(hue * 256) % 256
+
+
+def _fills_blur(before: str, after: str) -> bool:
+    """Whether two fills are the same to the eye — identical, or hues under the gap."""
+    if before == after:
+        return True
+    a, b = _hue_byte(before), _hue_byte(after)
+    if a is None or b is None:
+        return False
+    apart = abs(a - b)
+    return min(apart, 256 - apart) < SEAM_HUE_GAP
 
 
 #: A chip's fill, as it appears in a rendered span's style — the ``on #rrggbb`` half.
@@ -967,6 +1014,12 @@ class PathLine:
         shows through the wedge instead, which is the one thing that still separates two
         blocks of one colour. One cell either way.
 
+        *Nearly* the same is the same exception: two hues a few steps apart on the wheel
+        draw a chevron the eye can't find either — one shade of green on the next — so
+        two first bytes under :data:`SEAM_HUE_GAP` apart fall back to the page as well
+        (:func:`_fills_blur`, JP, 2026-09-15). The greys are exempt: a keyless hop beside
+        a dimmed one shows two distinct fills and keeps its interlock.
+
         Args:
             before: The fill the point is drawn in (the previous chip's).
             after: The fill it is laid on (the next chip's).
@@ -974,7 +1027,7 @@ class PathLine:
         Returns:
             The seam's single styled cell.
         """
-        if before == after:
+        if _fills_blur(before, after):
             return Text(POWERLINE_SEP, style=before)  # fg only — the page cuts the wedge
         return Text(POWERLINE_SEP, style=f"{before} on {after}")
 

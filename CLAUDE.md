@@ -312,7 +312,9 @@ as a grouped list does. Filling a page in is editing its `.md`; no Python follow
   grey, padded like every other chip.
 - Chip seams are **one** interlocked chevron (previous fill on next). Two chips of the
   same fill are the exception the interlock can't draw: the point drops its background so
-  the page cuts the wedge. An elision breaks the ribbon rather than joining it — bare `⋯`
+  the page cuts the wedge — and so do two hues too close to tell apart, first key bytes
+  under `pathline.SEAM_HUE_GAP` (0x10) apart on the wheel, circularly; the greys blend
+  only with their exact selves. An elision breaks the ribbon rather than joining it — bare `⋯`
   on the page between a closing point and the next chip's notch, no fill, no padding.
 - The ribbon's **outer ends**: the chevron means *the route continues*, so an end that is
   the route's own never wears one. It ends **square** — nothing appended, the last chip's
