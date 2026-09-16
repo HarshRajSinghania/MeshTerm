@@ -23,14 +23,20 @@ would mean re-implementing that placement. Anything else falls straight through 
 stock renderer, which stays the authority: :meth:`FastRenderer.render` is an accelerator
 for the common case, never a second implementation of the whole layout engine.
 
-Two details make the row diff safe rather than merely fast:
+Three details make the row diff safe rather than merely fast:
 
-* **A row is rewritten whole, from column 0.** The terminal's own cursor advance re-lays
-  the line, so a glyph it draws narrower than we measured cannot leave the rest of the row
-  shifted — the same guarantee :meth:`~meshterm.ui.tui.session.TuiSession._emit` relies on,
-  reached here for free rather than by a scrub pass.
-* **Each row is prefixed with a reset and followed by an erase-to-end-of-line**, so no
-  style leaks in from the row above and a row that got shorter leaves no tail behind.
+* **A row is rewritten whole, from column 0.** Stepping down to a row returns the terminal
+  to a true column 0 whatever happened on the row above, so a glyph drawn at a width we did
+  not measure can never throw off the rows below it — the same guarantee
+  :meth:`~meshterm.ui.tui.session.TuiSession._emit` relies on, reached here for free rather
+  than by a scrub pass.
+* **Every column of that row is pinned to the grid the app measured**
+  (:func:`~meshterm.ui.tui.colsnap.snap_row`), which is what keeps the drift from mattering
+  *within* the row either. This is the only place in the app where a row's bytes are still
+  ours on their way to the terminal, so it is the only place that correction can be made.
+* **Each row is cleared before it is drawn, never after**, so no style leaks in from the row
+  above, a row that got shorter leaves no tail behind, and a row that fills the terminal
+  exactly keeps its last cell.
 """
 
 from __future__ import annotations
@@ -39,6 +45,13 @@ import os
 from collections.abc import Callable
 
 from prompt_toolkit.renderer import Renderer
+
+from . import colsnap
+
+
+def _as_is(row: str) -> str:
+    """The unpinned write path: a row goes out exactly as it was composed."""
+    return row
 
 
 def enabled() -> bool:
@@ -77,6 +90,10 @@ class FastRenderer(Renderer):
         """
         super().__init__(*args, **kwargs)
         self._frame_source = frame_source
+        #: How a row is pinned to the app's column grid on its way out — resolved once here,
+        #: because the escape hatch is a property of the terminal this session is talking to
+        #: and not of any one paint. Identity when it is off, so the write path never branches.
+        self._pin: Callable[[str], str] = colsnap.snap_row if colsnap.enabled() else _as_is
         self._prev_rows: list[str] | None = None
         self._prev_size: tuple[int, int] | None = None
         #: Paints answered here vs handed to the stock renderer — read by the bench.
@@ -157,7 +174,9 @@ class FastRenderer(Renderer):
             # missing on the PicoCalc's 53-column console). Clearing first also drops the
             # tail of a row that got shorter, which is what the erase was for.
             write("\x1b[0m\x1b[K")
-            write(row)
+            # Pinned, not merely written: an emoji in a node's name is drawn at whatever width
+            # this font gives it, and the lanes after it belong to the app's grid either way.
+            write(self._pin(row))
             last = i
         # Park the cursor out of the text. The app hides it, but a terminal that ignores
         # that should not leave it blinking in the middle of a row.

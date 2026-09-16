@@ -88,6 +88,14 @@ one-cell text glyph, which is what both authorities said. Forcing one to two res
 terminal never draws and pulls the row's border a column *in* — see :data:`_DEFAULT_WIDE_BASE` for
 the case that proved it.
 
+**What this module is no longer answerable for.** A row's *layout* no longer rests on these
+tables being right about a glyph. :mod:`~meshterm.ui.tui.colsnap` writes an absolute column
+address after anything whose drawn width is uncertain, so a mismeasurement costs one cell inside
+that glyph's own lane instead of every lane after it — which is the only answer that can reach a
+name off the air, since the curated sets can only ever hold glyphs somebody has already looked
+at. What those sets still decide is the *reservation*: a listed glyph gets neither a blank cell
+beside it nor an overhang written over, so adding a confirmed one is still worth doing.
+
 Two jobs beside the measuring belong here, because they are the same question asked of the same
 table. **Where a string may be cut** (:func:`cut_cells`, over :func:`clusters`): a lane that
 truncates a name a codepoint at a time cuts through the middle of a glyph, and the pieces that
