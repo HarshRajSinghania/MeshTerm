@@ -38,6 +38,7 @@ if TYPE_CHECKING:
     from .services.basemap import BasemapSource
     from .services.battery_service import BatteryService
     from .services.chat_service import ChatService
+    from .services.clock_sync import ClockSync
     from .services.courier import CourierService
     from .services.device_state import DeviceState
     from .services.event_hub import EventHub
@@ -155,6 +156,7 @@ class AppContext:
     _chat: ChatService | None = field(default=None, init=False, repr=False)
     _adverts: AdvertScheduler | None = field(default=None, init=False, repr=False)
     _watchtower: WatchtowerService | None = field(default=None, init=False, repr=False)
+    _clock_sync: ClockSync | None = field(default=None, init=False, repr=False)
     _courier: CourierService | None = field(default=None, init=False, repr=False)
     _battery: BatteryService | None = field(default=None, init=False, repr=False)
     _devstate: DeviceState | None = field(default=None, init=False, repr=False)
@@ -359,6 +361,21 @@ class AppContext:
         return self._watchtower
 
     @property
+    def clock_sync(self) -> ClockSync:
+        """Return the session's on-connect clock setter, creating it on first use.
+
+        Created idle here; the interactive session starts it alongside the other
+        always-on services, and :meth:`device` tells it about each connection as it
+        settles. Scripted CLI runs never start it, so a one-shot command that only reads
+        the radio never writes its clock.
+        """
+        if self._clock_sync is None:
+            from .services.clock_sync import ClockSync
+
+            self._clock_sync = ClockSync(self)
+        return self._clock_sync
+
+    @property
     def courier(self) -> CourierService:
         """Return the session's store-and-forward courier, creating it on first use.
 
@@ -515,8 +532,7 @@ class AppContext:
             self._active_port = None
             self._active_address = None
             await self._open(f"TCP companion {tcp_host}:{tcp_port}")
-            await self._remember_connected()
-            await self._reconcile_channels()
+            await self._settle_connection()
             return self._device
 
         # A Bluetooth endpoint (an explicit ``--ble``, a BLE profile, a device picked at
@@ -549,8 +565,7 @@ class AppContext:
             self._active_port = None
             self._active_endpoint = None
             await self._open(f"BLE companion {ble_address}")
-            await self._remember_connected()
-            await self._reconcile_channels()
+            await self._settle_connection()
             return self._device
 
         resolution = resolve_device(
@@ -568,8 +583,7 @@ class AppContext:
         self._active_address = None
         self._active_endpoint = None
         await self._open(f"serial port {resolution.port}")
-        await self._remember_connected()
-        await self._reconcile_channels()
+        await self._settle_connection()
         return self._device
 
     def _resolve_tcp_endpoint(self) -> tuple[str | None, int | None]:
@@ -655,6 +669,19 @@ class AppContext:
                 node_name=await self._node_name(),
                 hardware_model=await self._hardware_model(),
             )
+
+    async def _settle_connection(self) -> None:
+        """The steps every fresh connection gets once the link is open, in order.
+
+        Remember the device as the default, replay its remembered channels, and hand it to
+        the on-connect clock setter — which returns at once and does its work in the
+        background, so the connection is usable the moment this returns. Each step is
+        best-effort on its own; none can fail the connection.
+        """
+        await self._remember_connected()
+        await self._reconcile_channels()
+        if self._device is not None:
+            self.clock_sync.on_connected(self._device)
 
     async def _reconcile_channels(self) -> None:
         """Replay channels remembered for this device that it isn't reporting (best-effort).
@@ -792,6 +819,8 @@ class AppContext:
             await self._battery.aclose()
         if self._watchtower is not None:
             await self._watchtower.aclose()
+        if self._clock_sync is not None:
+            await self._clock_sync.aclose()
         if self._adverts is not None:
             await self._adverts.aclose()
         if self._monitor is not None:

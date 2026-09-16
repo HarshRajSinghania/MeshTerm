@@ -29,6 +29,7 @@ from ..core.device_config import (
     parse_value,
     settings_by_category,
 )
+from ..services.clock_sync import set_clock
 from .base import Tool, ToolResult, register
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -306,23 +307,19 @@ async def apply_ops(
         elif kind == "share":
             report.append(await _share_contact(ctx, snapshot))
         elif kind == "sync_clock":
-            import time as _time
-            from datetime import datetime
-
-            epoch = int(_time.time())
-            drift = await _try_clock(device)
-            await device.set_time(epoch)
-            stamp = datetime.fromtimestamp(epoch).astimezone().strftime("%Y-%m-%d %H:%M:%S")
-            ctx.ui.ack(f"[ok]✓[/ok] device clock set to [brand]{stamp}[/brand]")
+            # The same step the on-connect service runs in the background
+            # (:mod:`meshterm.services.clock_sync`); here it is acknowledged and reported.
+            done = await set_clock(device)
+            ctx.ui.ack(f"[ok]✓[/ok] device clock set to [brand]{done.stamp}[/brand]")
             changes += 1
             report.append(
                 _acted(
                     "clock",
                     changes=1,
-                    set_at=datetime.fromtimestamp(epoch).astimezone(),
+                    set_at=done.set_at,
                     # What the clock was off by *before* the set: the fact worth logging,
                     # and the one this command destroys by succeeding.
-                    drift_s=None if drift is None else drift - epoch,
+                    drift_s=done.drift_s,
                 )
             )
         elif kind == "reboot":
@@ -802,11 +799,3 @@ def _acted(key: str, **facts: Any) -> Facts:
         values=dict(facts),
         shape=SILENT,
     )
-
-
-async def _try_clock(device: Device) -> int | None:
-    """The device's current clock, or ``None`` where the firmware will not answer."""
-    try:
-        return await device.get_time()
-    except Exception:  # noqa: BLE001 - optional read; the drift is a nicety
-        return None

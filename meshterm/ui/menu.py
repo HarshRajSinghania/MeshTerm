@@ -399,6 +399,7 @@ async def run_menu(ctx: AppContext) -> None:
             # Stop history + chat recording (closing their run records), the background
             # advert scheduler, and the always-on event hub, even on an unexpected exit.
             await ctx.adverts.aclose()
+            await ctx.clock_sync.aclose()
             await ctx.monitor.aclose()
             await ctx.chat.aclose()
             await ctx.events.aclose()
@@ -821,6 +822,10 @@ async def _resume_monitor(ctx: AppContext) -> None:
     await ctx.adverts.start()
     # The Watchtower only listens (rules over hub events), so it too is safe from launch.
     await ctx.watchtower.start()
+    # The clock setter acts only when a connection settles (and at once on one the startup
+    # picker already adopted), only when its preference is on, and only in the background;
+    # it never opens the radio and never touches the screen — it reports in the log.
+    await ctx.clock_sync.start()
     # The courier drains the outbox on its own paced schedule; each pass checks for a
     # connected device and skips quietly without one, exactly like the advert scheduler.
     await ctx.courier.start()

@@ -57,11 +57,12 @@ else:  # pragma: no cover - exercised only on 3.10
     import tomli as tomllib
 
 #: Display groups, in the order the page and the file present them. The order is the
-#: order a session happens in — what MeshTerm puts on the air, how loud, what it watches
-#: for, how it draws the world, what it keeps, and how it paints. Nothing sorts
-#: alphabetically: a reader looking for "how long before I give up on a message" should
-#: not have to know it starts with a D.
+#: order a session happens in — what MeshTerm does to the radio as the link opens, what
+#: it puts on the air, how loud, what it watches for, how it draws the world, what it
+#: keeps, and how it paints. Nothing sorts alphabetically: a reader looking for "how long
+#: before I give up on a message" should not have to know it starts with a D.
 GROUPS: tuple[str, ...] = (
+    "Device",
     "Sending",
     "TX optimize",
     "Watchtower",
@@ -205,6 +206,18 @@ _LOG_LEVEL_CHOICES: dict[str, str] = {
 #: code-level behaviour is named, never re-typed: one source, so changing it cannot leave
 #: the constant and the registry disagreeing about what MeshTerm does.
 PREFERENCES: tuple[PrefSpec, ...] = (
+    # --- Device ------------------------------------------------------------------
+    PrefSpec(
+        key="set_clock_on_connect",
+        label="Set clock on connect",
+        help="Set the device clock from this computer when it connects",
+        group="Device",
+        value_type="bool",
+        # Off: writing to a radio nobody asked to be written to is the owner's call. The
+        # set is silent (the log records it) and happens once per connection — see
+        # :mod:`meshterm.services.clock_sync`.
+        default=False,
+    ),
     # --- Sending -----------------------------------------------------------------
     PrefSpec(
         key="trace_cooldown_s",
