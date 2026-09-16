@@ -273,13 +273,12 @@ def _style_hex(style: str) -> str | None:
 #: restated the hue gap (a fixed byte step is a near-constant ``55``–``60`` of 8-bit RGB
 #: all the way round). The value was then set by eye on a ladder of the spectrum's own
 #: pairs drawn both ways (JP, 2026-09-16), and it sits where the solid point is not just
-#: detectable at one cell but *found* without looking for it: ``0.10``, five noticeable
-#: differences, the typical ``0x10`` pair with a little to spare. Tighter (``0.035`` was
-#: tried) left wedges a reader had to hunt for; the safe side is this one, since a wrong
-#: blur still draws a legible seam and a wrong interlock draws none. ``0x10`` of green is
+#: detectable at one cell but *found* without looking for it: ``0.05``, two and a half
+#: noticeable differences. Tighter (``0.035``) left wedges a reader had to hunt for;
+#: looser (``0.10``) blurred pairs whose point still read plainly. ``0x10`` of green is
 #: ``0.026`` and blurs; ``0x10`` of red is ``0.124`` and doesn't; the two greys, ``0.18``
 #: apart, keep their interlock on the metric alone.
-SEAM_BLUR = 0.10
+SEAM_BLUR = 0.05
 
 #: How far the thin chevron's colour steps from the fill it is drawn in, in OKLab ``L``
 #: — a lightness shift alone, so it reads as *that chip's colour, shaded* rather than as
