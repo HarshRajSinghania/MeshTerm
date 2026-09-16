@@ -266,24 +266,29 @@ def _style_hex(style: str) -> str | None:
 #: The unit is OKLab distance (:func:`~meshterm.ui.oklab.distance`), where ``0.02`` is a
 #: just-noticeable difference between two large patches and ``1`` is black to white.
 #:
-#: Calibrated against the rule it replaced — first key bytes under ``0x10`` apart on the
-#: hue wheel (JP, 2026-09-15) — which measures ``0.087`` at the median hue but ``0.026``
-#: across the greens and ``0.165`` across the cyans: the wheel is not uniform to the eye,
-#: so a hue gap blurred too little there and too much here, and an sRGB distance would
-#: only have restated the hue gap (a fixed byte step is a near-constant ``55``–``60`` of
-#: 8-bit RGB all the way round). ``0.10`` is five noticeable differences, the typical
-#: ``0x10`` pair with a little to spare, and it errs toward the thin chevron on purpose:
-#: a wrong blur still draws a legible seam, a wrong interlock draws none (JP, 2026-09-16).
-SEAM_BLUR = 0.10
+#: The rule it replaced was first key bytes under ``0x10`` apart on the hue wheel (JP,
+#: 2026-09-15), which measures ``0.087`` at the median hue but ``0.026`` across the greens
+#: and ``0.165`` across the cyans: the wheel is not uniform to the eye, so a hue gap
+#: blurred too little there and too much here, and an sRGB distance would only have
+#: restated the hue gap (a fixed byte step is a near-constant ``55``–``60`` of 8-bit RGB
+#: all the way round). The value was then set by eye on a ladder of the spectrum's own
+#: pairs drawn both ways (JP, 2026-09-16): the solid point stays findable at one cell
+#: down to a little under two noticeable differences, and below that the wedge is gone.
+#: So the interlock is the ordinary seam and the thin chevron is for fills that are the
+#: same or as good as — a mirrored leg, a keyless run, the greens' nearest neighbours
+#: (``0x10`` of green is ``0.026`` and blurs; ``0x10`` of red is ``0.124`` and doesn't).
+SEAM_BLUR = 0.035
 
 #: How far the thin chevron's colour steps from the fill it is drawn in, in OKLab ``L``
 #: — a lightness shift alone, so it reads as *that chip's colour, shaded* rather than as
 #: a third colour on the line. The step is taken from the previous fill but measured from
 #: whichever of the two fills is further along (:func:`~meshterm.ui.oklab.shaded`'s
 #: ``floor``), so the mark clears the fill it actually sits on by this much even when the
-#: two differ by everything :data:`SEAM_BLUR` allows. Above the blur on its own, so the
-#: line it draws is always one the eye can find (JP, 2026-09-16).
-SEAM_SHADE = 0.15
+#: two differ by everything :data:`SEAM_BLUR` allows. A lightness step is what a thin line
+#: is seen by (the eye resolves detail in luminance, not in chroma), so it needs nothing
+#: like the blur distance to read: ``0.10`` is five noticeable differences, a clear line
+#: that is still plainly the chip's own colour, chosen on the same ladder (JP, 2026-09-16).
+SEAM_SHADE = 0.10
 
 
 def _fills_blur(before: str, after: str) -> bool:

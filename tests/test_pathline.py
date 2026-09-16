@@ -673,7 +673,7 @@ def test_a_seam_between_two_of_one_colour_is_the_thin_chevron_shaded() -> None:
     assert glyph == POWERLINE_THIN and style == f"{_seam_ink(hue, hue)} on {hue}"
     shade = _seam_ink(hue, hue)
     assert oklab.from_hex(shade)[0] < oklab.from_hex(hue)[0]  # darker…
-    assert oklab.distance(shade, hue) > SEAM_BLUR  # …by more than the blur, so it reads
+    assert oklab.distance(shade, hue) == pytest.approx(SEAM_SHADE, abs=0.01)  # …by the step
     assert oklab.distance(shade, hue) < oklab.distance(hue, _style_hex(node_style("77")))
 
     assert _seams(PathHop("A", key="aa"), PathHop("B", key="77"))[0] == (
@@ -691,22 +691,22 @@ def test_a_seam_blurs_by_perceived_distance_not_by_hue_gap() -> None:
     """Two fills under ``SEAM_BLUR`` apart to the eye blur like an exact match.
 
     The eye, not the wheel: sixteen first-byte steps across the greens are one colour to
-    a reader and sixteen across the cyans are two, so the same hue gap blurs on one side
-    and interlocks on the other. The greys work the same way with no exemption needed:
-    the keyless grey and the faded slate sit far apart in lightness and keep their seam.
+    a reader and sixteen across the reds are two, so the same hue gap blurs on one side
+    of the wheel and interlocks on the other. The greys follow the same metric with no
+    exemption: the keyless grey and the faded slate sit well apart and keep their seam.
     """
     green = _seams(PathHop("A", key="4c"), PathHop("B", key="5c"))[0]
-    cyan = _seams(PathHop("A", key="80"), PathHop("B", key="90"))[0]
-    assert green[0] == POWERLINE_THIN and cyan[0] == POWERLINE_SEP
+    red = _seams(PathHop("A", key="00"), PathHop("B", key="10"))[0]
+    assert green[0] == POWERLINE_THIN and red[0] == POWERLINE_SEP
     assert oklab.distance(_style_hex(node_style("4c")), _style_hex(node_style("5c"))) < SEAM_BLUR
-    assert oklab.distance(_style_hex(node_style("80")), _style_hex(node_style("90"))) > SEAM_BLUR
+    assert oklab.distance(_style_hex(node_style("00")), _style_hex(node_style("10"))) > SEAM_BLUR
 
     # The shade is taken from the chip behind but clears the chip ahead as well.
     before, after = _style_hex(node_style("4c")), _style_hex(node_style("5c"))
     assert green[1] == f"{_seam_ink(before, after)} on {after}"
     assert oklab.distance(_seam_ink(before, after), after) >= SEAM_SHADE - 1e-6
 
-    wrapped = _seams(PathHop("A", key="f8"), PathHop("B", key="04"))[0]
+    wrapped = _seams(PathHop("A", key="fc"), PathHop("B", key="02"))[0]
     assert wrapped[0] == POWERLINE_THIN  # neighbours across the wheel's seam, too
 
     glyph, style = _seams(PathHop("A"), PathHop("B", dim=True))[0]
