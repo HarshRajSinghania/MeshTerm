@@ -948,7 +948,12 @@ async def _run_selection(ctx: AppContext, name: str) -> None:
         if is_connection_lost(exc):
             ctx.ui.discard()  # drop the half-built output; the watcher will prompt to reconnect
             return
-        ctx.ui.note(f"[err]✗ {title} failed:[/err] {exc}")
+        # A tool that failed is a *caution*, not a loss: the run is over, nothing it was
+        # going to do has been half-done, and the reader's next move is to try again. So it
+        # takes the amber tone rather than the reserved red — the same tier a danger dialog
+        # uses — and the message dialog reads that tone off the note to frame itself
+        # (see :func:`~meshterm.ui.tui.session._message_border`).
+        ctx.ui.note(f"[warn]⚠ {title} failed:[/warn] {exc}")
         await ctx.ui.present(title=title)
         return
 

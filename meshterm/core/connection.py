@@ -1786,18 +1786,29 @@ class MeshCoreDevice(Device):
             return {}
         return dict(getattr(result, "payload", {}) or {})
 
-    async def _contacts_payload(self, mc, *, retries: int = 3, delay: float = 0.5) -> dict:  # noqa: ANN001
-        """Fetch the raw contacts map, retrying the transient "no event" blip.
+    #: How long the contacts stream may go quiet before a read is called failed (seconds).
+    #: The library's own ``get_contacts`` arms one future for the *whole* dump and never
+    #: re-arms it, so a table that takes longer than its five seconds to stream fails with
+    #: "no event received" however healthy the radio is — which is what a node holding four
+    #: hundred contacts does over Bluetooth. What actually means "the companion stopped
+    #: answering" is a gap *between* records, so that is what this times: the dump may take
+    #: as long as it takes, for as long as it keeps arriving.
+    _CONTACTS_IDLE_S = 6.0
 
-        The companion intermittently fails to emit the contacts event in time and
-        returns an error event instead of data (``no event received during contacts
-        retrieval``). That's a recoverable timing hiccup, so retry a few times with a
-        short backoff before surfacing a clean, actionable error.
+    async def _contacts_payload(
+        self, mc, *, retries: int = 3, delay: float = 0.5, idle: float | None = None
+    ) -> dict:  # noqa: ANN001
+        """Fetch the raw contacts map, retrying a read that stalls or is refused.
+
+        The companion intermittently refuses or drops a contacts request — a recoverable
+        timing hiccup — so the read is attempted a few times with a short backoff before a
+        clean, actionable error is raised. One attempt is :meth:`_stream_contacts`.
 
         Args:
             mc: The connected ``MeshCore`` client.
             retries: Number of extra attempts after the first.
             delay: Seconds to wait between attempts.
+            idle: Seconds of silence that end an attempt (default :data:`_CONTACTS_IDLE_S`).
 
         Returns:
             The contacts payload mapping (possibly empty).
@@ -1805,13 +1816,12 @@ class MeshCoreDevice(Device):
         Raises:
             DeviceCommandError: If every attempt fails to retrieve contacts.
         """
+        gap = self._CONTACTS_IDLE_S if idle is None else idle
         reason = ""
         for attempt in range(retries + 1):
-            event = await mc.commands.get_contacts()
-            if event is None or not getattr(event, "is_error", lambda: False)():
-                return dict(getattr(event, "payload", {}) or {})
-            payload = getattr(event, "payload", {}) or {}
-            reason = str(payload.get("reason", payload))
+            payload, reason = await self._stream_contacts(mc, gap)
+            if payload is not None:
+                return payload
             if attempt < retries:
                 await asyncio.sleep(delay)
         raise DeviceCommandError(
@@ -1819,6 +1829,85 @@ class MeshCoreDevice(Device):
             "The companion didn't respond in time — this is usually transient; "
             "retry, or power-cycle/reconnect the radio if it persists."
         )
+
+    async def _stream_contacts(self, mc, idle: float) -> tuple[dict | None, str]:  # noqa: ANN001
+        """Run one contacts read, ending it on *silence* rather than on a deadline.
+
+        The contacts table arrives as one ``NEXT_CONTACT`` frame per record and a closing
+        ``CONTACTS`` frame holding the whole map. A dump is therefore not one answer that is
+        either late or on time, it is a stream, and the only thing that distinguishes a slow
+        big table from a radio that has stopped talking is how long it has been since the
+        last record. So each record restarts the clock and only ``idle`` seconds of quiet
+        end the attempt — which is the whole of the fix for a four-hundred-contact node,
+        whose dump simply takes longer than any fixed deadline the library would allow it.
+
+        Args:
+            mc: The connected ``MeshCore`` client.
+            idle: Seconds of silence that end the attempt.
+
+        Returns:
+            ``(payload, "")`` on success, or ``(None, reason)`` describing how it ended.
+        """
+        from meshcore import EventType
+
+        loop = asyncio.get_running_loop()
+        finished: asyncio.Future = loop.create_future()
+        arrived = asyncio.Event()
+        seen = False
+        refusal = ""
+
+        def on_record(event) -> None:  # noqa: ANN001 - meshcore Event
+            nonlocal seen
+            seen = True
+            arrived.set()
+
+        def on_end(event) -> None:  # noqa: ANN001 - meshcore Event
+            if not finished.done():
+                finished.set_result(event)
+
+        def on_error(event) -> None:  # noqa: ANN001 - meshcore Event
+            # An ERROR frame carries no request id, so it is only ours while nothing else
+            # can have earned it: before the first record it is this request being refused
+            # (a companion too busy to serve a dump answers ERR_CODE_BAD_STATE), and after
+            # one it belongs to whatever else is on the link — a battery poll, a courier
+            # send — where treating it as ours is how a read that was working stopped.
+            nonlocal refusal
+            payload = getattr(event, "payload", {}) or {}
+            refusal = str(payload.get("reason", payload))
+            if not seen and not finished.done():
+                finished.set_result(None)
+
+        subscriptions = [
+            mc.subscribe(EventType.NEXT_CONTACT, on_record),
+            mc.subscribe(EventType.CONTACTS, on_end),
+            mc.subscribe(EventType.ERROR, on_error),
+        ]
+        try:
+            await mc.commands.get_contacts_async()
+            while not finished.done():
+                arrived.clear()
+                ticking = asyncio.ensure_future(arrived.wait())
+                try:
+                    await asyncio.wait(
+                        {finished, ticking},
+                        timeout=idle,
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                finally:
+                    ticking.cancel()
+                if not finished.done() and not arrived.is_set():
+                    break
+        finally:
+            for subscription in subscriptions:
+                subscription.unsubscribe()
+        event = finished.result() if finished.done() else None
+        if event is not None:
+            return dict(getattr(event, "payload", {}) or {}), ""
+        if refusal and not seen:
+            return None, refusal
+        if seen:
+            return None, "no event received during contacts retrieval — it stopped partway"
+        return None, "no event received during contacts retrieval"
 
     async def get_contacts(self) -> list[Contact]:  # noqa: D102 - inherited docstring
         mc = self._require()

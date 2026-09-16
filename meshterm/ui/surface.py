@@ -32,25 +32,53 @@ Validator = Callable[[str], "bool | str"]
 
 #: Buffered output no taller than this many lines qualifies for the message dialog —
 #: the OK popup :meth:`TuiUi.present` shows instead of a full result window. Kept small:
-#: a dialog is an acknowledgement, not a reading surface.
+#: a dialog is an acknowledgement, not a reading surface. It counts the lines the tool
+#: *emitted*, before any wrapping: one sentence is one outcome however long it runs.
 _DIALOG_MAX_LINES = 3
 
-#: ... and no line may be wider than this many cells, so the popup stays a tidy box on a
-#: typical terminal and never has to wrap. Anything wider (a long path, a verbose error)
-#: falls back to the scrollable result window, which wraps properly.
-_DIALOG_MAX_CELLS = 76
+#: ... and no taller than this once wrapped to the box's width, which is what the box
+#: actually has to draw. The two counts differ only for a long line, and that is the case
+#: worth bounding: a three-line outcome stays a popup, while a note long enough to be a
+#: page of reading opens the scrollable window it belongs in.
+_DIALOG_MAX_WRAPPED = 8
+
+#: What :class:`~meshterm.ui.tui.prompt.ButtonDialog` spends on chrome around its widest
+#: line — its own ``dialog_width`` margin (panel padding, border, breathing room). Taken
+#: off the platform's readable width, it leaves the cells a message may actually use.
+_DIALOG_CHROME_CELLS = 12
 
 
-def _dialog_max_cells() -> int:
-    """The popup-qualifying width for the active platform.
+def _dialog_wrap_cells() -> int:
+    """How wide a line may be inside the message popup, on the active platform.
 
-    The regular platform keeps the long-standing 76. On the PicoCalc the dialog frame
-    itself is capped at ``cols - 6 = 47`` outer (43 inner), so a line qualifying at 76
-    would wrap inside the box it was promoted into — the gate shrinks to match.
+    A dialog sizes to its widest line and the compositor caps that to the terminal, so a
+    line long enough to need the cap is a line clipped on a readable-width screen. Wrapping
+    to what fits *there* is what lets a long outcome — the sentence explaining why a read
+    failed — stay a popup at all rather than commandeering the whole frame.
     """
     from ..platforms import get_platform
 
-    return _DIALOG_MAX_CELLS if get_platform().frame_border else 43
+    platform = get_platform()
+    return max(24, platform.readable_cols - platform.dialog_margin - _DIALOG_CHROME_CELLS)
+
+
+def _wrapped(lines: list[Text], width: int) -> list[Text]:
+    """Re-flow ``lines`` to ``width`` cells, keeping every span they carry.
+
+    A blank line wraps to nothing, and a blank line is content in an outcome block, so it
+    is kept as itself. The wrap leaves the break's trailing space on the line it ended,
+    which the dialog would then centre the line around — so each one is trimmed.
+    """
+    from .tui.render import _console
+
+    console = _console(width)
+    out: list[Text] = []
+    for line in lines:
+        parts = list(line.wrap(console, width)) or [Text("")]
+        for part in parts:
+            part.rstrip()  # in place; Rich's rstrip returns nothing
+        out.extend(parts)
+    return out
 
 
 class _NullBusy:
@@ -62,13 +90,19 @@ class _NullBusy:
 
 
 def _collapse_to_message(buffered: list[RenderableType]) -> Text | None:
-    """Collapse small, text-only buffered output into one dialog message.
+    """Collapse small, text-only buffered output into one wrapped dialog message.
 
     This is the gate for :meth:`TuiUi.present`'s popup upgrade: output qualifies only
     when everything buffered is plain note text (:class:`Text` — a table or panel from
-    ``show()`` disqualifies the lot) totalling at most :data:`_DIALOG_MAX_LINES` lines,
-    none wider than :data:`_DIALOG_MAX_CELLS` cells. Styling (the ``[ok]``/``[err]``
-    markup on outcome notes) is preserved in the joined message.
+    ``show()`` disqualifies the lot) totalling at most :data:`_DIALOG_MAX_LINES` emitted
+    lines, and at most :data:`_DIALOG_MAX_WRAPPED` once re-flowed to the box's width.
+    Styling (the ``[ok]``/``[warn]`` markup on outcome notes) is preserved in the joined
+    message, which is what lets the dialog frame take its tone from it.
+
+    The width is a **wrap**, not a rejection. A one-sentence outcome is an outcome to
+    acknowledge however long it runs, and sending it to the scrollable window for being
+    140 cells wide made the least interesting results the ones that took over the screen —
+    a tool that failed before it produced anything most of all.
 
     Args:
         buffered: The renderables collected since the last present.
@@ -84,7 +118,8 @@ def _collapse_to_message(buffered: list[RenderableType]) -> Text | None:
         lines.extend(item.split("\n") or [item])
     if len(lines) > _DIALOG_MAX_LINES:
         return None
-    if any(line.cell_len > _dialog_max_cells() for line in lines):
+    lines = _wrapped(lines, _dialog_wrap_cells())
+    if len(lines) > _DIALOG_MAX_WRAPPED:
         return None
     return Text("\n").join(lines)
 

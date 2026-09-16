@@ -15,7 +15,7 @@ from typing import Any
 from rich.table import Table
 from rich.text import Text
 
-from meshterm.ui.surface import _DIALOG_MAX_CELLS, TuiUi, _collapse_to_message
+from meshterm.ui.surface import _DIALOG_MAX_WRAPPED, TuiUi, _collapse_to_message
 from meshterm.ui.tui.session import TuiSession, _message_border
 
 # -- the collapse gate ------------------------------------------------------------
@@ -43,9 +43,25 @@ def test_collapse_rejects_tall_output() -> None:
     assert _collapse_to_message([Text(f"line {i}") for i in range(4)]) is None
 
 
-def test_collapse_rejects_wide_lines() -> None:
-    """A line too wide for the popup (a long path, say) falls back to the window."""
-    assert _collapse_to_message([Text("x" * (_DIALOG_MAX_CELLS + 1))]) is None
+def test_collapse_wraps_a_wide_line_instead_of_rejecting_it() -> None:
+    """A long one-line outcome stays a popup; the box wraps it rather than passing it on.
+
+    This is what keeps a failure — "✗ Chat failed: could not read contacts …" — an
+    acknowledgement to dismiss instead of a full-frame reading surface.
+    """
+    sentence = "could not read contacts from the radio. " * 3
+    message = _collapse_to_message([Text(sentence)])
+    assert message is not None
+    lines = message.plain.splitlines()
+    assert len(lines) > 1  # it was re-flowed
+    assert max(len(line) for line in lines) <= 54  # the regular platform's wrap width
+    assert " ".join(line.strip() for line in lines) == sentence.strip()
+
+
+def test_collapse_rejects_a_line_long_enough_to_be_a_page() -> None:
+    """Wrapping has a ceiling: past it the output is reading, and the window takes it."""
+    assert _collapse_to_message([Text("word " * 120)]) is None
+    assert _DIALOG_MAX_WRAPPED == 8
 
 
 def test_collapse_rejects_non_text_renderables() -> None:

@@ -377,14 +377,14 @@ def test_host_battery_reads_the_sysfs_supply(tmp_path, monkeypatch) -> None:
     assert service.reading() is None  # unreadable supply = absent, header draws nothing
 
 
-def test_dialog_gate_shrinks_on_picocalc() -> None:
-    """A dialog is allowed fewer cells on the PicoCalc, the screen being narrower."""
-    from meshterm.ui.surface import _dialog_max_cells
+def test_dialog_wrap_shrinks_on_picocalc() -> None:
+    """A dialog message wraps to fewer cells on the PicoCalc, the screen being narrower."""
+    from meshterm.ui.surface import _dialog_wrap_cells
 
     set_platform(PICOCALC)
-    assert _dialog_max_cells() == 43
+    assert _dialog_wrap_cells() == 37  # 53 readable - 4 margin - 12 chrome
     set_platform(REGULAR)
-    assert _dialog_max_cells() == 76
+    assert _dialog_wrap_cells() == 54  # 72 readable - 6 margin - 12 chrome
 
 
 # --- the dialog border's hint, against the lane one row below it ------------------------

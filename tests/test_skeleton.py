@@ -6,6 +6,7 @@ These run without hardware against the :class:`MockDevice` simulator.
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -699,19 +700,23 @@ class _Event:
 
 
 def _mc_with(contacts: dict, path_hash_mode: int = 2):
-    """Build a minimal mock ``MeshCore`` client exposing the trace commands used."""
+    """Build a minimal mock ``MeshCore`` client exposing the trace commands used.
 
-    class _Commands:
-        async def get_contacts(self) -> _Event:
-            return _Event(contacts)
+    The contacts arrive the way the radio sends them — one record frame each, then the
+    closing frame holding the whole table (see :class:`_FakeMeshCore`).
+    """
+    from meshcore import EventType
 
-        async def get_path_hash_mode(self) -> int:
-            return path_hash_mode
+    mc = _FakeMeshCore(
+        [(EventType.NEXT_CONTACT, info) for info in contacts.values()]
+        + [(EventType.CONTACTS, contacts)]
+    )
 
-    class _MC:
-        commands = _Commands()
+    async def get_path_hash_mode() -> int:
+        return path_hash_mode
 
-    return _MC()
+    mc.commands.get_path_hash_mode = get_path_hash_mode
+    return mc
 
 
 async def test_contact_with_future_advert_stamp_reads_as_never_heard() -> None:
@@ -831,59 +836,134 @@ async def test_unknown_contact_resolves_to_none() -> None:
     assert resolved is None
 
 
-async def test_contacts_payload_retries_transient_error() -> None:
-    """A transient 'no event received' on contacts retrieval is retried, not fatal."""
+class _FakeSubscription:
+    """One :meth:`_FakeMeshCore.subscribe` registration, undone by ``unsubscribe``."""
+
+    def __init__(self, bus: dict, event_type, callback) -> None:  # noqa: ANN001
+        """Register ``callback`` for ``event_type`` on ``bus``."""
+        self._bus = bus
+        self._key = event_type
+        self._callback = callback
+        bus.setdefault(event_type, []).append(callback)
+
+    def unsubscribe(self) -> None:
+        """Drop the registration, as the library's subscription does."""
+        self._bus.get(self._key, []).remove(self._callback)
+
+
+class _FakeMeshCore:
+    """A companion that answers a contacts request with a scripted run of frames.
+
+    Each script entry is one ``(EventType, payload)`` frame dispatched to whoever
+    subscribed to it, so a test can stream records, close the dump, refuse it outright,
+    or simply say nothing at all.
+    """
+
+    def __init__(self, *scripts) -> None:
+        """Take one frame script per contacts request, answered in order."""
+        from types import SimpleNamespace
+
+        self._bus: dict = {}
+        self._scripts = list(scripts)
+        self.requests = 0
+        self.commands = SimpleNamespace(get_contacts_async=self._request)
+
+    def subscribe(self, event_type, callback, attribute_filters=None):  # noqa: ANN001, ANN201
+        """Register a listener, returning something that can unsubscribe it."""
+        return _FakeSubscription(self._bus, event_type, callback)
+
+    async def _request(self, lastmod: int = 0) -> None:
+        """Answer the next scripted run of frames."""
+        from meshcore.events import Event
+
+        self.requests += 1
+        script = self._scripts.pop(0) if self._scripts else []
+        for event_type, payload in script:
+            for callback in list(self._bus.get(event_type, [])):
+                callback(Event(event_type, payload))
+
+
+async def test_contacts_payload_retries_a_refused_read() -> None:
+    """A companion that refuses the dump outright is retried, not surfaced."""
+    from meshcore import EventType
+
     from meshterm.core.connection import MeshCoreDevice
 
-    calls = {"n": 0}
-
-    class _Err:
-        payload = {"reason": "no event received during contacts retrieval"}
-
-        def is_error(self) -> bool:
-            return True
-
-    class _Ok:
-        payload = {"Repeater": {"adv_name": "Repeater", "public_key": "aabbcc" + "00" * 29}}
-
-        def is_error(self) -> bool:
-            return False
-
-    class _Commands:
-        async def get_contacts(self):  # noqa: ANN202
-            calls["n"] += 1
-            return _Err() if calls["n"] < 3 else _Ok()
-
-    class _MC:
-        commands = _Commands()
+    record = {"adv_name": "Repeater", "public_key": "aabbcc" + "00" * 29}
+    mc = _FakeMeshCore(
+        [(EventType.ERROR, {"reason": "ERR_CODE_BAD_STATE"})],
+        [(EventType.ERROR, {"reason": "ERR_CODE_BAD_STATE"})],
+        [(EventType.NEXT_CONTACT, record), (EventType.CONTACTS, {"Repeater": record})],
+    )
 
     device = MeshCoreDevice(port="COM-test")
-    payload = await device._contacts_payload(_MC(), retries=3, delay=0)
+    payload = await device._contacts_payload(mc, retries=3, delay=0, idle=0.05)
     assert "Repeater" in payload
-    assert calls["n"] == 3  # failed twice, succeeded on the third attempt
+    assert mc.requests == 3  # refused twice, served on the third attempt
+
+
+async def test_contacts_payload_waits_out_a_slow_dump() -> None:
+    """A table that streams for longer than any fixed deadline still completes.
+
+    The idle clock restarts on every record, so the only thing that ends a read is the
+    radio going quiet — not how long the whole dump took.
+    """
+    from meshcore import EventType
+    from meshcore.events import Event
+
+    from meshterm.core.connection import MeshCoreDevice
+
+    class _SlowMeshCore(_FakeMeshCore):
+        async def _request(self, lastmod: int = 0) -> None:
+            self.requests += 1
+            table = {}
+            for index in range(8):
+                await asyncio.sleep(0.04)  # each gap is inside the idle window
+                record = {"adv_name": f"Node{index}", "public_key": f"{index:02x}" + "00" * 31}
+                table[record["adv_name"]] = record
+                for callback in list(self._bus.get(EventType.NEXT_CONTACT, [])):
+                    callback(Event(EventType.NEXT_CONTACT, record))
+            for callback in list(self._bus.get(EventType.CONTACTS, [])):
+                callback(Event(EventType.CONTACTS, table))
+
+    mc = _SlowMeshCore()
+    device = MeshCoreDevice(port="COM-test")
+    payload = await device._contacts_payload(mc, retries=0, delay=0, idle=0.1)
+    assert len(payload) == 8  # 0.32 s of streaming under a 0.1 s idle window
+
+
+async def test_contacts_payload_ignores_an_error_meant_for_another_command() -> None:
+    """An uncorrelated ERROR mid-dump belongs to something else and never ends the read."""
+    from meshcore import EventType
+
+    from meshterm.core.connection import MeshCoreDevice
+
+    record = {"adv_name": "Repeater", "public_key": "aabbcc" + "00" * 29}
+    mc = _FakeMeshCore(
+        [
+            (EventType.NEXT_CONTACT, record),
+            (EventType.ERROR, {"reason": "ERR_CODE_BAD_STATE"}),  # a battery poll's, not ours
+            (EventType.CONTACTS, {"Repeater": record}),
+        ]
+    )
+
+    device = MeshCoreDevice(port="COM-test")
+    payload = await device._contacts_payload(mc, retries=0, delay=0, idle=0.05)
+    assert "Repeater" in payload
+    assert mc.requests == 1
 
 
 async def test_contacts_payload_raises_clean_error_after_retries() -> None:
-    """Persistent contacts-retrieval failure raises a clean, actionable error."""
+    """A companion that says nothing at all raises a clean, actionable error."""
     from meshterm.core.connection import DeviceCommandError, MeshCoreDevice
 
-    class _Err:
-        payload = {"reason": "no event received during contacts retrieval"}
-
-        def is_error(self) -> bool:
-            return True
-
-    class _Commands:
-        async def get_contacts(self):  # noqa: ANN202
-            return _Err()
-
-    class _MC:
-        commands = _Commands()
+    mc = _FakeMeshCore()  # every request answered with silence
 
     device = MeshCoreDevice(port="COM-test")
     with pytest.raises(DeviceCommandError) as exc:
-        await device._contacts_payload(_MC(), retries=2, delay=0)
+        await device._contacts_payload(mc, retries=2, delay=0, idle=0.05)
     assert "no event received" in str(exc.value)
+    assert mc.requests == 3
 
 
 async def test_latest_trace_returns_previous_run(tmp_path: Path) -> None:
