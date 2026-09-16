@@ -16,10 +16,12 @@ drawn*, so every surface the survey found can eventually route through it:
   hash-derived hue (:func:`~meshterm.ui.theme.node_style`), our own node the map's yellow
   ``★`` on a neutral dark grey, a faded hop dark slate, a keyless hop grey. Two chips that
   land on the *same* fill — a mirrored return leg, a stretch of keyless greys — or on two
-  hues too close to tell apart (first key bytes under :data:`SEAM_HUE_GAP` apart on the
-  wheel) take the one exception the interlock can't draw: the seam is the *thin* chevron
-  instead, ink on the shared fill, so the ribbon runs on unbroken and the join is a line
-  drawn on it (:meth:`PathLine._seam`). Hops elided out of the middle break the
+  fills too close to tell apart (under :data:`SEAM_BLUR` apart in OKLab, the perceptual
+  distance :mod:`~meshterm.ui.oklab` measures) take the one exception the interlock can't
+  draw: the seam is the *thin* chevron instead, the previous fill shaded a step darker
+  (lighter, for a dark fill) and drawn on the next, so the ribbon runs on unbroken and the
+  join is a line the chip draws on itself (:meth:`PathLine._seam`). Hops elided out of
+  the middle break the
   ribbon instead of joining it: the mark sits bare on the page between a closing point and
   the next chip's notch (:func:`elision_hop`), because a filled ``⋯`` chip would read as a
   node by that name. A chip caught by a *cut* — a lane that ran out, a line scrolled past
@@ -77,7 +79,6 @@ earned, and a cursor can never be stranded on a line break.
 
 from __future__ import annotations
 
-import colorsys
 import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -88,6 +89,7 @@ from rich.measure import Measurement
 from rich.text import Text
 
 from ..core.models import LOCAL_DEVICE_LABEL
+from . import oklab
 from .marks import SELF_MARK
 from .termfont import powerline_enabled, powerline_full
 from .theme import active_theme, node_style
@@ -101,8 +103,8 @@ POWERLINE_SEP = "\ue0b0"
 
 #: The thin right-pointing chevron (U+E0B1), the solid point's outline sibling in the
 #: same core set — powerline's own mark for a join *inside* one colour. It draws the seam
-#: between two chips whose fills the eye can't tell apart (:meth:`PathLine._seam`): a
-#: line of ink on the fill they share, where a solid point would have vanished into it.
+#: between two chips whose fills the eye can't tell apart (:meth:`PathLine._seam`): the
+#: previous fill, shaded, drawn on the next, where a solid point would have vanished.
 POWERLINE_THIN = "\ue0b1"
 
 #: The rounded caps (U+E0B6 opening, U+E0B4 closing) that finish a path's two outer
@@ -258,49 +260,40 @@ def _style_hex(style: str) -> str | None:
     return None
 
 
-#: How far apart two chip hues must sit on the 256-step wheel for a seam to interlock
-#: them: closer than this and the seam is the thin chevron in ink instead, as it is for
-#: two fills that are identical (:meth:`PathLine._seam`). The wheel *is* the node's first key
-#: byte (:func:`~meshterm.ui.theme.node_style` maps ``0x00``–``0xff`` straight round it),
-#: so this is a difference in first bytes — under ``0x10`` and two neighbours are one
-#: ribbon to the eye, a chevron of one shade of green laid on the next (JP, 2026-09-15).
-#: The gap is circular: ``0xf8`` and ``0x04`` are twelve apart, not two hundred and forty.
-SEAM_HUE_GAP = 0x10
+#: How far apart two chip fills must sit, as the eye measures it, for the seam between
+#: them to interlock: closer than this and the solid point would be laid on a field it
+#: can't be told from, so the seam is the thin chevron instead (:meth:`PathLine._seam`).
+#: The unit is OKLab distance (:func:`~meshterm.ui.oklab.distance`), where ``0.02`` is a
+#: just-noticeable difference between two large patches and ``1`` is black to white.
+#:
+#: Calibrated against the rule it replaced — first key bytes under ``0x10`` apart on the
+#: hue wheel (JP, 2026-09-15) — which measures ``0.087`` at the median hue but ``0.026``
+#: across the greens and ``0.165`` across the cyans: the wheel is not uniform to the eye,
+#: so a hue gap blurred too little there and too much here, and an sRGB distance would
+#: only have restated the hue gap (a fixed byte step is a near-constant ``55``–``60`` of
+#: 8-bit RGB all the way round). ``0.10`` is five noticeable differences, the typical
+#: ``0x10`` pair with a little to spare, and it errs toward the thin chevron on purpose:
+#: a wrong blur still draws a legible seam, a wrong interlock draws none (JP, 2026-09-16).
+SEAM_BLUR = 0.10
 
-#: Below this saturation a fill is a grey — a keyless hop, the dim slate, our own
-#: neutral — whose hue is noise, so it blends with nothing but its exact self. The
-#: spectrum fills and the console's six slots all sit well above it.
-_HUE_SAT_FLOOR = 0.5
-
-
-def _hue_byte(fill: str) -> int | None:
-    """Where a ``#rrggbb`` fill sits on the 256-step hue wheel, or ``None`` for a grey.
-
-    The inverse of :func:`~meshterm.ui.theme._node_style_spectrum`: every one of its 256
-    fills recovers the exact first key byte that minted it (the round trip through 8-bit
-    RGB is lossless at the spectrum's saturation), so two chips are compared by the very
-    bytes that coloured them — and an override fill or a console slot, which no byte
-    minted, is still placed on the same wheel by the hue it actually shows.
-    """
-    try:
-        r, g, b = (int(fill[i : i + 2], 16) / 255 for i in (1, 3, 5))
-    except (ValueError, IndexError):
-        return None
-    hue, sat, _ = colorsys.rgb_to_hsv(r, g, b)
-    if sat < _HUE_SAT_FLOOR:
-        return None
-    return round(hue * 256) % 256
+#: How far the thin chevron's colour steps from the fill it is drawn in, in OKLab ``L``
+#: — a lightness shift alone, so it reads as *that chip's colour, shaded* rather than as
+#: a third colour on the line. The step is taken from the previous fill but measured from
+#: whichever of the two fills is further along (:func:`~meshterm.ui.oklab.shaded`'s
+#: ``floor``), so the mark clears the fill it actually sits on by this much even when the
+#: two differ by everything :data:`SEAM_BLUR` allows. Above the blur on its own, so the
+#: line it draws is always one the eye can find (JP, 2026-09-16).
+SEAM_SHADE = 0.15
 
 
 def _fills_blur(before: str, after: str) -> bool:
-    """Whether two fills are the same to the eye — identical, or hues under the gap."""
-    if before == after:
-        return True
-    a, b = _hue_byte(before), _hue_byte(after)
-    if a is None or b is None:
-        return False
-    apart = abs(a - b)
-    return min(apart, 256 - apart) < SEAM_HUE_GAP
+    """Whether two fills are the same to the eye: identical, or under :data:`SEAM_BLUR`."""
+    return before == after or oklab.distance(before, after) < SEAM_BLUR
+
+
+def _seam_ink(before: str, after: str) -> str:
+    """The thin chevron's colour: ``before`` shaded :data:`SEAM_SHADE` past both fills."""
+    return oklab.shaded(before, SEAM_SHADE, floor=oklab.from_hex(after)[0])
 
 
 #: A chip's fill, as it appears in a rendered span's style — the ``on #rrggbb`` half.
@@ -990,7 +983,7 @@ class PathLine:
                 elif hop.gap:
                     text.append(POWERLINE_SEP, style=fills[i - 1])  # …and stops here
                 else:
-                    text.append_text(self._seam(fills[i - 1], fills[i], hop))
+                    text.append_text(self._seam(fills[i - 1], fills[i]))
             if hop.gap:
                 text.append(hop.label, style="faint" if hop.dim else "muted")
             else:
@@ -1004,7 +997,7 @@ class PathLine:
         return text
 
     @staticmethod
-    def _seam(before: str, after: str, ahead: PathHop) -> Text:
+    def _seam(before: str, after: str) -> Text:
         """The one cell between two chips: the previous fill's point, laid on the next.
 
         The classic interlock — foreground the chip behind, background the chip ahead —
@@ -1014,35 +1007,33 @@ class PathLine:
         to spend two cells leaving a sliver of page between every pair, insurance against
         a collision that the palette makes rare).
 
-        Two fills that *do* land the same are the exception the interlock cannot draw —
+        Two fills the eye can't tell apart are the exception the interlock cannot draw —
         a chevron in its own background is no chevron — and they are not always bad luck:
         a mirrored return leg is a run of identically faded hops by construction, and so
-        is a stretch of keyless greys. *Nearly* the same is the same exception: two hues a
-        few steps apart on the wheel draw a chevron the eye can't find either, one shade of
-        green on the next, so two first bytes under :data:`SEAM_HUE_GAP` apart count too
-        (:func:`_fills_blur`, JP, 2026-09-15). The greys are exempt: a keyless hop beside a
-        dimmed one shows two distinct fills and keeps its interlock.
+        is a stretch of keyless greys. Nor is "can't tell apart" the same as "identical":
+        two hues a few steps apart on the wheel draw a point the eye can't find either,
+        one shade of green on the next, so the test is a perceptual distance under
+        :data:`SEAM_BLUR` (:func:`_fills_blur`), not equality and not a hue gap.
 
-        There the seam is the **thin** chevron, :data:`POWERLINE_THIN`, in the chip's ink
-        on the fill ahead — powerline's own mark for a join inside one colour (JP,
-        2026-09-16). The ribbon runs on unbroken and the join is a line drawn on it,
-        where the solid point drawn bare used to cut a wedge of page out of the route: a
-        run of near hues read as dashes, and on a light terminal the wedge was a hole. It
-        wears no fill of its own, so it can't be mistaken for a chip, and the ink is the
-        one the chip ahead uses for its label — the dim ink on a faded leg — so the mark
-        recedes with what it joins. One cell either way.
+        There the seam is the **thin** chevron, :data:`POWERLINE_THIN`, in the previous
+        chip's own fill shaded a step darker — lighter, for a dark fill — and drawn on
+        the fill ahead (:func:`_seam_ink`, JP, 2026-09-16): powerline's own mark for a
+        join inside one colour, and the chip it belongs to drawing a line on itself, so
+        the ribbon runs on unbroken and nothing on it is a colour that isn't a chip's.
+        The solid point drawn bare used to cut a wedge of page out of the route here (a
+        run of near hues read as dashes, and on a light terminal the wedge was a hole),
+        and a chevron in the dark chip ink read as a mark laid on the route rather than a
+        seam in it. One cell either way.
 
         Args:
             before: The fill the point is drawn in (the previous chip's).
             after: The fill it is laid on (the next chip's).
-            ahead: The hop the seam leads into — its ink is the thin chevron's.
 
         Returns:
             The seam's single styled cell.
         """
         if _fills_blur(before, after):
-            ink = _DIM_FG if ahead.dim else _CHIP_FG
-            return Text(POWERLINE_THIN, style=f"{ink} on {after}")
+            return Text(POWERLINE_THIN, style=f"{_seam_ink(before, after)} on {after}")
         return Text(POWERLINE_SEP, style=f"{before} on {after}")
 
     @staticmethod

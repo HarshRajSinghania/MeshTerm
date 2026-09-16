@@ -14,10 +14,9 @@ import random
 import pytest
 
 import meshterm.ui.pathline as pathline
+from meshterm.ui import oklab
 from meshterm.ui.pathline import (
-    _CHIP_FG,
     _DIM_BG,
-    _DIM_FG,
     _SELF_INK,
     _YOU_BG,
     CRACK_HEAD,
@@ -30,10 +29,13 @@ from meshterm.ui.pathline import (
     POWERLINE_ROUND_OPEN,
     POWERLINE_SEP,
     POWERLINE_THIN,
+    SEAM_BLUR,
+    SEAM_SHADE,
     SELF_GLYPH,
     WRAP_OFFSET,
     PathHop,
     PathLine,
+    _seam_ink,
     _style_hex,
     cut_mark,
     cut_to,
@@ -653,54 +655,59 @@ def _seams(*hops: PathHop) -> list[tuple[str, str]]:
     ]
 
 
-def test_a_seam_between_two_of_one_colour_is_the_thin_chevron_in_ink() -> None:
-    """Where two chips land on the same fill, the seam is the thin chevron in ink.
+def test_a_seam_between_two_of_one_colour_is_the_thin_chevron_shaded() -> None:
+    """Where two chips land on the same fill, the seam is the thin chevron in that fill, shaded.
 
     The interlock can't draw a solid point in its own background, so the join is drawn
     *on* the shared fill instead — powerline's own mark for a join inside one colour —
-    and the ribbon runs on unbroken. It wears the chip's ink, the dim ink on a faded leg,
-    and no fill of its own, so it can never be taken for a chip.
+    and the ribbon runs on unbroken. Its colour is the previous chip's own, a lightness
+    step darker, so nothing on the line is a colour that isn't a chip's; a dark fill (the
+    faded slate) steps lighter instead.
 
     Not a rare accident, either: a mirrored return leg is a run of identically faded hops
     by construction, and a stretch of keyless hops shares one grey. Either way it stays a
     single cell — the fallback trades the interlock for the outline, not for width.
     """
     hue = _style_hex(node_style("aa"))
-    assert _seams(PathHop("A", key="aa"), PathHop("B", key="aa"))[0] == (
-        POWERLINE_THIN,
-        f"{_CHIP_FG} on {hue}",
-    )
+    glyph, style = _seams(PathHop("A", key="aa"), PathHop("B", key="aa"))[0]
+    assert glyph == POWERLINE_THIN and style == f"{_seam_ink(hue, hue)} on {hue}"
+    shade = _seam_ink(hue, hue)
+    assert oklab.from_hex(shade)[0] < oklab.from_hex(hue)[0]  # darker…
+    assert oklab.distance(shade, hue) > SEAM_BLUR  # …by more than the blur, so it reads
+    assert oklab.distance(shade, hue) < oklab.distance(hue, _style_hex(node_style("77")))
+
     assert _seams(PathHop("A", key="aa"), PathHop("B", key="77"))[0] == (
         POWERLINE_SEP,
         f"{hue} on {_style_hex(node_style('77'))}",
     )  # blended, one cell
-    assert _seams(PathHop("A", dim=True), PathHop("B", dim=True))[0] == (
-        POWERLINE_THIN,
-        f"{_DIM_FG} on {_DIM_BG}",
-    )  # a dimmed return leg reads as hops, not one bar, and recedes with them
+
+    glyph, style = _seams(PathHop("A", dim=True), PathHop("B", dim=True))[0]
+    assert glyph == POWERLINE_THIN and style.endswith(f" on {_DIM_BG}")
+    lighter = style.split()[0]
+    assert oklab.from_hex(lighter)[0] > oklab.from_hex(_DIM_BG)[0]  # a dark fill steps up
 
 
-def test_a_seam_between_two_near_hues_is_the_thin_chevron_too() -> None:
-    """Two hues under ``SEAM_HUE_GAP`` apart on the wheel blend like an exact match.
+def test_a_seam_blurs_by_perceived_distance_not_by_hue_gap() -> None:
+    """Two fills under ``SEAM_BLUR`` apart to the eye blur like an exact match.
 
-    The wheel is the first key byte, so the gap is a byte difference — and a circular
-    one, so ``f8`` and ``04`` are neighbours. At the gap itself the interlock is back.
-    The greys are exempt: a keyless hop beside a dimmed one keeps its blend, because two
-    distinct greys are two distinct fills and the chevron between them still reads.
+    The eye, not the wheel: sixteen first-byte steps across the greens are one colour to
+    a reader and sixteen across the cyans are two, so the same hue gap blurs on one side
+    and interlocks on the other. The greys work the same way with no exemption needed:
+    the keyless grey and the faded slate sit far apart in lightness and keep their seam.
     """
-    hue = _style_hex(node_style("a0"))
-    thin = lambda key: (POWERLINE_THIN, f"{_CHIP_FG} on {_style_hex(node_style(key))}")  # noqa: E731
-    assert _seams(PathHop("A", key="a0"), PathHop("B", key="af"))[0] == thin("af")
-    assert _seams(PathHop("A", key="af"), PathHop("B", key="a0"))[0] == thin("a0")
-    assert _seams(PathHop("A", key="f8"), PathHop("B", key="04"))[0] == thin("04")  # wraps
-    assert _seams(PathHop("A", key="a0"), PathHop("B", key="b0"))[0] == (
-        POWERLINE_SEP,
-        f"{hue} on {_style_hex(node_style('b0'))}",
-    )  # exactly the gap apart: distinct
-    assert _seams(PathHop("A", key="a0"), PathHop("B", key="20"))[0] == (
-        POWERLINE_SEP,
-        f"{hue} on {_style_hex(node_style('20'))}",
-    )  # opposite sides of the wheel
+    green = _seams(PathHop("A", key="4c"), PathHop("B", key="5c"))[0]
+    cyan = _seams(PathHop("A", key="80"), PathHop("B", key="90"))[0]
+    assert green[0] == POWERLINE_THIN and cyan[0] == POWERLINE_SEP
+    assert oklab.distance(_style_hex(node_style("4c")), _style_hex(node_style("5c"))) < SEAM_BLUR
+    assert oklab.distance(_style_hex(node_style("80")), _style_hex(node_style("90"))) > SEAM_BLUR
+
+    # The shade is taken from the chip behind but clears the chip ahead as well.
+    before, after = _style_hex(node_style("4c")), _style_hex(node_style("5c"))
+    assert green[1] == f"{_seam_ink(before, after)} on {after}"
+    assert oklab.distance(_seam_ink(before, after), after) >= SEAM_SHADE - 1e-6
+
+    wrapped = _seams(PathHop("A", key="f8"), PathHop("B", key="04"))[0]
+    assert wrapped[0] == POWERLINE_THIN  # neighbours across the wheel's seam, too
 
     glyph, style = _seams(PathHop("A"), PathHop("B", dim=True))[0]
     assert glyph == POWERLINE_SEP and " on " in style  # two greys, still interlocked

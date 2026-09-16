@@ -311,12 +311,14 @@ as a grouped list does. Filling a page in is editing its `.md`; no Python follow
   that differ from row to row. As a chip it is the map's yellow star on neutral dark
   grey, padded like every other chip.
 - Chip seams are **one** interlocked chevron (previous fill on next). Two chips of the
-  same fill are the exception the interlock can't draw — and so are two hues too close to
-  tell apart, first key bytes under `pathline.SEAM_HUE_GAP` (0x10) apart on the wheel,
-  circularly; the greys blend only with their exact selves. There the seam is the **thin**
-  chevron (`POWERLINE_THIN`) in the chip's ink on the shared fill, so the ribbon runs on
-  unbroken and the join is a line drawn on it, never a wedge of page cut out of the
-  route. An elision breaks the ribbon rather than joining it — bare `⋯`
+  same fill are the exception the interlock can't draw — and so are two fills the eye
+  can't tell apart: under `pathline.SEAM_BLUR` apart in OKLab (`ui/oklab.py`, THE
+  perceptual colour distance — never a hue gap, never sRGB, both of which mis-size the
+  greens against the cyans). There the seam is the **thin** chevron (`POWERLINE_THIN`)
+  in the previous chip's own fill shaded `SEAM_SHADE` darker (lighter for a dark fill),
+  drawn on the next, so the ribbon runs on unbroken and the join is a line the chip draws
+  on itself, never a wedge of page cut out of the route and never a third colour. An
+  elision breaks the ribbon rather than joining it — bare `⋯`
   on the page between a closing point and the next chip's notch, no fill, no padding.
 - The ribbon's **outer ends**: the chevron means *the route continues*, so an end that is
   the route's own never wears one. It ends **square** — nothing appended, the last chip's
