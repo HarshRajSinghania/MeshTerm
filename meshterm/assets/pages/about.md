@@ -4,7 +4,7 @@
 
 ## What it is
 
-**MeshTerm** is a full-featured **MeshCore** client for the terminal. It talks to companion devices running the stock firmware over serial, Bluetooth, or TCP.
+MeshTerm is a full-featured MeshCore client that lives in your terminal. Plug in a companion device over USB, pair one over Bluetooth, or reach one over TCP. Windows, macOS and Linux. Free and open-source.
 
 Nearly everything MeshTerm can do thru its interactive Text-based User Interface *(TUI)*, it can also do from the Command-Line Interface *(CLI)*. The live pictures stay in the TUI, where they belong — the map, the dashboard, the live feed, the watchtower, the mesh walk — and everything else has a command. The TUI runs the same code as the CLI, so you get the best of both worlds: a great user experience, and the ability to script or schedule tasks! Every command prints for a person by default, and speaks JSON with `--json` when a program is reading!
 
