@@ -17,8 +17,9 @@ drawn*, so every surface the survey found can eventually route through it:
   ``★`` on a neutral dark grey, a faded hop dark slate, a keyless hop grey. Two chips that
   land on the *same* fill — a mirrored return leg, a stretch of keyless greys — or on two
   hues too close to tell apart (first key bytes under :data:`SEAM_HUE_GAP` apart on the
-  wheel) take the one exception the interlock can't draw, dropping the background so the
-  page cuts the wedge (:meth:`PathLine._seam`). Hops elided out of the middle break the
+  wheel) take the one exception the interlock can't draw: the seam is the *thin* chevron
+  instead, ink on the shared fill, so the ribbon runs on unbroken and the join is a line
+  drawn on it (:meth:`PathLine._seam`). Hops elided out of the middle break the
   ribbon instead of joining it: the mark sits bare on the page between a closing point and
   the next chip's notch (:func:`elision_hop`), because a filled ``⋯`` chip would read as a
   node by that name. A chip caught by a *cut* — a lane that ran out, a line scrolled past
@@ -91,12 +92,18 @@ from .marks import SELF_MARK
 from .termfont import powerline_enabled, powerline_full
 from .theme import active_theme, node_style
 
-#: The powerline solid right-pointing triangle (U+E0B0) — the only glyph the widget
-#: draws, seam and closing edge alike, deliberately from the *core* set so every
-#: recommended font qualifies (the rounded caps at U+E0B4+ exist only in full Nerd
-#: Font patches). A path only ever flows one way, so the point only ever faces right;
-#: what changes is whether it lands on a field (a seam) or on the page (an edge).
+#: The powerline solid right-pointing triangle (U+E0B0) — the glyph the widget draws
+#: at every seam and closing edge, deliberately from the *core* set so every recommended
+#: font qualifies (the rounded caps at U+E0B4+ exist only in full Nerd Font patches). A
+#: path only ever flows one way, so the point only ever faces right; what changes is
+#: whether it lands on a field (a seam) or on the page (an edge).
 POWERLINE_SEP = "\ue0b0"
+
+#: The thin right-pointing chevron (U+E0B1), the solid point's outline sibling in the
+#: same core set — powerline's own mark for a join *inside* one colour. It draws the seam
+#: between two chips whose fills the eye can't tell apart (:meth:`PathLine._seam`): a
+#: line of ink on the fill they share, where a solid point would have vanished into it.
+POWERLINE_THIN = "\ue0b1"
 
 #: The rounded caps (U+E0B6 opening, U+E0B4 closing) that finish a path's two outer
 #: ends as a lozenge. These live in the *extended* block, which only a full Nerd Font
@@ -252,8 +259,8 @@ def _style_hex(style: str) -> str | None:
 
 
 #: How far apart two chip hues must sit on the 256-step wheel for a seam to interlock
-#: them: closer than this and the point is drawn on the page instead, as it is for two
-#: fills that are identical (:meth:`PathLine._seam`). The wheel *is* the node's first key
+#: them: closer than this and the seam is the thin chevron in ink instead, as it is for
+#: two fills that are identical (:meth:`PathLine._seam`). The wheel *is* the node's first key
 #: byte (:func:`~meshterm.ui.theme.node_style` maps ``0x00``–``0xff`` straight round it),
 #: so this is a difference in first bytes — under ``0x10`` and two neighbours are one
 #: ribbon to the eye, a chevron of one shade of green laid on the next (JP, 2026-09-15).
@@ -983,7 +990,7 @@ class PathLine:
                 elif hop.gap:
                     text.append(POWERLINE_SEP, style=fills[i - 1])  # …and stops here
                 else:
-                    text.append_text(self._seam(fills[i - 1], fills[i]))
+                    text.append_text(self._seam(fills[i - 1], fills[i], hop))
             if hop.gap:
                 text.append(hop.label, style="faint" if hop.dim else "muted")
             else:
@@ -997,7 +1004,7 @@ class PathLine:
         return text
 
     @staticmethod
-    def _seam(before: str, after: str) -> Text:
+    def _seam(before: str, after: str, ahead: PathHop) -> Text:
         """The one cell between two chips: the previous fill's point, laid on the next.
 
         The classic interlock — foreground the chip behind, background the chip ahead —
@@ -1010,25 +1017,32 @@ class PathLine:
         Two fills that *do* land the same are the exception the interlock cannot draw —
         a chevron in its own background is no chevron — and they are not always bad luck:
         a mirrored return leg is a run of identically faded hops by construction, and so
-        is a stretch of keyless greys. There the point drops its background and the page
-        shows through the wedge instead, which is the one thing that still separates two
-        blocks of one colour. One cell either way.
+        is a stretch of keyless greys. *Nearly* the same is the same exception: two hues a
+        few steps apart on the wheel draw a chevron the eye can't find either, one shade of
+        green on the next, so two first bytes under :data:`SEAM_HUE_GAP` apart count too
+        (:func:`_fills_blur`, JP, 2026-09-15). The greys are exempt: a keyless hop beside a
+        dimmed one shows two distinct fills and keeps its interlock.
 
-        *Nearly* the same is the same exception: two hues a few steps apart on the wheel
-        draw a chevron the eye can't find either — one shade of green on the next — so
-        two first bytes under :data:`SEAM_HUE_GAP` apart fall back to the page as well
-        (:func:`_fills_blur`, JP, 2026-09-15). The greys are exempt: a keyless hop beside
-        a dimmed one shows two distinct fills and keeps its interlock.
+        There the seam is the **thin** chevron, :data:`POWERLINE_THIN`, in the chip's ink
+        on the fill ahead — powerline's own mark for a join inside one colour (JP,
+        2026-09-16). The ribbon runs on unbroken and the join is a line drawn on it,
+        where the solid point drawn bare used to cut a wedge of page out of the route: a
+        run of near hues read as dashes, and on a light terminal the wedge was a hole. It
+        wears no fill of its own, so it can't be mistaken for a chip, and the ink is the
+        one the chip ahead uses for its label — the dim ink on a faded leg — so the mark
+        recedes with what it joins. One cell either way.
 
         Args:
             before: The fill the point is drawn in (the previous chip's).
             after: The fill it is laid on (the next chip's).
+            ahead: The hop the seam leads into — its ink is the thin chevron's.
 
         Returns:
             The seam's single styled cell.
         """
         if _fills_blur(before, after):
-            return Text(POWERLINE_SEP, style=before)  # fg only — the page cuts the wedge
+            ink = _DIM_FG if ahead.dim else _CHIP_FG
+            return Text(POWERLINE_THIN, style=f"{ink} on {after}")
         return Text(POWERLINE_SEP, style=f"{before} on {after}")
 
     @staticmethod
