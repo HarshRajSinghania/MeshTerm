@@ -491,7 +491,10 @@ async def test_purge_sweeps_under_a_progress_bar_and_reports_in_a_dialog() -> No
     # The preview lists exactly who would go, and commits on its Apply row (the default).
     preview = await _step_until_screen(session, lambda s: "to archive" in getattr(s, "title", ""))
     body = _screen_text(preview)
-    assert "PCTL" in body  # the standing lane is a percentile, never a raw score
+    # The evidence, one lane per kind — never a score, and no longer a percentile either:
+    # the row shows what was measured, and the list's order is the ranking.
+    lanes = ["NAME", "HEARD", "PKTS", "MSGS", "HOPS"]
+    assert [body.index(word) for word in lanes] == sorted(body.index(word) for word in lanes)
     assert all(v.name in body for v in victims)
     preview.handle("enter")
 

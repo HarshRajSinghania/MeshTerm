@@ -51,6 +51,7 @@ from rich.text import Text
 from ..platforms import get_platform
 from .theme import glyph
 from .tui import Choice, Separator
+from .tui.emoji_width import cut_cells, drawable
 
 if TYPE_CHECKING:
     from ..context import AppContext
@@ -619,6 +620,17 @@ def fit_cells(text: str, width: int, *, align: str = "left") -> str:
     truncation are measured in display cells (wide glyphs count 2), so a name carrying
     an emoji or CJK character can't skew the lanes the way ``str.ljust`` would.
 
+    A lane's text is very often a **node's name**, which is written by whoever owns the
+    radio and arrives over the air, so two more things are settled here rather than by
+    every caller: whatever a terminal cannot draw is folded to a space
+    (:func:`~meshterm.ui.tui.emoji_width.drawable` — a newline or an escape in a name
+    would end the row mid-lane, and no width table can measure that away), and the cut
+    falls **between** glyphs (:func:`~meshterm.ui.tui.emoji_width.cut_cells`), never
+    inside one. A cut a codepoint at a time slices an emoji sequence in half, and the
+    stranded joiner it leaves swallows the ellipsis appended after it — the lane then
+    measures one cell short of what the terminal draws, and every column to its right
+    starts late.
+
     Args:
         text: The text to fit.
         width: The exact cell width to return.
@@ -627,13 +639,10 @@ def fit_cells(text: str, width: int, *, align: str = "left") -> str:
     Returns:
         A string measuring exactly ``width`` cells.
     """
+    if not text.isprintable():
+        text = drawable(text)
     if cell_len(text) > width:
-        kept = ""
-        for ch in text:
-            if cell_len(kept + ch) > width - 1:
-                break
-            kept += ch
-        text = kept + "…"
+        text = cut_cells(text, width - 1) + "…"
     pad = " " * max(0, width - cell_len(text))
     return pad + text if align == "right" else text + pad
 

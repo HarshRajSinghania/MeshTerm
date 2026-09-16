@@ -13,9 +13,10 @@ the pushed Contacts list:
    computed from the actual ranking rather than from arithmetic on the table size, because
    protected contacts are never victims.
 2. **Read the list, and edit it.** Every contact the sweep would take, weakest first, with
-   its percentile and the two or three facts that put it there — for the age rungs too,
-   since knowing how the contacts an age threshold caught actually *rank* is exactly the
-   check that threshold cannot do for itself. ``Delete`` drops a row from the list, so a
+   the evidence beside it in lanes — how lately it was heard, what it has sent, whether you
+   ever messaged it, how far out it sits. For the age rungs too, since seeing what the
+   contacts an age threshold caught have actually *done* is exactly the check that threshold
+   cannot do for itself. ``Delete`` drops a row from the list, so a
    contact the reader wants to keep is spared without abandoning the whole sweep and picking
    a shallower rung; ``←→`` scroll a row too wide for the terminal. Enter on a contact opens
    its detail page to *look* at, with the page's own contact-management verbs withheld (see
@@ -29,10 +30,15 @@ the pushed Contacts list:
    the Archived list is one row away on the Contacts screen, and a restore is a single
    write. Saving the red for what cannot be undone is what keeps the red meaning anything.
 
-**Only the percentile is ever shown.** A raw score means nothing without the distribution
-it came from, and would need a legend the moment the weights were ever retuned; a contact's
-rank against your other contacts explains itself. See :mod:`~meshterm.core.contact_score`
-for the scoring itself, which is pure and lives in core.
+**The preview shows the evidence, never the verdict.** Not the score — a weighted sum means
+nothing without the distribution it came from, and would need a legend the moment the weights
+were retuned. Not the percentile either, which led the row for one round: a rank is the
+score's own reading of itself, so a lane of them restated the order the list was already in
+and spent five columns saying "trust me". What an audit needs is the measurements, each in a
+lane of its own kind — headed like the Contacts list heads the two they share — so a column
+means one thing all the way down and the reader can check the sweep against what they know
+rather than against its arithmetic. See :mod:`~meshterm.core.contact_score` for the scoring
+itself, which is pure, lives in core, and still ranks the list.
 
 **Archived, not deleted.** The sweep removes each contact from the *device* — freeing the
 slot, which is the whole point — and records it in the cross-session store with an archive
@@ -50,7 +56,8 @@ from __future__ import annotations
 
 import math
 import time
-from dataclasses import replace
+from collections.abc import Callable
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 from rich.cells import cell_len
@@ -67,15 +74,16 @@ from .menus import Lane, column_header, fit_cells, section_heading
 from .theme import name_style
 from .tui import Choice, Separator
 from .tui.screen import CANCEL
+from .widgets import _recency_style, format_age
 
 if TYPE_CHECKING:
     from ..context import AppContext
 
 #: The keep-the-strongest rungs the target picker offers, as a share of the *sweepable*
-#: contacts. Percentages rather than absolute counts because the score itself is only ever
-#: read as a percentile: a rung and the lane it filters against then speak one language, and
-#: the ladder means the same thing on a table of thirty and a table of three hundred without
-#: a single value needing to be retuned. Coarse at the aggressive end — the difference
+#: contacts. Percentages rather than absolute counts because a share is the one form the
+#: ladder can state once and have mean the same thing on a table of thirty and a table of
+#: three hundred — the ranking underneath is a rank, so a count would have to be retuned
+#: for every mesh and a share never does. Coarse at the aggressive end — the difference
 #: between keeping 90% and 75% is a tidy-up, between 50% and 25% a decision.
 KEEP_RUNGS: tuple[int, ...] = (90, 75, 60, 50, 25)
 
@@ -101,91 +109,142 @@ AGE_RUNGS: tuple[tuple[str, int], ...] = (
 #: The age-rung value meaning the never-heard bucket (contacts with no advert time at all).
 _NEVER = -1
 
-#: Percentile lane width, plus its gap — three digits and two cells of air.
-_PCTL_W = 5
+#: The gap between two lanes, in cells — the air that keeps a right-aligned value clear of
+#: the one before it, and what a lane's declared width carries on top of its content.
+_GAP = 2
 
 #: Name lane width in the preview, plus its gap. Wide enough for the 20-odd bytes a
-#: MeshCore advert name runs to, and narrow enough to leave the reasons lane readable at
+#: MeshCore advert name runs to, and narrow enough to leave the evidence lanes readable at
 #: the PicoCalc's 53 columns.
 _NAME_W = 22
 
 
-def _pctl_style(percentile: int) -> str:
-    """The style a percentile is drawn in — the same quality reading ``snr_style`` gives SNR.
+def _count_cell(tally: int | None) -> tuple[str, str]:
+    """A tally lane's value: the number muted, or a faint ``—`` where there is nothing.
 
-    Three bands rather than a gradient: the heat ramp is spoken for (it colours *ages*, and
-    a second gradient in a neighbouring lane would read as the same scale), and a percentile
-    in a purge preview only ever answers one question — is this contact near the bottom?
+    The Contacts list's ``count`` reading exactly (see
+    :func:`~meshterm.ui.contactlist._lane_cell`), clamp included — a runaway tally widens no
+    column — because the reader arrived here from that list and must not have to learn a
+    second grammar for the same fact.
     """
-    if percentile >= 66:
-        return "ok"
-    if percentile >= 33:
-        return "warn"
-    return "err"
+    if not tally:
+        return "—", "faint"
+    return f"{min(tally, 99999)}", "muted"
 
 
-def _pctl_cell(percentile: int) -> Text:
-    """One right-aligned percentile lane: the number alone, coloured by band."""
-    return Text(f"{percentile:>3}  ", style=_pctl_style(percentile))
+def _heard_cell(scored: ScoredContact) -> tuple[str, str]:
+    """The last-heard lane: the column age under recency heat, or a cold ``never``.
 
-
-def _preview_header(width: int) -> str:
-    """The preview's pinned column header, fitted to the terminal.
-
-    ``WHY IT RANKS LOW`` heads all three reason lanes at once rather than naming each: a
-    lane holds a contact's *n*-th weakest reason, so its phrases are of mixed kinds — a
-    message count over an age over a hop count — and a per-lane word would claim a kind the
-    column does not keep.
+    :func:`~meshterm.ui.widgets.format_age` and the heat the Contacts list colours its own
+    ``HEARD`` lane with — one grammar for one fact, whichever screen is asking it.
     """
-    return column_header(
-        [
-            Lane("PCTL", _PCTL_W),
-            Lane("NAME", _NAME_W),
-            Lane(("WHY IT RANKS LOW", "WHY")),
-        ],
-        width,
-    )
+    secs = age_seconds(scored)
+    return format_age(secs), _recency_style(secs)
 
 
-def _reason_lanes(victims: list[ScoredContact]) -> tuple[int, ...]:
-    """Each reason lane's width: the widest phrase any victim puts in it.
+def _hops_cell(scored: ScoredContact) -> tuple[str, str]:
+    """The distance lane: ``direct`` for a neighbour, else the mean hop count it arrives by."""
+    hops = scored.signals.hops
+    if hops is None:
+        return "—", "faint"
+    return ("direct" if hops < 0.5 else f"{hops:g}"), "muted"
 
-    Measured against the list rather than fixed, so the lanes are only as wide as the words
-    in them — and remeasured whenever a spared row leaves, which can only tighten them.
+
+@dataclass(frozen=True)
+class _Evidence:
+    """One evidence lane: the word over it, and how to read a contact's value for it.
+
+    A declaration rather than a branch, like :class:`~meshterm.ui.contactlist.ContactLane`
+    next door: the header builder, the row builder and the width arithmetic all walk the
+    same tuple, so a lane is added — or reordered — in one place.
+
+    Attributes:
+        label: The header word. Right-aligned over its lane, where its digits will land.
+        read: The contact's value for this lane, as ``(text, style)``.
     """
-    count = max((len(scored.reasons) for scored in victims), default=0)
+
+    label: str
+    read: Callable[[ScoredContact], tuple[str, str]]
+
+
+#: The preview's evidence lanes, left to right. ``HEARD`` and ``PKTS`` lead, in the Contacts
+#: list's own order and drawn in its own grammar: the reader has just come from that list,
+#: and these are the two lanes they were already reading. ``MSGS`` and ``HOPS`` follow — the
+#: two the sweep adds, and the two nearly always empty in a list of candidates (a contact you
+#: have messaged is rarely weak enough to be swept), so a terminal too narrow for the whole
+#: row cuts the least informative end first and ``←→`` brings it back.
+_EVIDENCE: tuple[_Evidence, ...] = (
+    _Evidence("HEARD", _heard_cell),
+    _Evidence("PKTS", lambda scored: _count_cell(scored.signals.packets)),
+    _Evidence("MSGS", lambda scored: _count_cell(scored.signals.dm_total)),
+    _Evidence("HOPS", _hops_cell),
+)
+
+
+def _lane_widths(victims: list[ScoredContact]) -> tuple[int, ...]:
+    """Each evidence lane's width: its header word, or the widest value under it.
+
+    Measured against the list rather than fixed, so a lane of single digits is one cell of
+    numbers instead of five of air — and remeasured whenever a spared row leaves, which can
+    only tighten it.
+    """
     return tuple(
-        max((cell_len(s.reasons[i]) for s in victims if len(s.reasons) > i), default=0)
-        for i in range(count)
+        max([cell_len(lane.label), *(cell_len(lane.read(v)[0]) for v in victims)])
+        for lane in _EVIDENCE
     )
 
 
-def _victim_row(scored: ScoredContact, reason_lanes: tuple[int, ...]) -> Text:
-    """One preview line: percentile, the contact's name in its own hue, then why it ranks low.
+def _preview_header(widths: tuple[int, ...], width: int) -> str:
+    """The preview's pinned column header: the name lane, then one word per evidence lane.
 
-    The name keeps its key-derived colour like everywhere else in the app — this is a list
-    of nodes, and a reader picking one out of thirty rows should not have to read it letter
-    by letter because the screen it is on happens to be about deleting things.
+    Each word is right-aligned inside its own lane, over values right-aligned too, so a
+    header sits where its digits will land rather than off to the left of them — how the
+    Contacts list heads the same two lanes.
 
-    The reasons sit in lanes of their own (``reason_lanes``, see :func:`_reason_lanes`),
-    weakest first, so each one starts in the same column on every row instead of wherever
-    the phrase before it happened to end. The last phrase on a row is left unpadded, as a
-    trailing lane is: nothing follows it to line up.
+    One word per lane is the whole point of the layout. A single ``WHY IT RANKS LOW`` used to
+    head three lanes at once, and could not name any of them: a lane held a contact's *n*-th
+    weakest reason, so a message count, an age and a hop count moved between columns from row
+    to row and nothing in a column meant the same thing twice. The lanes are fixed by *kind*
+    now, which is what makes them comparable down the list — and what lets a reader see that
+    the contact they were unsure about is the one that has never sent a packet.
+    """
+    lanes = [Lane("NAME", _NAME_W)]
+    last = len(_EVIDENCE) - 1
+    for index, (lane, lane_w) in enumerate(zip(_EVIDENCE, widths, strict=True)):
+        lanes.append(Lane(f"{lane.label:>{lane_w}}", 0 if index == last else lane_w + _GAP))
+    return column_header(lanes, width)
+
+
+def _victim_row(scored: ScoredContact, widths: tuple[int, ...]) -> Text:
+    """One preview line: the contact's name in its own hue, then its evidence, lane by lane.
+
+    The name keeps its key-derived colour like everywhere else in the app — this is a list of
+    nodes, and a reader picking one out of thirty rows should not have to read it letter by
+    letter because the screen it is on happens to be about archiving things. It goes through
+    :func:`~meshterm.ui.menus.fit_cells`, so an over-long name ends on an ellipsis that says
+    it was shortened, the lane is measured in display cells, and a name carrying an emoji is
+    cut between glyphs rather than through one — a name is whatever a stranger's radio
+    advertised, and it is the one value on this screen that can be anything at all.
+
+    Every other lane is right-aligned into its measured width and carries its own style: the
+    heard age its recency heat, a tally muted, an absent one a faint ``—``. The row is built
+    on an unstyled :class:`~rich.text.Text` rather than under the name's own style, because
+    Rich merges a base style into every span — a faint ``—`` under a name-hue base would come
+    out faint *in that node's colour*.
     """
     contact = scored.contact
-    row = _pctl_cell(scored.percentile)
     name = contact.name or contact.key_prefix or "?"
-    # Through ``fit_cells``, so an over-long name ends on an ellipsis that says it was
-    # shortened — and so the lane is measured in display cells, which is the only measure
-    # that keeps the column straight once a name carries a wide glyph.
+    row = Text()
     row.append(
-        fit_cells(name, _NAME_W - 2) + "  ",
+        fit_cells(name, _NAME_W - _GAP) + " " * _GAP,
         style=name_style(name, contact.public_key or contact.key_prefix),
     )
-    last = len(scored.reasons) - 1
-    for index, phrase in enumerate(scored.reasons):
-        cell = phrase if index == last else fit_cells(phrase, reason_lanes[index]) + "  "
-        row.append(cell, style="muted")
+    last = len(_EVIDENCE) - 1
+    for index, (lane, lane_w) in enumerate(zip(_EVIDENCE, widths, strict=True)):
+        value, style = lane.read(scored)
+        row.append(fit_cells(value, lane_w, align="right"), style=style)
+        if index != last:
+            row.append(" " * _GAP)
     return row
 
 
@@ -444,19 +503,19 @@ def _preview_items(victims: list[ScoredContact]) -> list:
     """The preview's rows: a pinned column header, one line per victim, then Apply/Back.
 
     Each contact row is ``deletable``, so ``Delete`` lifts it out of the sweep, and pins its
-    percentile lane out of the ``←→`` scroll (``hscroll_from``): the number is the reader's
-    place in a list ordered by it, and sliding it away to read a long reasons lane would
-    cost the row its bearing to gain nothing — the percentile is the part that already fits.
+    **name** out of the ``←→`` scroll (``hscroll_from``): the evidence lanes are what a
+    narrow terminal cuts, and sliding the name away to read them would cost the row the one
+    thing that says which contact is being read.
 
-    The reason lanes are measured here, across every victim, which is also why a spared row
-    rebuilds the rows through this function rather than dropping one: the lanes it leaves
-    behind may have been sized by the phrase that just left.
+    The lanes are measured here, across every victim, which is also why a spared row rebuilds
+    the rows through this function rather than dropping one: the widths it leaves behind may
+    have been set by the value that just left.
     """
-    lanes = _reason_lanes(victims)
+    widths = _lane_widths(victims)
     return [
-        Separator(_preview_header, pinned=True),
+        Separator(lambda w: _preview_header(widths, w), pinned=True),
         *(
-            Choice(title=_victim_row(v, lanes), value=v, deletable=True, hscroll_from=_PCTL_W)
+            Choice(title=_victim_row(v, widths), value=v, deletable=True, hscroll_from=_NAME_W)
             for v in victims
         ),
         # The same shape ``exit_rows`` draws, in this flow's own words: Apply has no key of

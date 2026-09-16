@@ -306,16 +306,6 @@ def test_a_contact_with_no_signals_at_all_is_protected() -> None:
     assert ranked[0].protection == PROTECT_UNOBSERVED
 
 
-def test_reasons_name_the_weakest_lanes_in_plain_words() -> None:
-    """Each preview row explains itself without the reader having to know the formula."""
-    ranked = _rank(("Quiet", {"packets": 3, "heard_age_days": 240.0, "dm_total": 0}))
-    reasons = ranked[0].reasons
-    assert "never messaged" in reasons
-    assert "3 pkts" in reasons
-    # The age reads in the fewest words that are still true — months, here.
-    assert any(r.endswith("mo") for r in reasons)
-
-
 def test_a_stronger_contact_never_scores_below_a_weaker_one_on_every_axis() -> None:
     """Sanity: dominance is preserved — better everywhere means ranked above."""
     ranked = _by_name(

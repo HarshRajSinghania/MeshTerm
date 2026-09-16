@@ -87,15 +87,24 @@ presentation, an emoji outside Emoji_Presentation (``🛣`` U+1F6E3, ``🕸`` U+
 one-cell text glyph, which is what both authorities said. Forcing one to two reserves a cell the
 terminal never draws and pulls the row's border a column *in* — see :data:`_DEFAULT_WIDE_BASE` for
 the case that proved it.
+
+Two jobs beside the measuring belong here, because they are the same question asked of the same
+table. **Where a string may be cut** (:func:`cut_cells`, over :func:`clusters`): a lane that
+truncates a name a codepoint at a time cuts through the middle of a glyph, and the pieces that
+leaves — a stranded joiner, half a flag — are exactly what every correction above is written
+against. And **what may be drawn at all** (:func:`drawable`): an advert name is written by a
+stranger and can carry a newline or an escape, which no width table can make safe.
 """
 
 from __future__ import annotations
 
 import os
 import sys
-from collections.abc import Callable
+import unicodedata
+from collections.abc import Callable, Iterator
 
 from prompt_toolkit.layout.controls import FormattedTextControl
+from rich.cells import cell_len
 
 from ...core import win32dll
 
@@ -120,6 +129,12 @@ _EXTENDERS = frozenset((_VS16, *_MODIFIERS))
 #: emoji-presentation variation selector. Skipping them means a base glyph is
 #: measured at its own East-Asian width, with no VS16 "promote to 2" step.
 _ZERO_WIDTH = (_ZWJ, _VS16)
+
+#: Unicode general categories holding nothing a terminal can draw: control characters
+#: (``Cc``), the format and bidi-control block (``Cf``), surrogates (``Cs``), and the line
+#: and paragraph separators (``Zl``/``Zp``). See :func:`drawable`, which folds them to a
+#: space — and keeps the one ``Cf`` codepoint that matters, the zero-width joiner.
+_UNDRAWABLE = frozenset(("Cc", "Cf", "Cs", "Zl", "Zp"))
 
 #: The probe: a sun. Its base (U+2600) is East-Asian *narrow* (1), and Rich
 #: promotes the U+2600+U+FE0F pair to 2. So a terminal that reports 1 for this is
@@ -232,6 +247,97 @@ def _joined_out(text: str) -> str:
                 continue
         kept.append(char)
     return "".join(kept)
+
+
+def clusters(text: str) -> Iterator[str]:
+    """Split ``text`` into the glyphs the terminal actually draws, never inside one.
+
+    The same run :func:`_join_zwj_clusters` gathers out of a laid-out line, read off a plain
+    string instead: a base, whatever extends it (:data:`_EXTENDERS` — a variation selector, a
+    skin tone), then any number of *joiner + component + extenders* groups, plus the
+    Regional Indicator **pair** a country flag is drawn from. A joiner that joins nothing
+    (:func:`_joins`) is a cluster of its own, because it is not part of the glyph before it.
+
+    The unit a lane has to cut on: every correction in this module measures a *whole* glyph,
+    so a cut through the middle of one leaves two pieces neither authority can measure — a
+    lone Regional Indicator drawn as a letter, a skin tone with no base, or the stranded
+    joiner that goes on to swallow the ellipsis the cut appended. See :func:`cut_cells`.
+    """
+    index = 0
+    count = len(text)
+    while index < count:
+        start = index
+        index += 1
+        while index < count and text[index] in _EXTENDERS:
+            index += 1
+        if _is_regional_indicator(text[start]) and index < count:
+            if _is_regional_indicator(text[index]):
+                index += 1
+                while index < count and text[index] in _EXTENDERS:
+                    index += 1
+        while index + 1 < count and text[index] == _ZWJ and _joins(text[index + 1]):
+            index += 2  # the joiner and the codepoint it joins
+            while index < count and text[index] in _EXTENDERS:
+                index += 1
+        yield text[start:index]
+
+
+def cut_cells(text: str, width: int) -> str:
+    """The longest prefix of ``text`` that fits ``width`` cells, cut **between** glyphs.
+
+    What a fixed lane needs when a name outruns it (:func:`~meshterm.ui.menus.fit_cells`),
+    and the reason it cannot simply walk the string a character at a time: a MeshCore name
+    is written by whoever owns the radio, so it arrives carrying whatever emoji they typed,
+    and a codepoint-by-codepoint cut lands inside one about as often as not. Cutting
+    ``"👨‍👩‍👧"`` after its first joiner leaves a stranded joiner at the end of the lane,
+    which then folds the ellipsis the caller appends into the glyph before it
+    (:func:`_joined_out`) — the ellipsis measures nothing, the terminal draws it anyway, and
+    every lane after the name starts a column late. Cutting a flag in half leaves a lone
+    Regional Indicator, which is a letter rather than half a flag.
+
+    So the prefix is built out of whole :func:`clusters`, and a trailing joiner — stranded
+    by the cut itself, or already stranded in the name — is dropped rather than left to
+    swallow whatever comes next.
+
+    Args:
+        text: The text to cut.
+        width: The most cells the result may occupy.
+
+    Returns:
+        A prefix measuring at most ``width`` cells, with every glyph in it whole.
+    """
+    kept: list[str] = []
+    used = 0
+    for cluster in clusters(text):
+        size = cell_len(cluster)
+        if used + size > width:
+            break
+        kept.append(cluster)
+        used += size
+    while kept and kept[-1] == _ZWJ:
+        kept.pop()
+    return "".join(kept)
+
+
+def drawable(text: str) -> str:
+    """``text`` with every codepoint a terminal cannot *draw* folded to a space.
+
+    A name comes off the air from a stranger's radio, and nothing on the way in promises it
+    holds only characters. A newline in one ends the row mid-lane; an ``ESC`` starts an
+    escape sequence in the middle of a screen the app composed; a bidi override (``U+202E``)
+    reverses everything drawn after it. All three measure zero cells and none of them is a
+    width bug that any allowlist here could fix — they are text that must not reach the
+    terminal at all, so a lane folds them to the one character that is always safe.
+
+    Folded: control characters, the format and bidi-control block, surrogates, and the line
+    and paragraph separators. **Kept:** the zero-width joiner, which is format-class too and
+    is the tell that holds an emoji sequence together, along with every mark and modifier a
+    glyph is built from. Private-use codepoints are kept as well — that block is where a
+    Nerd Font keeps the powerline glyphs the path line is drawn with.
+    """
+    return "".join(
+        " " if char != _ZWJ and unicodedata.category(char) in _UNDRAWABLE else char for char in text
+    )
 
 
 def _narrow_lone_set() -> frozenset[str]:
@@ -716,4 +822,4 @@ class ClusterTextControl(FormattedTextControl):
         return content
 
 
-__all__ = ["ClusterTextControl", "calibrate"]
+__all__ = ["ClusterTextControl", "calibrate", "clusters", "cut_cells", "drawable"]

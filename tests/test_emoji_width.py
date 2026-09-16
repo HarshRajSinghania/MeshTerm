@@ -278,6 +278,48 @@ def test_a_stranded_joiner_leaves_the_next_character_its_cell(monkeypatch) -> No
         _restore(snap)
 
 
+def test_clusters_split_between_glyphs_and_never_inside_one() -> None:
+    """The unit a lane may cut on: one entry per glyph the terminal actually draws.
+
+    A joined run, a flag's indicator *pair*, and a toned base each come back whole, because
+    each is one glyph — while a joiner that joins nothing stands on its own, as it does
+    everywhere else in this module (see :func:`~meshterm.ui.tui.emoji_width._joins`).
+    """
+    assert list(ew.clusters(f"a{_FAMILY}{_CA}{_THUMB}b")) == ["a", _FAMILY, _CA, _THUMB, "b"]
+    # Two flags in a row pair up one at a time rather than running together into four.
+    assert list(ew.clusters(_CA + _CN)) == [_CA, _CN]
+    # A name cut at its byte limit just past a joiner: the joiner is not part of the flag.
+    assert list(ew.clusters(_STRANDED)) == [_FLAG, _ZWJ]
+
+
+def test_cut_cells_keeps_every_glyph_whole_and_strands_no_joiner() -> None:
+    """A lane's truncation lands between glyphs, so nothing measures what is not drawn.
+
+    The failure this exists for: cutting a codepoint at a time leaves a trailing joiner,
+    which folds whatever the caller appends — the lane's ellipsis — into the glyph before
+    it. The ellipsis then measures nothing while the terminal still draws it, and every
+    column right of the name starts a cell late.
+    """
+    assert ew.cut_cells(f"Bob {_FAMILY}", 6) == f"Bob {_FAMILY}"  # it fits, so it is kept
+    assert ew.cut_cells(f"Bob {_FAMILY}", 5) == "Bob "  # it doesn't: dropped whole
+    assert ew.cut_cells(_CA, 1) == ""  # half a flag is a letter, not half a glyph
+    assert ew.cut_cells(_STRANDED, 4) == _FLAG  # the joiner cannot swallow what follows
+    assert ew.cut_cells("plain name", 5) == "plain"
+
+
+def test_drawable_folds_only_what_no_terminal_can_draw() -> None:
+    """A newline, an escape or a bidi override in an advert name is folded to a space.
+
+    None of them is a width bug an allowlist could fix — they are text that must not reach
+    the terminal at all. The joiner is format-class too and is the one kept, because it is
+    what holds an emoji sequence together.
+    """
+    assert ew.drawable("line\nbreak") == "line break"
+    assert ew.drawable("esc\x1b[31mape") == "esc [31mape"
+    assert ew.drawable("flip‮me") == "flip me"
+    assert ew.drawable(f"Bob {_FAMILY}{_THUMB}") == f"Bob {_FAMILY}{_THUMB}"
+
+
 def test_join_zwj_clusters_merges_only_joined_runs() -> None:
     """The fragment merge gathers a whole sequence and leaves everything else alone.
 

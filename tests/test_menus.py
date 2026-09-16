@@ -143,6 +143,37 @@ def test_fit_cells_measures_display_cells_not_characters() -> None:
     assert fit_cells("ab", 5, align="right") == "   ab"
 
 
+def test_fit_cells_keeps_a_broken_name_inside_its_lane() -> None:
+    """A name is written by a stranger's radio, and no part of one may skew the lane.
+
+    Two failures, one lane. A cut through the middle of an emoji sequence leaves a stranded
+    joiner, which folds the ellipsis appended after it into the glyph before it — the lane
+    then measures a cell short of what the terminal draws, and every column right of the
+    name starts late. And a name carrying a newline or an escape ends the row mid-lane
+    whatever it measures. Both are settled inside ``fit_cells`` (see
+    :mod:`meshterm.ui.tui.emoji_width`), so every column in the app is covered by the one
+    helper they all fit their labels through.
+    """
+    from rich.cells import cell_len
+
+    family = "\U0001f468‍\U0001f469‍\U0001f467"  # one glyph, three joined people
+    flag = "\U0001f1e8\U0001f1e6"  # one glyph, two Regional Indicators
+
+    for name in (f"Bob {family} Family", f"{flag} Canada Hub", "line\nbreak\x1b[31m"):
+        for width in range(4, 24):
+            assert cell_len(fit_cells(name, width)) == width, (name, width)
+
+    # The cut falls between glyphs: half a family is not a glyph, and half a flag is a letter.
+    assert family in fit_cells(f"Bob {family}", 8)  # it fits: the glyph is kept whole
+    assert "‍" not in fit_cells(f"Bob {family}", 5)  # it doesn't: no joiner left behind
+    assert fit_cells(f"{flag} Hub", 4).startswith(flag)  # the pair survives, or neither does
+
+    # What the terminal cannot draw never reaches it; an ordinary name is left alone.
+    assert "\n" not in fit_cells("line\nbreak", 12)
+    assert "\x1b" not in fit_cells("esc\x1b[31mape", 12)
+    assert fit_cells("plain", 12).strip() == "plain"
+
+
 def test_main_menu_sections_answer_the_menus_own_question() -> None:
     """Each section is a *doing*, in workflow order, and holds only what shares it.
 

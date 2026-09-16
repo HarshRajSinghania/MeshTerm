@@ -41,11 +41,13 @@ admin credentials are stored, and the unobserved contact above. They are still s
 still ranked — they are real contacts and the percentile scale is the whole population —
 but they are never swept.
 
-**What is displayed is the percentile, never the score.** A raw ``47.3`` means nothing
-without the distribution it came from; a contact's *rank against your other contacts* is
-self-calibrating, needs no legend, and stays comparable when the weights change. So
-:class:`ScoredContact` carries :attr:`~ScoredContact.percentile` and the UI shows only that
-(see :func:`percentile_rank`).
+**The score is never displayed.** A raw ``47.3`` means nothing without the distribution it
+came from. What this module hands a screen instead is a *rank* — the list comes back ordered,
+and :attr:`~ScoredContact.percentile` places one contact in the field without a legend and
+without going stale when the weights change (see :func:`percentile_rank`). What a screen draws
+beside a contact is neither: the purge preview shows the :class:`ContactSignals` themselves, a
+lane per measured kind, because the thing a reader can check against what they know is the
+evidence, not this module's reading of it.
 """
 
 from __future__ import annotations
@@ -198,22 +200,24 @@ class ContactSignals:
 
 @dataclass(frozen=True)
 class ScoredContact:
-    """One contact's standing among the others: its score, its percentile, and why.
+    """One contact's standing among the others: its score, its rank, and the evidence for both.
 
     Attributes:
         contact: The contact this describes.
         signals: The evidence the score was computed from.
         score: The weighted sum plus any newcomer grace. Never displayed — see
             :attr:`percentile`, and the module docstring for why.
-        percentile: Percentile rank within the scored population, ``0``–``100``. **This is
-            the only number the UI shows**: it is self-calibrating (a mesh of 30 contacts
-            and one of 300 both read the same way), needs no legend, and stays meaningful
-            if the weights are ever retuned.
+        percentile: Percentile rank within the scored population, ``0``–``100``. The
+            score's one publishable reading: self-calibrating (a mesh of 30 contacts and
+            one of 300 both read the same way), needing no legend, and still meaningful if
+            the weights are ever retuned.
         protection: Why this contact can never be swept, or ``None`` if it can. One of the
             ``PROTECT_*`` constants.
-        reasons: Short lowercase phrases naming what this contact's standing rests on —
-            its weakest lanes when it is a purge candidate, so the preview row explains
-            itself without the reader having to know the formula.
+
+    The **signals** are what a screen shows, not the score or its terms: the purge preview
+    draws one lane per measured kind straight off :attr:`signals` (see
+    :mod:`~meshterm.ui.purge_screen`), so a reader auditing a sweep reads the evidence in
+    the same units it was gathered in rather than a phrase this module chose for them.
     """
 
     contact: Contact
@@ -221,7 +225,6 @@ class ScoredContact:
     score: float
     percentile: int
     protection: str | None = None
-    reasons: tuple[str, ...] = ()
 
     @property
     def protected(self) -> bool:
@@ -395,7 +398,7 @@ def protection_for(signals: ContactSignals) -> str | None:
 #: unknown.
 _MIN_LOCATED = 4
 
-#: The term names, in the order a :class:`ScoredContact` reports its reasons.
+#: The term names, in the order the weighted sum walks them.
 _TERM_NAMES = ("dm", "recency", "volume", "channel", "hops", "distance")
 
 
@@ -447,54 +450,6 @@ def percentile_rank(score: float, population: Sequence[float]) -> int:
     below = sum(1 for value in population if value < score)
     equal = sum(1 for value in population if value == score)
     return int(round(100.0 * (below + 0.5 * equal) / len(population)))
-
-
-def _reasons(
-    signals: ContactSignals, terms: dict[str, float], weights: ScoreWeights
-) -> tuple[str, ...]:
-    """Name what this contact's standing rests on, weakest lane first.
-
-    The preview has one line per contact and the reader should not have to know the formula
-    to audit a sweep — so each row says, in plain words, the two things that put it where it
-    is. Phrases are drawn from the *measured* signals rather than from the term values, so
-    "3 packets" is the actual tally and not a normalised fraction.
-    """
-    phrases: list[tuple[float, str]] = []
-    contribution = {
-        "dm": terms["dm"] * weights.dm,
-        "recency": terms["recency"] * weights.recency,
-        "volume": terms["volume"] * weights.volume,
-        "hops": terms["hops"] * weights.hops,
-    }
-    if signals.dm_total:
-        phrases.append((contribution["dm"], f"{signals.dm_total} messages"))
-    else:
-        phrases.append((0.0, "never messaged"))
-    if signals.heard_age_days is None:
-        phrases.append((0.0, "never heard"))
-    else:
-        phrases.append((contribution["recency"], _age_phrase(signals.heard_age_days)))
-    packets = signals.packets
-    phrases.append((contribution["volume"], f"{packets} pkt{'' if packets == 1 else 's'}"))
-    if signals.hops is not None:
-        hops = signals.hops
-        label = "direct" if hops < 0.5 else f"{hops:g} hops"
-        phrases.append((contribution["hops"], label))
-    phrases.sort(key=lambda pair: pair[0])
-    return tuple(phrase for _, phrase in phrases[:3])
-
-
-def _age_phrase(days: float) -> str:
-    """A last-heard age in the fewest words: ``today`` / ``4d`` / ``6w`` / ``9mo`` / ``2y``."""
-    if days < 1:
-        return "today"
-    if days < 14:
-        return f"{int(days)}d"
-    if days < 60:
-        return f"{int(days / 7)}w"
-    if days < 365:
-        return f"{int(days / 30)}mo"
-    return f"{days / 365:.0f}y"
 
 
 def rank_contacts(
@@ -550,7 +505,6 @@ def rank_contacts(
     filled = {name: _fill_unknowns(column) for name, column in columns.items()}
 
     scores: list[float] = []
-    per_contact_terms: list[dict[str, float]] = []
     for index, sig in enumerate(gathered):
         terms = {name: filled[name][index] for name in _TERM_NAMES}
         total = (
@@ -562,7 +516,6 @@ def rank_contacts(
             + terms["distance"] * weights.distance
             + term_grace(sig, weights)
         )
-        per_contact_terms.append(terms)
         scores.append(total)
 
     ranked = [
@@ -572,11 +525,8 @@ def rank_contacts(
             score=score,
             percentile=percentile_rank(score, scores),
             protection=protection_for(sig),
-            reasons=_reasons(sig, terms, weights),
         )
-        for contact, sig, score, terms in zip(
-            contacts, gathered, scores, per_contact_terms, strict=True
-        )
+        for contact, sig, score in zip(contacts, gathered, scores, strict=True)
     ]
     ranked.sort(key=lambda scored: (-scored.score, scored.contact.name.casefold()))
     return ranked
