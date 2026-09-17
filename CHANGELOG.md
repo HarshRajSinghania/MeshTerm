@@ -17,28 +17,22 @@ allowed to change behaviour, not just add to it.
 
 ## [Unreleased]
 
+## [0.3.6] — 2026-09-17
+
+### Added
+
 - **A contact can be locked.** Lock contact on a contact's page keeps it from ever being
   archived: the archive sweep counts it protected, and the page hides Archive until you
-  unlock it. Locked contacts show a padlock ahead of their node type icon in the Contacts list —
-  🔒, or the console font's own padlock on the PicoCalc. The lock is kept by MeshTerm, not
-  the radio, and reading the device never clears it.
+  unlock it. Locked contacts show a padlock ahead of their node type icon in the Contacts
+  list — 🔒, or the console font's own padlock on the PicoCalc. The lock is kept by
+  MeshTerm, not the radio, and reading the device never clears it.
 
-- **Purge contacts is Archive contacts**, because archiving is what it does: every contact
-  it takes off the device stays in MeshTerm and can be restored. The row, its screens, its
-  confirm button and its progress bar all say Archive, and the row wears the 💾 that
-  archiving one contact already wore, not the red 🗑 a deletion gets.
-
-- **`scripts/` is sorted by handheld.** The PicoCalc's Calculinux bring-up, its two
-  console-font builds, the GPL-2.0 text that belongs beside the 6×8 one, and the
-  `xiao-radio/` firmware kit all live under `scripts/picocalc/`; the SPI bridge is
-  `scripts/uconsole/meshterm-spi-bridge`. The folder's own README is gone — its index of
-  what every file does and which machine runs it is a section of
-  [`docs/hardware.md`](docs/hardware.md) now, beside the table that says which manual is
-  yours. Every path in the manuals, the notices, the tests and the scripts' own headers
-  follows.
-
-- **The 6×12 console-font script carries its size in its name**, `calculinux-console-font-6x12.sh`,
-  like its 6×8 sibling always did. Same script, every reference updated.
+- **Set clock on connect.** A new preference in the Device group sets the radio's clock from
+  this computer's every time MeshTerm connects to it — at launch, when you connect later,
+  and after a reconnect, since a dropped link is exactly when a board with no real-time
+  clock may have rebooted and lost the time. It is off by default, runs in the background,
+  and records the drift it corrected only in the log. Scripted commands never write the
+  clock.
 
 - **Two installation manuals, one per handheld.** [`docs/picocalc.md`](docs/picocalc.md)
   takes a stock ClockworkPi PicoCalc from a shopping list to a Linux handheld running
@@ -50,6 +44,78 @@ allowed to change behaviour, not just add to it.
   list of what has only been proven on one bench; [`docs/hardware.md`](docs/hardware.md)
   shrinks to the page that says which manual is yours, and the README's new
   **Documentation** table points at all of it.
+
+- **A basemap doctor for a map that stays blank.** Every failure on the map's one network
+  path is logged below the default log level, so tiles that never arrive leave a blank
+  ground and no explanation. [`scripts/basemap-doctor.py`](scripts/README.md), run on the
+  machine with the problem, reports the Python MeshTerm runs under, its certificate store,
+  the tile source, and the terminal's colour depth, then fetches a real tile and names the
+  cause with its fix: a Python with an empty certificate store (a python.org install on
+  macOS, until `Install Certificates.command` is run), the network in between, or a
+  terminal at 256 colours, where the basemap's greens and blues collide.
+
+### Changed
+
+- **Purge contacts is Archive contacts**, because archiving is what it does: every contact
+  it takes off the device stays in MeshTerm and can be restored. The row, its screens, its
+  confirm button, and its progress bar all say Archive, and the row wears the 💾 that
+  archiving one contact already wore, not the red 🗑 a deletion gets.
+
+- **The archive preview shows the evidence, one kind to a column.** Its rows led on a
+  percentile and followed it with the reasons a contact ranked low, three columns under one
+  header, so a message count, an age, and a hop count traded places from row to row. Each
+  column now holds one measurement all the way down: `HEARD` and `PKTS` first, drawn as the
+  Contacts list draws them, then the `MSGS` and `HOPS` the sweep adds. The percentile is
+  gone, since the list's order already is the ranking. Every contact leads with its node
+  type icon, as in the Contacts list, and ←→ scrolls the columns under a name that stays
+  put. Archiving a single contact from its page names it the same way in the confirm.
+
+- **`scripts/` is sorted by handheld.** The PicoCalc's Calculinux bring-up, its two
+  console-font builds, the GPL-2.0 text that belongs beside the 6×8 one, and the
+  `xiao-radio/` firmware kit all live under `scripts/picocalc/`; the SPI bridge is
+  `scripts/uconsole/meshterm-spi-bridge`. The index of what every file does and which
+  machine runs it is a section of [`docs/hardware.md`](docs/hardware.md) now, beside the
+  table that says which manual is yours, and the folder's own README keeps only a pointer
+  to each handheld's folder and the basemap doctor. Every path in the manuals, the notices,
+  the tests, and the scripts' own headers follows.
+
+- **The 6×12 console-font script carries its size in its name**,
+  `calculinux-console-font-6x12.sh`, like its 6×8 sibling always did. Same script, every
+  reference updated.
+
+- A tool that fails says so in an amber ⚠ popup, which wraps a long explanation instead of
+  opening the full-screen result window for it.
+
+- The About page opens on a new description of what MeshTerm is and what it plugs into.
+
+### Fixed
+
+- **Reading a big contact table no longer times out.** The library under MeshTerm gave a
+  whole contacts read one five-second deadline, so a companion holding a few hundred
+  contacts failed every read with "no event received", however healthy the radio. The wait
+  is now for the gap between records — each record restarts it, and the read takes as long
+  as the table does — so a timeout means the companion really stopped answering. An error
+  reply meant for some other command no longer ends the read either.
+
+- **An emoji no longer knocks a row out of line.** Terminals disagree about how wide they
+  draw an emoji, and a contact's name arrives off the air carrying whatever its owner typed,
+  so one emoji in a name could shift every column after it, and the screen's right border,
+  by a cell. Every glyph that may be drawn as an emoji now gets two cells, and each is drawn
+  at the column MeshTerm measured for it — in lists, in dialogs, and on the screens behind
+  them — so one drawn narrow leaves a blank beside it rather than moving anything else, and
+  a repaint no longer leaves a stale letter standing next to it. A name cut to fit its
+  column is cut between glyphs, never through one, and a newline or an escape in a name no
+  longer ends its row early. `MESHTERM_COLUMN_SNAP=0` turns the placement off.
+
+- **Hops in near-identical colours stay separate chips.** Where a path is drawn as coloured
+  chips, two neighbours of the same colour cut a wedge of bare background out of the route,
+  and two of nearly the same colour were joined by a chevron nobody could see. Both are now
+  divided by a thin chevron in a shade of the first chip's own colour, so the route runs on
+  unbroken and the join still shows. "Nearly the same" is measured the way the eye sees
+  colour, in OKLab, rather than as a hue gap, which judged the greens and the cyans very
+  differently.
+
+- Walking back up a scrolled list no longer lets the highlight ride off the top of its box.
 
 ## [0.3.5] — 2026-09-14
 
@@ -774,7 +840,8 @@ deliberately not reconstructed here.
 - Two `TYPE_CHECKING` imports the test suite referenced but never imported, on paths that
   happened never to run.
 
-[Unreleased]: https://github.com/jpmartineau/MeshTerm/compare/v0.3.5...HEAD
+[Unreleased]: https://github.com/jpmartineau/MeshTerm/compare/v0.3.6...HEAD
+[0.3.6]: https://github.com/jpmartineau/MeshTerm/releases/tag/v0.3.6
 [0.3.5]: https://github.com/jpmartineau/MeshTerm/releases/tag/v0.3.5
 [0.3.4]: https://github.com/jpmartineau/MeshTerm/releases/tag/v0.3.4
 [0.3.3]: https://github.com/jpmartineau/MeshTerm/releases/tag/v0.3.3
