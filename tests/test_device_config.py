@@ -1035,12 +1035,15 @@ async def test_archiving_one_contact_takes_it_off_the_device_and_keeps_it() -> N
     import logging
     from types import SimpleNamespace
 
-    from meshterm.core.models import Contact
+    from meshterm.core.models import NODE_TYPE_REPEATER, Contact
     from meshterm.ui.node_detail_screen import _archive_contact
     from meshterm.ui.surface import TuiUi
+    from meshterm.ui.theme import name_style
     from meshterm.ui.tui.session import TuiSession
 
-    hub = Contact(name="Hub", public_key="3d" * 32, key_prefix="3d" * 6)
+    hub = Contact(
+        name="Hub", public_key="3d" * 32, key_prefix="3d" * 6, node_type=NODE_TYPE_REPEATER
+    )
     removed: list[str] = []
     archived: list[tuple[str, str]] = []
     invalidated: list[bool] = []
@@ -1073,7 +1076,19 @@ async def test_archiving_one_contact_takes_it_off_the_device_and_keeps_it() -> N
     assert asked[0]["danger"] is True and "destructive" not in asked[0]
     assert [label for label, _v in asked[0]["buttons"]] == ["Cancel", "Archive"]
     assert asked[0]["default"] == 1
-    assert "restore it at any time" in asked[0]["prompt"]
+    prompt = asked[0]["prompt"]
+    assert "restore it at any time" in prompt
+    # The contact is named as the Contacts list names it — its type mark to the left of the
+    # name, each in its own colour — while the sentence around them keeps the amber.
+    assert prompt.plain.startswith("Archive ▲ Hub? ")
+
+    def styles_at(index: int) -> list[str]:
+        return [str(span.style) for span in prompt.spans if span.start <= index < span.end]
+
+    assert styles_at(prompt.plain.index("▲")) == ["type.repeater"]
+    assert styles_at(prompt.plain.index("Hub")) == [name_style("Hub", "3d" * 32)]
+    assert styles_at(0) == styles_at(prompt.plain.index("restore")) == ["warn"]
+    assert not prompt.style, "a base style would merge the amber's bold into the mark"
     # Off the radio, kept here, and the cached contact list dropped so the list re-reads.
     assert removed == ["Hub"]
     assert archived == [("cc" * 32, "3d" * 32)]

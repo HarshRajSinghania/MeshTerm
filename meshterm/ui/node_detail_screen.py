@@ -1538,10 +1538,30 @@ async def _archive_contact(ctx: AppContext, contact: Contact, self_key: str, lab
     assert isinstance(ctx.ui, TuiUi)  # guaranteed by open_node_detail
     session = ctx.ui.session
 
+    # The contact is named as the Contacts list names it: the type mark in its own colour,
+    # then the name in its key-derived hue (a bare id standing in for a nameless one is
+    # ``node.unknown``). The prose carries the amber span by span rather than as the
+    # prompt's base style, whose bold Rich would merge into the mark.
+    glyph, glyph_style = NODE_GLYPHS.get(contact.node_type, DEFAULT_GLYPH)
+    prompt = Text()
+    prompt.append("Archive ", style="warn")
+    prompt.append(f"{glyph} ", style=glyph_style)
+    prompt.append(
+        label,
+        style=(
+            name_style(label, contact.public_key or contact.key_prefix)
+            if contact.name
+            else "node.unknown"
+        ),
+    )
+    prompt.append(
+        "? It comes off this device's contact list, freeing a slot for a new one. MeshTerm "
+        "keeps it — with its key, reception history and messages — and you can restore it "
+        "at any time.",
+        style="warn",
+    )
     if not await ctx.ui.dialog(
-        f"Archive {label}? It comes off this device's contact list, freeing a slot for a "
-        "new one. MeshTerm keeps it — with its key, reception history and messages — and "
-        "you can restore it at any time.",
+        prompt,
         [("Cancel", False), ("Archive", True)],
         title="Archive contact",
         default=1,

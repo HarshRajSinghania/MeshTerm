@@ -330,7 +330,7 @@ class Ui:
 
     async def dialog(
         self,
-        prompt: str,
+        prompt: str | Text,
         buttons: list[tuple[str, Any]],
         *,
         title: str = "",
@@ -348,6 +348,10 @@ class Ui:
         sibling. Buttons follow the platform-dialog convention: the safe way out sits on
         the left and the committing action on the right, which is also the sensible
         ``default`` so Enter commits it while Esc always backs out.
+
+        A pre-styled :class:`~rich.text.Text` prompt is drawn as it is, so it can name a
+        node in its own colours; the tier then themes only the border, and the prompt's
+        prose carries the tier's colour itself.
         """
         raise NotImplementedError
 
@@ -634,7 +638,7 @@ class PlainUi(Ui):
 
     async def dialog(
         self,
-        prompt: str,
+        prompt: str | Text,
         buttons: list[tuple[str, Any]],
         *,
         title: str = "",
@@ -905,7 +909,7 @@ class TuiUi(Ui):
 
     async def dialog(
         self,
-        prompt: str,
+        prompt: str | Text,
         buttons: list[tuple[str, Any]],
         *,
         title: str = "",
