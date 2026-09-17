@@ -118,6 +118,50 @@ jobs:
           "$GITHUB_WORKSPACE/$bin" contacts --help > /dev/null
           echo "runs, finds its assets, and its tools registered"
 
+      # The Windows binary is code-signed, so Windows has a publisher to recognise
+      # instead of an unknown file it has never seen before — SmartScreen's warning eases
+      # as that publisher's downloads accumulate, and antivirus engines, which flag
+      # unsigned PyInstaller one-file builds on sight, are markedly less trigger-happy.
+      # The certificate belongs to SignPath Foundation, who issue it free to open-source
+      # projects and sign on their own infrastructure; nothing secret exists on this
+      # runner, and there is no key here to leak. Its condition is that the artifact
+      # provably came from this repository's CI, which is why the binary is handed over
+      # as a GitHub artifact rather than uploaded: SignPath reads the workflow run behind
+      # that artifact id and refuses anything it cannot trace to an approved branch.
+      #
+      # Signed between the build's own smoke test and the naming step, so what gets
+      # verified is the build and what gets checksummed is the signed file — a checksum
+      # taken before signing would describe a binary nobody ever downloads.
+      #
+      # Both legs are skipped wholesale until the account exists (the variable is unset
+      # until then), so this file builds unsigned Windows binaries in the meantime rather
+      # than failing, and a fork with no SignPath project of its own is unaffected.
+      - name: Hand the Windows binary to SignPath
+        id: unsigned
+        if: runner.os == 'Windows' && vars.SIGNPATH_ORGANIZATION_ID != ''
+        uses: actions/upload-artifact@v4
+        with:
+          # Deliberately not `meshterm-*`: the release workflow attaches every artifact
+          # matching that prefix, and this one is the unsigned draft.
+          name: unsigned-${{ matrix.label }}
+          path: packaging/dist/meshterm.exe
+          if-no-files-found: error
+
+      - name: Sign it
+        if: runner.os == 'Windows' && vars.SIGNPATH_ORGANIZATION_ID != ''
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: meshterm
+          signing-policy-slug: release-signing
+          artifact-configuration-slug: exe
+          github-artifact-id: ${{ steps.unsigned.outputs.artifact-id }}
+          # The signed file comes back where the unsigned one was built, under the same
+          # name, so every step after this one is untouched by any of it.
+          wait-for-completion: true
+          output-artifact-directory: packaging/dist
+
       - name: Name it after the version and the platform
         shell: bash
         run: |

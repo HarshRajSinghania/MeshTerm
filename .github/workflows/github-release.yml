@@ -55,6 +55,10 @@ jobs:
       # Every platform's artifact, flattened into one directory of files to attach.
       - uses: actions/download-artifact@v4
         with:
+          # The build uploads one artifact nobody should ever download: the unsigned
+          # Windows binary it hands to SignPath. Everything meant for the release page is
+          # named `meshterm-…`, so the pattern is the filter.
+          pattern: meshterm-*
           path: artifacts
           merge-multiple: true
 
