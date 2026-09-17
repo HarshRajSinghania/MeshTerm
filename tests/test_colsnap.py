@@ -93,7 +93,7 @@ def test_an_emoji_is_followed_by_the_column_it_was_measured_into() -> None:
     """The whole mechanism: the glyph, then the one-based column the next glyph belongs in."""
     assert cell_len(_WAVE) == 2, "the stock table measures the wave at two cells"
     # "a" fills column 0, the wave is measured into columns 1-2, so "b" belongs in column 3.
-    assert colsnap.snap_row(f"a{_WAVE}b") == f"a{_WAVE}\x1b[4Gb"
+    assert colsnap.snap_row(f"a{_WAVE}b") == f"a\x1b[2X{_WAVE}\x1b[4Gb"
 
 
 def test_nothing_is_pinned_after_the_last_glyph_on_the_row() -> None:
@@ -102,21 +102,22 @@ def test_nothing_is_pinned_after_the_last_glyph_on_the_row() -> None:
     A chat line ending on an emoji is the common case, and there is nothing after it whose
     column could be wrong.
     """
-    assert colsnap.snap_row(f"hi {_WAVE}") == f"hi {_WAVE}"
+    assert colsnap.snap_row(f"hi {_WAVE}") == f"hi \x1b[2X{_WAVE}"
 
 
 def test_a_style_change_occupies_no_column_and_stays_where_the_theme_put_it() -> None:
     """A colour run is copied through without advancing the column it would have shifted."""
     pinned = colsnap.snap_row(f"\x1b[31m{_WAVE}\x1b[0m|")
-    assert pinned == f"\x1b[31m{_WAVE}\x1b[0m\x1b[3G|"
+    assert pinned == f"\x1b[31m\x1b[2X{_WAVE}\x1b[0m\x1b[3G|"
 
 
 def test_a_flag_and_a_joined_sequence_are_pinned_once_as_whole_glyphs() -> None:
     """One address per glyph, not per codepoint — the cut that halves a flag is never made."""
     for glyph in (_CA, _FAMILY):
+        width = cell_len(glyph)
         pinned = colsnap.snap_row(f"{glyph}|")
-        assert pinned == f"{glyph}\x1b[{cell_len(glyph) + 1}G|"
-        assert pinned.count("\x1b[") == 1
+        assert pinned == f"\x1b[{width}X{glyph}\x1b[{width + 1}G|"
+        assert pinned.count("G") == 1
 
 
 def test_a_bare_text_emoji_is_pinned_even_though_both_tables_agree_about_it() -> None:
@@ -314,6 +315,9 @@ class _Tty:
             row = numbers[0] if numbers and numbers[0] else 1
             column = numbers[1] if len(numbers) > 1 and numbers[1] else 1
             self.y, self.x = row - 1, column - 1
+        elif final == "X":
+            for column in range(self.x, min(self.cols, self.x + count)):
+                self.grid[self.y][column] = " "
         elif final == "K":
             self.grid[self.y][self.x :] = [" "] * (self.cols - self.x)
         elif final == "J":
@@ -474,6 +478,29 @@ def test_a_repaint_after_the_glyph_lands_where_the_renderer_measured_it() -> Non
         assert (tty.glyph_at(0, seven) == "7") is lands
 
 
+def test_a_glyph_drawn_narrow_leaves_no_character_from_the_last_frame_beside_it() -> None:
+    """The cell a narrow-drawn glyph does not cover is blank, not what the last frame put there.
+
+    prompt_toolkit treats the cell after a wide glyph as part of it and never writes it, so a
+    repaint that puts a two-cell glyph where two letters were leaves the second letter standing
+    on a terminal that draws the glyph in one cell. The pin erases its reservation first.
+    """
+    cols, rows = 16, 1
+    before, after = _screen(["│ ab Lakeside │"], cols), _screen([f"│ {_WAVE} Lakeside │"], cols)
+
+    for pin, stale in ((False, True), (True, False)):
+        output = _vt100(cols, rows)
+        if pin:
+            output = colsnap.PinnedOutput(output)
+        tty = _Tty(cols, rows, draws={_WAVE: 1})
+        position = _paint(output, before, None, _point(), cols, rows)
+        tty.feed(_drained(output))
+        _paint(output, after, before, position, cols, rows)
+        tty.feed(_drained(output))
+        assert tty.glyph_at(0, 2) == _WAVE
+        assert (tty.glyph_at(0, 3) == "b") is stale
+
+
 def test_the_pinned_output_brackets_only_a_lone_uncertain_glyph() -> None:
     """What reaches the terminal for each kind of write prompt_toolkit's renderer makes."""
 
@@ -507,7 +534,7 @@ def test_the_pinned_output_brackets_only_a_lone_uncertain_glyph() -> None:
 
         step = get_cwidth(glyph)
         assert recorder.calls == [
-            ("raw", "\x1b7"),
+            ("raw", f"\x1b7\x1b[{step}X"),
             ("write", glyph),
             ("raw", f"\x1b8\x1b[{step}C"),
         ]

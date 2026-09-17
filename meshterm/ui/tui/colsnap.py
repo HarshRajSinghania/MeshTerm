@@ -33,8 +33,10 @@ with ours before the next glyph is drawn. The cursor is re-pinned to the app's o
 every point where a disagreement could have started, and a mismeasured glyph can no longer
 move anything but itself:
 
-* Drawn **narrower** than we reserved, it leaves a blank cell after it (the row is erased
-  before it is drawn, so that cell is bare page rather than debris).
+* Drawn **narrower** than we reserved, it leaves a blank cell after it. The cells a glyph is
+  reserved are erased in its own colours before it is drawn (``CSI n X``), so that cell is
+  blank in the right background: never a character left over from the last frame, and never a
+  hole in the fill of a chip.
 * Drawn **wider**, its overhang is written over by whatever the next column holds.
 
 Both are one cell of cosmetic damage inside the glyph's own lane, where a shift was a whole row
@@ -149,6 +151,16 @@ _SAVE = "\x1b7"
 _RESTORE = "\x1b8"
 
 
+def _erase(width: int) -> str:
+    """ECH: blank ``width`` cells from the cursor in the current colours, without moving it.
+
+    Written in front of a glyph reserved more than one cell, so every cell of its reservation is
+    painted by this frame whatever the font does with the glyph: the background a chip or a
+    highlighted row filled it with, rather than whatever the terminal last held there.
+    """
+    return f"\x1b[{width}X"
+
+
 def enabled() -> bool:
     """Whether written glyphs are pinned to the columns the app measured them into.
 
@@ -236,9 +248,13 @@ def _pin_text(text: str, parts: list[str], column: int, owed: int) -> tuple[int,
         if owed >= 0:
             parts.append(f"\x1b[{owed + 1}G")
             owed = -1
+        width = cell_len(cluster)
+        pinned = _pinned(cluster)
+        if pinned and width > 1:
+            parts.append(_erase(width))
         parts.append(cluster)
-        column += cell_len(cluster)
-        if _pinned(cluster):
+        column += width
+        if pinned:
             owed = column
     return column, owed
 
@@ -285,7 +301,10 @@ class PinnedOutput:
             inner.write(data)
             return
         width = get_cwidth(data)
-        inner.write_raw(_SAVE)
+        # The renderer skips the cells after a wide glyph as the glyph's own and never writes
+        # them, so erasing them first is what keeps a glyph drawn narrower from leaving the
+        # last frame's character in the cell it did not cover.
+        inner.write_raw(_SAVE + _erase(width) if width > 1 else _SAVE)
         inner.write(data)
         # A forward step of zero is read as a step of one, so a glyph that measures nothing
         # (a stranded joiner) just returns to where it started.
