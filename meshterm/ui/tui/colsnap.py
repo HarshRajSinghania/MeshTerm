@@ -1,10 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """Pin a written row's columns to the terminal's own grid, so no glyph can shift it.
 
-Every other correction in this package answers *how many cells does this glyph take* —
-:mod:`~meshterm.ui.tui.emoji_width` is that question's whole home, two width authorities and
-two hand-curated exception sets deep. This module answers the one that actually decides
-whether a row lines up: **which column does the next glyph land in?**
+:mod:`~meshterm.ui.tui.emoji_width` answers *how many cells does this glyph take*. This
+module answers the question that actually decides whether a row lines up: **which column does
+the next glyph land in?**
 
 A row reaches the terminal as one run of characters, and the terminal advances its own cursor
 by its own idea of each glyph's width. Where that idea differs from ours by a cell,
@@ -18,13 +17,12 @@ Whether a font draws a given emoji in one cell or two is the font's business rat
 codepoint's; there is no table that is right on every terminal; and no escape sequence reports
 a renderer's width back to the program, because on a split terminal the component that tracks
 the cursor and the component that paints the glyph are different programs that disagree with
-each other (a cursor probe reads the PTY, not the painter — :mod:`~meshterm.ui.tui.emoji_width`
-carries that reasoning in full, along with the two curated sets it leaves us with). Curating
-exceptions one confirmed glyph at a time lines up the rows somebody has already looked at, and
-leaves every name that arrives off the air — written by a stranger, carrying whatever they felt
-like typing — exactly as broken as it was. A contact list is the worst case in the app for
-precisely that reason: its content is the one thing on screen that nobody can put on a list in
-advance.
+each other (a cursor probe reads the PTY, not the painter). Curating exceptions one confirmed
+glyph at a time — which is what the app used to do — lines up the rows somebody has already
+looked at, and leaves every name that arrives off the air, written by a stranger and carrying
+whatever they felt like typing, exactly as broken as it was. A contact list is the worst case
+in the app for precisely that reason: its content is the one thing on screen that nobody can
+put on a list in advance.
 
 So this module stops asking the terminal to agree. After any glyph whose drawn width is not
 certain, the row carries an **absolute column address** — ``CSI n G``, naming the one-based
@@ -40,9 +38,10 @@ move anything but itself:
 * Drawn **wider**, its overhang is written over by whatever the next column holds.
 
 Both are one cell of cosmetic damage inside the glyph's own lane, where a shift was a whole row
-of it. The curated width sets keep their job — they are what makes the *reservation* right, so
-a listed glyph gets neither the gap nor the overwrite — but they stop being what holds the row
-together. A glyph nobody has ever classified now costs a cell instead of a row.
+of it, and the second never happens in practice: :mod:`~meshterm.ui.tui.emoji_width` reserves
+every glyph that may be drawn as an emoji two cells, the most a single glyph draws. Pinning holds
+the lanes after a glyph wherever the terminal puts it; the reservation is what makes the text
+beside it line up from row to row as well, since a pin can only land where the glyph was measured.
 
 **What is certain.** Pinning after a glyph that did not need it is harmless (it addresses the
 column the cursor is already in) but it is not free: five bytes on the wire and a cluster walk
@@ -55,8 +54,8 @@ screen; the walk is paid only where an emoji actually is.
 
 Getting an entry in that list wrong costs exactly what today costs anyway — one glyph's row —
 so the list is a performance claim and never the thing correctness rests on. That is the whole
-point of the inversion: the old exception sets had to be *complete* to keep the app aligned,
-and this one only has to be *cheap*.
+point of the inversion: the exception sets this replaced had to be *complete* to keep the app
+aligned, and this one only has to be *cheap*.
 
 **Two writers, two spellings of the same pin.** A frame reaches the terminal one of two ways,
 and each knows something different about where its cursor is:

@@ -48,7 +48,7 @@ from .tui import (
     Separator,
     TuiSession,
 )
-from .tui.emoji_width import calibrate as calibrate_emoji_width
+from .tui.emoji_width import install as install_emoji_widths
 from .tui.spinner import spinner_interval
 from .widgets import battery_cell
 
@@ -379,13 +379,13 @@ async def run_menu(ctx: AppContext) -> None:
     Args:
         ctx: The shared application context.
     """
-    # Measure how this terminal renders emoji and align Rich to it, before
-    # prompt_toolkit takes over the screen. This keeps every panel border — and
-    # every chat bubble — aligned regardless of the terminal's emoji widths. Skipped
-    # outright on a platform that never draws emoji (PicoCalc): there is nothing to
-    # calibrate, and the probe writes escape sequences the console font can't shape.
+    # Reserve two cells for every glyph that may be drawn as an emoji, in every width
+    # authority, before prompt_toolkit lays out its first frame: the session pins each such
+    # glyph into its reservation, so rows line up whatever the terminal's font does with it.
+    # Skipped outright on a platform that never draws emoji (PicoCalc), where every glyph is
+    # one its own font has verified and the stock widths are already exact.
     if get_platform().emoji:
-        calibrate_emoji_width()
+        install_emoji_widths()
 
     header_cache: dict = {}
     session = TuiSession(header=lambda cols: _header(ctx, header_cache, cols))

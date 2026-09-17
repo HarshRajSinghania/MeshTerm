@@ -66,17 +66,19 @@ def test_declaring_a_signature_does_not_reach_the_shared_one() -> None:
     assert private.GetConsoleScreenBufferInfo is not shared
 
 
-def test_the_probe_leaves_the_shared_signature_alone() -> None:
-    """End to end: running the emoji probe must not disturb the process-wide function.
+def test_the_console_probe_leaves_the_shared_signature_alone() -> None:
+    """End to end: a real call site declaring the function must not disturb the shared one.
 
-    The narrow assertion above can pass while the real call site still reaches for
-    ``ctypes.windll``, so this exercises the code that actually crashed.
+    The narrow assertion above can pass while a call site still reaches for
+    ``ctypes.windll``, so this exercises one. The emoji-width probe that crashed is gone, but
+    the classic-console check declares the very same ``GetConsoleScreenBufferInfo`` with a
+    struct of its own, which is the same crash waiting in a different module.
     """
-    from meshterm.ui.tui import emoji_width
+    from meshterm.ui import termfont
 
     shared = ctypes.windll.kernel32.GetConsoleScreenBufferInfo
     before = shared.argtypes
-    # No console under pytest, so this returns None rather than measuring. That is fine:
+    # No console under pytest, so this returns None rather than answering. That is fine:
     # the declarations happen before the first call either way, which is what matters.
-    emoji_width._win_probe_width("x")  # noqa: SLF001 - the point is this private path
+    termfont._is_classic_console()  # noqa: SLF001 - the point is this private path
     assert ctypes.windll.kernel32.GetConsoleScreenBufferInfo.argtypes == before

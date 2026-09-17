@@ -75,10 +75,11 @@ class Platform:
             this is ``False`` there. ``MESHTERM_FULL_WIDTH`` remains an explicit override
             on top of this default.
         emoji: Whether emoji icons render at all. ``False`` means every icon funnel routes
-            through a compact single-BMP-glyph table instead (P3), and the emoji-width
-            calibration probe (:func:`~meshterm.ui.tui.emoji_width.calibrate`) is skipped
-            outright — there is nothing to calibrate once no emoji are ever drawn, and the
-            probe writes escape sequences the console font can't shape anyway.
+            through a compact single-BMP-glyph table instead (P3), and neither half of the
+            emoji alignment runs — the reserve-two measurement
+            (:func:`~meshterm.ui.tui.emoji_width.install`) or the column pinning
+            (:mod:`~meshterm.ui.tui.colsnap`). Once no emoji are ever drawn, every glyph on
+            screen is one the console font has verified, and the stock widths are exact.
         ascii_fold: Whether names and message bodies are NFKD-folded (accents stripped) at
             the render boundary before display. Storage is never touched. Wired in P3.
         truecolor: Whether the theme may use arbitrary 24-bit SGR colour. ``False`` selects

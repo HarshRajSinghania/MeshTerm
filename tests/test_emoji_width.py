@@ -1,330 +1,322 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Terminal-aligned emoji width: VS16 sequences and curated lone-codepoint emoji.
+"""Reserve-two emoji widths: one rule in every width authority, and every glyph kept whole.
 
-The border-alignment story lives in :mod:`meshterm.ui.tui.emoji_width`. These tests pin the
-two things that make a chat row with ``👋`` frame flush: Rich must *measure* the glyph as one
-cell (so it pads the row to the right width) and prompt_toolkit must *count* it as one (so it
-places the panel's right border where the terminal actually draws it). An emoji the terminal
-draws two wide — a menu icon like ``📡``, never on the allowlist — must stay two in both.
+The measuring story lives in :mod:`meshterm.ui.tui.emoji_width`, and the placement half in
+:mod:`meshterm.ui.tui.colsnap`. What these tests pin:
 
-The factory helpers (``_make_cell_len``, ``_make_pt_cache``) are exercised in isolation so no
-process-global width table is touched; the two :func:`calibrate` tests that do patch the real
-tables snapshot and restore them in a ``finally`` so nothing leaks into a later test.
+* every glyph that may be drawn as an emoji is reserved two cells, in Rich and in prompt_toolkit;
+* the app's own marks, Rich's single-cell ranges and ordinary text keep their stock widths;
+* Rich's three measurements and prompt_toolkit's agree about every string, which is what keeps
+  Rich's segment splitter from walking past a cut it can never meet;
+* the app's source draws no text-default emoji its vocabulary does not name;
+* a glyph built from several codepoints is split, cut and laid out as the one glyph it is.
+
+:func:`~meshterm.ui.tui.emoji_width.install` patches process-global tables, so every test that
+needs it goes through the ``installed`` fixture, which puts every table and cache back afterwards.
 """
 
 from __future__ import annotations
 
+import ast
+import pathlib
+import threading
+from collections.abc import Iterator
+
 import prompt_toolkit.utils as ptu
+import pytest
 import rich.cells as cells
+import rich.segment as segment
+from prompt_toolkit.utils import get_cwidth
 
 from meshterm.ui.tui import emoji_width as ew
 
-# One confirmed narrow glyph, plus one the same terminal draws two wide, used throughout.
-_WAVE = "👋"  # the confirmed lone-codepoint emoji this terminal draws in one cell
-_DISH = "📡"  # a menu icon the terminal draws two wide — must never be narrowed
-_CA = "🇨🇦"  # a flag: two Regional Indicators; prompt_toolkit miscounts it as four cells
-_CN = "🇨🇳"  # a second flag sharing the "C" indicator — the whole category must be handled
-_PLANE = "🛩️"  # a VS16 sequence this terminal draws two wide despite the narrow-VS16 verdict
-_PLANE_BASE = "\U0001f6e9"  # its base codepoint (no selector) — what the wide set is keyed on
-_ROAD = "\U0001f6e3"  # 🛣 a bare text-default emoji: one cell, and both authorities agree
-_WEB = "\U0001f578"  # 🕸 its untouched sibling one Trophy board down — the control
-_SHRUG = "\U0001f937‍♂️"  # 🤷‍♂️ a ZWJ sequence: base, joiner, male sign, selector — one glyph
-_FAMILY = "\U0001f468‍\U0001f469‍\U0001f467"  # 👨‍👩‍👧 three joined people, still one glyph
-_ZWJ = "‍"  # the joiner itself: the tell that its neighbours are a single glyph
-_THUMB = "\U0001f44d\U0001f3fd"  # 👍🏽 a base and its skin tone, no joiner — still one glyph
-_TECHIE = "\U0001f468\U0001f3fb‍\U0001f4bb"  # 👨🏻‍💻 a toned base, then a joined laptop
-_FLAG = "\U0001f3f4"  # 🏴 a black flag, the base of the pirate flag below
-_STRANDED = f"{_FLAG}‍"  # 🏴‍☠️ cut after its joiner by a name's byte limit: joins nothing
+_ZWJ = "\u200d"  # the joiner: the tell that its neighbours are a single glyph
+_VS16 = "\ufe0f"  # the request for emoji presentation
+_WAVE = "\U0001f44b"  # 👋 emoji presentation by default: two cells by the stock tables already
+_DISH = "\U0001f4e1"  # 📡 a menu icon, the same
+_CA = "\U0001f1e8\U0001f1e6"  # 🇨🇦 a flag: two Regional Indicators, one glyph
+_CN = "\U0001f1e8\U0001f1f3"  # 🇨🇳 a second flag sharing the "C" indicator
+_SUN = "☀"  # ☀ a text-default emoji, alone
+_PLANE = "\U0001f6e9"  # 🛩 another, which a font draws either way
+_HEART = "❤"  # ❤ another
+_ROAD = "\U0001f6e3"  # 🛣 text-default too, but one of the app's own marks
+_WEB = "\U0001f578"  # 🕸 the same
+_BIN = "\U0001f5d1"  # 🗑 the same
+_WARN = "⚠"  # ⚠ the same
+_SHRUG = f"\U0001f937{_ZWJ}♂{_VS16}"  # the shrug: base, joiner, sign, selector
+_FAMILY = f"\U0001f468{_ZWJ}\U0001f469{_ZWJ}\U0001f467"  # the family: three joined people
+_THUMB = "\U0001f44d\U0001f3fd"  # a thumb and its skin tone, no joiner: still one glyph
+_TECHIE = f"\U0001f468\U0001f3fb{_ZWJ}\U0001f4bb"  # the technologist: toned, then joined
+_KEYCAP = f"1{_VS16}\u20e3"  # a keycap: a digit, a selector and the enclosing mark
+_FLAG = "\U0001f3f4"  # a black flag, the base of a pirate flag
+_STRANDED = f"{_FLAG}{_ZWJ}"  # a pirate flag cut after its joiner by a name's byte limit
+
+#: Strings every authority has to agree about: emoji of every shape, the app's own marks, and the
+#: scripts and marks that must come through the rule untouched.
+_SAMPLES = (
+    "plain ascii",
+    f"Bob {_FAMILY} x",
+    f"{_CA}{_CN}",
+    f"{_SUN}{_VS16}{_SHRUG}",
+    f"{_SUN} bare, {_PLANE} bare, {_HEART} bare",
+    f"a{_ZWJ}b",
+    f"{_STRANDED}  x",
+    f"{_KEYCAP}!",
+    f"│ {_WARN}{_VS16} warn │ {_WARN} mark │",
+    f"Tech {_TECHIE} x {_THUMB}{_THUMB}",
+    "漢字 names",
+    "ष\u094d\u200dक",  # a Devanagari conjunct: a joiner between letters, not pictographs
+    f"{_CA[0]} a lone indicator",
+    "e\u0301 a combining accent",
+    f"{_ROAD}{_WEB}{_BIN} ↔ ↕",
+)
 
 
-def test_narrow_lone_set_defaults_extends_and_disables(monkeypatch) -> None:
-    """The allowlist seeds to the confirmed glyph; the env var overrides it outright."""
-    monkeypatch.delenv("MESHTERM_NARROW_EMOJI", raising=False)
-    assert _WAVE in ew._narrow_lone_set()
+@pytest.fixture
+def installed() -> Iterator[None]:
+    """Install the reserve-two rule for one test, and put every table and cache back after."""
+    from meshterm.ui.tui import colsnap
+    from meshterm.ui.tui.render import _ANSI_CACHE
 
-    monkeypatch.setenv("MESHTERM_NARROW_EMOJI", "👋🤙")
-    assert {"👋", "🤙"} <= ew._narrow_lone_set()
-
-    # Empty string is the off switch — a way back to Rich/pt defaults with no code change.
-    monkeypatch.setenv("MESHTERM_NARROW_EMOJI", "")
-    assert ew._narrow_lone_set() == frozenset()
-
-
-def test_wide_base_set_defaults_extends_and_disables(monkeypatch) -> None:
-    """The wide set seeds to the confirmed bases; the env var overrides it outright."""
-    monkeypatch.delenv("MESHTERM_WIDE_EMOJI", raising=False)
-    # One source only: a VS16 sequence the narrow verdict gets wrong. A *bare* codepoint both
-    # authorities already measure at one is not a candidate — see test_bare_text_default_emoji.
-    assert _PLANE_BASE in ew._wide_base_set()
-    assert not {_ROAD, _WEB} & ew._wide_base_set()
-
-    # ✈ (U+2708) is a second VS16 airplane base; both list cleanly.
-    monkeypatch.setenv("MESHTERM_WIDE_EMOJI", "\U0001f6e9✈")
-    assert {"\U0001f6e9", "✈"} <= ew._wide_base_set()
-
-    # Pasting the whole rendered glyph keeps the base but strips the zero-width selector, so
-    # the selector is never itself counted as a wide cell.
-    monkeypatch.setenv("MESHTERM_WIDE_EMOJI", _PLANE)
-    wide = ew._wide_base_set()
-    assert _PLANE_BASE in wide and "️" not in wide
-
-    # Empty string trusts the narrow-VS16 verdict for every sequence.
-    monkeypatch.setenv("MESHTERM_WIDE_EMOJI", "")
-    assert ew._wide_base_set() == frozenset()
-
-
-def test_rich_cell_len_narrows_only_allowlisted_lone_emoji() -> None:
-    """Rich's replacement measures a listed lone emoji as one, an unlisted one still as two."""
-    cell_len = ew._make_cell_len(frozenset(_WAVE), frozenset(_PLANE_BASE))
-
-    assert cell_len(_WAVE) == 1
-    assert cell_len(_DISH) == 2  # unlisted: the terminal draws it wide, so leave it wide
-    assert cell_len("Bob 👋 hi") == 8  # the narrowed glyph flows through a whole line
-    # The pre-existing VS16 handling still applies: a narrow base is measured alone, its
-    # variation selector skipped, so "☀️" stays one cell rather than being promoted to two.
-    assert cell_len("☀️") == 1
-    # A wide-VS16 exception is forced back to two, selector still skipped, so the airplane
-    # frames flush instead of collapsing to one and smearing the row.
-    assert cell_len(_PLANE) == 2
-    assert cell_len("hi 🛩️") == len("hi ") + 2
-    # A ZWJ sequence is one glyph, measured as its base: the codepoints the joiner folds in
-    # cost nothing, however many of them there are. Rich's stock loop already does this, and
-    # the selector-skipping replacement must not lose it — counting the male sign as a cell
-    # of its own is what pulls the row's right border a column in.
-    assert cell_len(_SHRUG) == 2
-    assert cell_len(_FAMILY) == 2
-    assert cell_len(f"Bob {_FAMILY} hi") == len("Bob  hi") + 2
-
-
-def test_pt_cache_narrows_only_allowlisted_lone_emoji() -> None:
-    """prompt_toolkit's cache — the authority that places the border — matches Rich."""
-    cache = ew._make_pt_cache(frozenset(_WAVE), frozenset(_PLANE_BASE))
-
-    assert cache[_WAVE] == 1
-    assert cache[_DISH] == 2
-    # The base cache sums a multi-char string per character through the cache, so the
-    # one-cell wave is inherited by any line that contains it.
-    assert cache["Bob 👋"] == 5
-    # The wide-VS16 airplane is the reverse: its base is forced to two, the selector stays
-    # zero, so the whole glyph (and any line holding it) keeps the terminal's two cells.
-    assert cache[_PLANE] == 2
-    assert cache["🛩️ hi"] == 2 + len(" hi")
-    # The sequences prompt_toolkit added up part by part: three cells for the shrug and six
-    # for the family, each of them one two-cell glyph, each pulling a border in by the excess.
-    assert cache[_SHRUG] == 2
-    assert cache[_FAMILY] == 2
-    assert cache[f"Bob {_FAMILY} hi"] == len("Bob  hi") + 2
-    # A lone joiner is still zero, and a codepoint a sequence joins keeps its own width when
-    # it stands alone — ``↕`` is the reorder icon, not part of anything.
-    assert cache[_ZWJ] == 0
-    assert cache["↕"] == 1
-
-
-def test_bare_text_default_emoji_are_left_exactly_as_measured() -> None:
-    """An emoji outside Emoji_Presentation, drawn *bare*, is one cell — and stays one.
-
-    ``🛣`` and ``🕸`` have East-Asian width Neutral, so Rich and wcwidth both measure them at
-    one; with no variation selector asking for emoji presentation, the font draws a one-cell
-    text glyph, which is exactly what they said. Both authorities already agreeing is not a
-    bug to correct: listing ``🛣`` in the wide set made the Trophy case's Longest-distance
-    heading reserve a cell the terminal never drew and pulled that row's border a column in,
-    while ``🕸`` — same class, one board down, never listed — framed flush throughout.
-    """
-    cell_len = ew._make_cell_len(frozenset(_WAVE), ew._wide_base_set())
-    cache = ew._make_pt_cache(frozenset(_WAVE), ew._wide_base_set())
-    for bare in (_ROAD, _WEB):
-        assert cell_len(bare) == 1 and cache[bare] == 1
-    # A heading built around one costs its own cells and no more, so the row frames flush.
-    caption = cell_len(f"── {_ROAD} Longest distance ──")
-    assert caption == len("── ") + 1 + len(" Longest distance ──")
-    # The Trophy case's *visible* gap after the road is not this module's business and must
-    # not become it: the heading pads the mark out to the widest of the seven disciplines
-    # (records_screen.discipline_label), which costs a real cell the terminal advances over
-    # — where widening the glyph here would claim one it does not.
-
-
-def test_flags_measure_two_cells_in_both_authorities() -> None:
-    """A country flag measures two cells in both width authorities.
-
-    A flag is a Regional Indicator pair: prompt_toolkit's wcwidth calls it four cells,
-    while Rich and the terminal draw it as one two-cell glyph. Narrowing the
-    indicators as a category makes every flag sum to two in both — no per-country
-    allowlist entry, and flags sharing an indicator (🇨🇦 / 🇨🇳) are fixed at once.
-    """
-    # Only the lone-emoji allowlist is passed; flags are handled by category, not by listing.
-    cell_len = ew._make_cell_len(frozenset(_WAVE), frozenset())
-    cache = ew._make_pt_cache(frozenset(_WAVE), frozenset())
-
-    for flag in (_CA, _CN):
-        assert cell_len(flag) == 2
-        assert cache[flag] == 2  # was 4 unpatched: two indicators at wcwidth 2 each
-
-    # A flag rides a chat line without dragging the border: "eh? 🇨🇦" measures its plain
-    # cells plus the flag's two.
-    assert cell_len("eh 🇨🇦") == len("eh ") + 2
-
-
-def _snapshot() -> tuple:
-    """Capture the mutable width state :func:`calibrate` patches, to restore afterwards."""
-    return (cells._cell_len, ptu._CHAR_SIZES_CACHE, ew._CALIBRATED, ew._CLUSTERS)
-
-
-def _restore(snap: tuple) -> None:
-    """Put the width authorities (and the once-only flag) back, clearing Rich's memo cache."""
-    cells._cell_len, ptu._CHAR_SIZES_CACHE, ew._CALIBRATED, ew._CLUSTERS = snap
-    cells.cached_cell_len.cache_clear()
-
-
-def test_calibrate_width1_narrows_the_wave_in_both_authorities(monkeypatch) -> None:
-    """A renderer that draws emoji narrow gets both Rich and pt aligned to the terminal."""
-    monkeypatch.delenv("MESHTERM_NARROW_EMOJI", raising=False)
-    monkeypatch.delenv("MESHTERM_WIDE_EMOJI", raising=False)
-    from prompt_toolkit.utils import get_cwidth
-
-    snap = _snapshot()
+    saved = (
+        cells._cell_len,
+        cells.get_character_cell_size,
+        cells.split_graphemes,
+        segment.get_character_cell_size,
+        ptu._CHAR_SIZES_CACHE,
+        ew._INSTALLED,
+        ew._CLUSTERS,
+    )
+    ew._INSTALLED = False
+    ew.install()
     try:
-        ew._CALIBRATED = False
-        ew.calibrate(force_width=1)
-        assert cells.cell_len(_WAVE) == 1
-        assert cells.cell_len(_DISH) == 2  # unlisted icon stays wide
-        assert cells.cell_len(_CA) == 2  # flag handled by category, no allowlist entry
-        assert cells.cell_len(_PLANE) == 2  # wide-VS16 exception carved back out of the narrowing
-        assert cells.cell_len(_ROAD) == 1  # bare text-default emoji: left exactly as measured
-        assert cells.cell_len(_WEB) == 1
-        assert get_cwidth(_WAVE) == 1  # pt now places the border a cell earlier
-        assert get_cwidth(_DISH) == 2
-        assert get_cwidth(_CA) == 2  # was 4 unpatched
-        assert get_cwidth(_PLANE) == 2  # was 1 unpatched: the airplane smeared a cell short
-        assert get_cwidth(_ROAD) == 1 and get_cwidth(_WEB) == 1  # untouched, in both authorities
-        assert cells.cell_len(_SHRUG) == 2 and get_cwidth(_SHRUG) == 2  # pt counted three
-        assert cells.cell_len(_FAMILY) == 2 and get_cwidth(_FAMILY) == 2  # pt counted six
+        yield
     finally:
-        _restore(snap)
+        (
+            cells._cell_len,
+            cells.get_character_cell_size,
+            cells.split_graphemes,
+            segment.get_character_cell_size,
+            ptu._CHAR_SIZES_CACHE,
+            ew._INSTALLED,
+            ew._CLUSTERS,
+        ) = saved
+        cells.cached_cell_len.cache_clear()
+        _ANSI_CACHE.clear()
+        colsnap._CACHE.clear()
 
 
-def test_calibrate_width2_narrows_nothing_but_still_joins_clusters(monkeypatch) -> None:
-    """A width-2 terminal narrows nothing, but still gets the cluster join.
+def test_whatever_may_be_drawn_as_an_emoji_is_reserved_two_cells(installed) -> None:  # noqa: ANN001
+    """Every shape of emoji measures two in both authorities, whatever the stock tables said.
 
-    Narrowing would itself break the border there — but a joined sequence is
-    over-measured at *every* width, so that one correction still lands.
-
-    prompt_toolkit sums a ZWJ sequence's codepoints wherever it runs, which no terminal draws:
-    the family is one two-cell glyph on the widest terminal as surely as on the narrowest. So
-    the cluster rule is installed on its own here, and nothing else is — the curated sets and
-    the flag category stay unconfirmed on this renderer, and Rich is not touched at all.
+    The stock answers were all over the place — prompt_toolkit gave a flag four, a sun asking
+    for emoji presentation one, a toned thumb four and a family six — and no answer below two
+    is safe for a glyph a font may draw in two: the pin after it would overwrite its right half.
     """
-    monkeypatch.delenv("MESHTERM_NARROW_EMOJI", raising=False)
-    from prompt_toolkit.utils import get_cwidth
+    for glyph in (
+        _WAVE,
+        _DISH,
+        _SUN,
+        f"{_SUN}{_VS16}",
+        _PLANE,
+        f"{_PLANE}{_VS16}",
+        _HEART,
+        _CA,
+        _CA[0],
+        _SHRUG,
+        _FAMILY,
+        _THUMB,
+        _TECHIE,
+        _KEYCAP,
+        f"{_WARN}{_VS16}",  # a mark asking for emoji presentation is an emoji like any other
+    ):
+        assert cells.cell_len(glyph) == 2, f"Rich: {glyph!r}"
+        assert get_cwidth(glyph) == 2, f"prompt_toolkit: {glyph!r}"
 
-    snap = _snapshot()
-    try:
-        ew._CALIBRATED = False
-        ew.calibrate(force_width=2)
-        assert cells.cell_len(_WAVE) == 2
-        assert get_cwidth(_WAVE) == 2
-        # Rich untouched: it still promotes a VS16 sequence to the two cells this terminal draws.
-        assert cells.cell_len(_PLANE) == 2 and cells.cell_len("☀️") == 2
-        # Neither curated set nor the flag category applies here — pt keeps its stock answers.
-        assert get_cwidth("☀️") == 1
-        assert get_cwidth(_CA) == 4
-        # The one correction that holds at either width.
-        assert get_cwidth(_SHRUG) == 2  # was 3
-        assert get_cwidth(_FAMILY) == 2  # was 6
-        assert get_cwidth(_TECHIE) == 2  # was 6: a skin tone is no cell, at either width
-    finally:
-        _restore(snap)
 
+def test_text_the_app_draws_keeps_its_stock_width(installed) -> None:  # noqa: ANN001
+    """The rule reserves nothing it has no reason to: text, chrome and the app's own marks.
 
-def test_a_skin_tone_is_part_of_its_glyph_in_both_authorities() -> None:
-    """A skin-tone modifier recolours the emoji before it and takes no cell of its own.
-
-    wcwidth counts each modifier as two, so prompt_toolkit reserved four cells for ``👍🏽`` and
-    for the joined ``👨🏻‍💻`` — a two-cell notch in every row naming such a node, and every lane
-    after the name drawn two columns off. Rich's table already says zero; the cache now agrees,
-    on both calibration paths.
+    The marks are text-default emoji too, but they are the app's own vocabulary, drawn in one
+    cell on the terminals it is used on, so they keep the one cell every screen was laid out
+    with. Rich's single-cell ranges are measured by a fast path no patch reaches, so everything
+    has to agree with it there.
     """
-    for narrow, flags in ((frozenset(_WAVE), True), (frozenset(), False)):
-        cache = ew._make_pt_cache(narrow, frozenset(), flags=flags)
-        assert cache[_THUMB] == 2
-        assert cache[_TECHIE] == 2
-        assert cache[f"Tech {_TECHIE} x"] == len("Tech ") + 2 + len(" x")
-    assert ew._make_cell_len(frozenset(_WAVE), frozenset())(_TECHIE) == 2
+    for text, width in (
+        ("a", 1),
+        ("#", 1),
+        ("1", 1),
+        ("é", 1),
+        ("漢", 2),
+        ("─", 1),
+        ("⠿", 1),
+        ("©", 1),
+        ("▶", 1),
+        (_WARN, 1),
+        (_ROAD, 1),
+        (_WEB, 1),
+        (_BIN, 1),
+        ("↕", 1),
+        ("↔", 1),
+        ("↩", 1),
+        ("⌨", 1),
+        ("⚙", 1),
+        ("a\U0001f3fd", 1),  # a stray skin tone on a letter leaves it a letter
+    ):
+        assert cells.cell_len(text) == width, f"Rich: {text!r}"
+        assert get_cwidth(text) == width, f"prompt_toolkit: {text!r}"
 
 
-def test_a_stranded_joiner_leaves_the_next_character_its_cell(monkeypatch) -> None:
-    """A joiner with no pictograph after it joins nothing, in both authorities and both paths.
+def test_every_authority_measures_every_string_the_same(installed) -> None:  # noqa: ANN001
+    """Rich's whole-string width, its grapheme spans and prompt_toolkit's cache all agree.
 
-    A MeshCore name is cut at a byte limit, so ``That's So Fetch 🏴‍☠️`` arrives as the flag and
-    a bare joiner. Both authorities folded whatever came next into the flag — the padding after
-    the name — so the name lane measured a cell short and every lane after it began a column
-    before the terminal drew it.
+    And every lone character measures the same in all of them. These are the four places a width
+    is read, and a row is only laid out once if they give it one answer.
     """
-    monkeypatch.delenv("MESHTERM_NARROW_EMOJI", raising=False)
+    for text in _SAMPLES:
+        spans, total = cells.split_graphemes(text)
+        assert cells.cell_len(text) == total == get_cwidth(text), text
+        assert total == sum(width for _start, _end, width in spans), text
+        assert spans[0][0] == 0 and spans[-1][1] == len(text), f"spans cover {text!r}"
+        for char in text:
+            size = cells.get_character_cell_size(char)
+            assert size == segment.get_character_cell_size(char) == get_cwidth(char), repr(char)
+
+
+def test_no_prefix_outgrows_the_character_that_ends_it(installed) -> None:  # noqa: ANN001
+    """The invariant Rich's segment splitter terminates on, then the splitter itself.
+
+    ``Segment.split_cells`` steps a string a codepoint at a time until a whole-string width meets
+    the cut, stepping over a two-cell character only where that character measures two on its
+    own. A prefix that grew by two at a character measuring one would be a cut the walk steps past
+    in both directions forever — which is why the character width is patched alongside the string
+    width, and why this checks the invariant before trusting the splitter with it.
+    """
+    for text in _SAMPLES:
+        for index, char in enumerate(text):
+            grew = cells.cell_len(text[: index + 1]) - cells.cell_len(text[:index])
+            assert 0 <= grew <= 2, f"{text!r} at {index}"
+            if grew == 2:
+                assert cells.get_character_cell_size(char) == 2, f"{text!r} at {index}"
+
+    def split_everywhere() -> None:
+        for text in _SAMPLES:
+            for cut in range(cells.cell_len(text) + 1):
+                segment.Segment(text).split_cells(cut)
+
+    worker = threading.Thread(target=split_everywhere, daemon=True)
+    worker.start()
+    worker.join(timeout=20)
+    assert not worker.is_alive(), "a segment split never met its cut"
+
+
+def test_a_stranded_joiner_leaves_the_next_character_its_cell(installed) -> None:  # noqa: ANN001
+    """A joiner with no pictograph after it joins nothing, in both authorities.
+
+    A MeshCore name is cut at a byte limit, so a name ending on a pirate flag arrives as the
+    black flag and a bare joiner, followed by the lane's padding. Rich's stock loop folded the
+    padding into the flag, so the name lane measured a cell short of what the terminal drew.
+    """
     padded = f"{_STRANDED}  x"  # the flag's two cells, two of padding, then the next lane
-    cell_len = ew._make_cell_len(frozenset(_WAVE), frozenset())
-    assert cell_len(padded) == 5
-    assert ew._make_pt_cache(frozenset(_WAVE), frozenset())[padded] == 5
+    assert cells.cell_len(padded) == 5 and get_cwidth(padded) == 5
     # A real sequence still joins: the shrug's male sign is a pictograph, not a padding space.
-    assert cell_len(f"{_SHRUG} x") == 4
+    assert cells.cell_len(f"{_SHRUG} x") == 4 and get_cwidth(f"{_SHRUG} x") == 4
 
-    snap = _snapshot()
-    try:
-        ew._CALIBRATED = False
-        ew.calibrate(force_width=2)
-        # Rich's own loop, trusted on this path, skipped the space and counted four.
-        assert cells.cell_len(padded) == 5
-        assert cells.cell_len(_SHRUG) == 2 and cells.cell_len(_FAMILY) == 2
-    finally:
-        _restore(snap)
+
+def test_install_happens_once(installed) -> None:  # noqa: ANN001
+    """A second call is a no-op: the tables patched by the first stay exactly as they are."""
+    patched = (cells._cell_len, ptu._CHAR_SIZES_CACHE)
+    ew.install()
+    assert (cells._cell_len, ptu._CHAR_SIZES_CACHE) == patched
+
+
+def test_the_app_draws_no_text_default_emoji_its_vocabulary_does_not_name() -> None:
+    """Every text-default emoji the package draws is one of its own marks, and every mark is used.
+
+    This is what keeps :data:`~meshterm.ui.tui.emoji_width._APP_TEXT_MARKS` a closed vocabulary
+    rather than a list kept by care: a new one-cell mark added to a screen without being named
+    there fails here, instead of quietly gaining a blank cell beside it. Prose is skipped
+    (docstrings and bare strings are read, not drawn), and so is the module that defines the list.
+    """
+    from rich._unicode_data import load
+
+    text_default = {
+        char
+        for char in load("auto").narrow_to_wide
+        if not char.isascii() and char not in cells._SINGLE_CELLS
+    }
+    # Inputs to the PicoCalc's substitution table, which maps them to glyphs its font has. They
+    # are never drawn on a terminal that shows emoji, so they are not marks.
+    fold_inputs = {"↪", "✔", "✖"}
+
+    package = pathlib.Path(ew.__file__).parents[2]
+    drawn: set[str] = set()
+    for path in package.rglob("*.py"):
+        if path.name == "emoji_width.py":
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        prose = {
+            id(node.value)
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant)
+        }
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                if id(node) not in prose:
+                    drawn |= set(node.value) & text_default
+
+    assert drawn - fold_inputs <= ew._APP_TEXT_MARKS, (
+        f"name these in _APP_TEXT_MARKS: {sorted(drawn - fold_inputs - ew._APP_TEXT_MARKS)}"
+    )
+    assert ew._APP_TEXT_MARKS <= drawn, (
+        f"no longer drawn anywhere: {sorted(ew._APP_TEXT_MARKS - drawn)}"
+    )
 
 
 def test_clusters_split_between_glyphs_and_never_inside_one() -> None:
-    """The unit a lane may cut on: one entry per glyph the terminal actually draws.
+    """The unit a lane may cut on and a width is measured by: one entry per glyph drawn.
 
-    A joined run, a flag's indicator *pair*, and a toned base each come back whole, because
-    each is one glyph — while a joiner that joins nothing stands on its own, as it does
-    everywhere else in this module (see :func:`~meshterm.ui.tui.emoji_width._joins`).
+    A joined run, a flag's indicator *pair*, a toned base and a keycap each come back whole,
+    because each is one glyph — while a joiner that joins nothing stands on its own (see
+    :func:`~meshterm.ui.tui.emoji_width._joins`), and so do letters around a joiner.
     """
-    assert list(ew.clusters(f"a{_FAMILY}{_CA}{_THUMB}b")) == ["a", _FAMILY, _CA, _THUMB, "b"]
+    text = f"a{_FAMILY}{_CA}{_THUMB}{_KEYCAP}b"
+    assert list(ew.clusters(text)) == ["a", _FAMILY, _CA, _THUMB, _KEYCAP, "b"]
     # Two flags in a row pair up one at a time rather than running together into four.
     assert list(ew.clusters(_CA + _CN)) == [_CA, _CN]
     # A name cut at its byte limit just past a joiner: the joiner is not part of the flag.
     assert list(ew.clusters(_STRANDED)) == [_FLAG, _ZWJ]
+    # A joiner between letters joins nothing a font draws as one emoji.
+    assert list(ew.clusters(f"a{_ZWJ}b")) == ["a", _ZWJ, "b"]
 
 
 def test_cut_cells_keeps_every_glyph_whole_and_strands_no_joiner() -> None:
-    """A lane's truncation lands between glyphs, so nothing measures what is not drawn.
-
-    The failure this exists for: cutting a codepoint at a time leaves a trailing joiner,
-    which folds whatever the caller appends — the lane's ellipsis — into the glyph before
-    it. The ellipsis then measures nothing while the terminal still draws it, and every
-    column right of the name starts a cell late.
-    """
+    """A lane's truncation lands between glyphs, so nothing is measured that is not drawn."""
     assert ew.cut_cells(f"Bob {_FAMILY}", 6) == f"Bob {_FAMILY}"  # it fits, so it is kept
     assert ew.cut_cells(f"Bob {_FAMILY}", 5) == "Bob "  # it doesn't: dropped whole
     assert ew.cut_cells(_CA, 1) == ""  # half a flag is a letter, not half a glyph
-    assert ew.cut_cells(_STRANDED, 4) == _FLAG  # the joiner cannot swallow what follows
+    assert ew.cut_cells(_STRANDED, 4) == _FLAG  # the joiner does not trail the cut
     assert ew.cut_cells("plain name", 5) == "plain"
 
 
 def test_drawable_folds_only_what_no_terminal_can_draw() -> None:
     """A newline, an escape or a bidi override in an advert name is folded to a space.
 
-    None of them is a width bug an allowlist could fix — they are text that must not reach
-    the terminal at all. The joiner is format-class too and is the one kept, because it is
-    what holds an emoji sequence together.
+    None of them is a width question — they are text that must not reach the terminal at all.
+    The joiner is format-class too and is the one kept, because it holds an emoji together.
     """
     assert ew.drawable("line\nbreak") == "line break"
     assert ew.drawable("esc\x1b[31mape") == "esc [31mape"
-    assert ew.drawable("flip‮me") == "flip me"
+    assert ew.drawable("flip\u202eme") == "flip me"
     assert ew.drawable(f"Bob {_FAMILY}{_THUMB}") == f"Bob {_FAMILY}{_THUMB}"
 
 
-def test_join_clusters_merges_only_joined_runs() -> None:
-    """The fragment merge gathers a whole sequence and leaves everything else alone.
+def test_join_clusters_merges_every_multi_codepoint_glyph() -> None:
+    """The fragment merge gathers each glyph built from several codepoints into one fragment.
 
-    prompt_toolkit's ANSI text arrives one codepoint per fragment, so a sequence is a run:
-    a base, an optional selector, then *joiner + component + optional selector* groups.
+    prompt_toolkit's ANSI text arrives one codepoint per fragment, so a glyph is a run to be
+    gathered — and every such run is merged now, not only the joined ones, because a mark
+    measured one cell and followed by a selector must not be folded into a one-cell slot.
     """
 
     def line(text: str) -> list:
@@ -333,52 +325,41 @@ def test_join_clusters_merges_only_joined_runs() -> None:
     def texts(fragments: list) -> list:
         return [text for _style, text in fragments]
 
-    # A line with no joiner is handed straight back — the same object, not a copy.
-    plain = line("hi 📡")
+    # A line with nothing to merge is handed straight back — the same object, not a copy.
+    plain = line(f"hi {_DISH} {_WARN}")
     assert ew._join_clusters(plain) is plain
 
-    # The shrug's four fragments become one; the bars around it are untouched.
     assert texts(ew._join_clusters(line(f"|{_SHRUG}|"))) == ["|", _SHRUG, "|"]
-    # Three joined people, five fragments, still one glyph.
     assert texts(ew._join_clusters(line(_FAMILY))) == [_FAMILY]
-    # A selector on the *base*, before the joiner, belongs to the run: ❤️‍🔥.
-    burning = "❤️‍\U0001f525"
+    burning = f"❤{_VS16}{_ZWJ}\U0001f525"  # ❤\ufe0f\u200d🔥 a selector on the base, then a join
     assert texts(ew._join_clusters(line(burning))) == [burning]
-    # A bare VS16 pair is not a sequence — prompt_toolkit already folds it into the cell
-    # before it, so those fragments are left exactly as they came.
-    assert texts(ew._join_clusters(line(f"☀️{_SHRUG}"))) == ["☀", "️", _SHRUG]
-    # A trailing joiner with nothing to join is not a sequence either.
-    assert texts(ew._join_clusters(line(f"a{_ZWJ}"))) == ["a", _ZWJ]
-    # A skin tone on the base belongs to the run the way its selector does.
-    assert texts(ew._join_clusters(line(f"|{_TECHIE}|"))) == ["|", _TECHIE, "|"]
-    # A stranded joiner, followed by the name lane's padding, is not a sequence: the space
-    # after it keeps a fragment — and so a cell — of its own.
-    assert texts(ew._join_clusters(line(f"{_STRANDED} x"))) == [_FLAG, _ZWJ, " ", "x"]
-    # A flag's two indicators are one glyph too, written as one: a cursor pin between the
-    # halves would leave a terminal drawing two letters instead of a flag.
+    # A selector pair, a toned emoji and a keycap are one glyph each, merged like the rest.
+    assert texts(ew._join_clusters(line(f"{_SUN}{_VS16}{_SHRUG}"))) == [f"{_SUN}{_VS16}", _SHRUG]
+    assert texts(ew._join_clusters(line(f"{_WARN}{_VS16}|"))) == [f"{_WARN}{_VS16}", "|"]
+    assert texts(ew._join_clusters(line(f"{_THUMB}{_KEYCAP}"))) == [_THUMB, _KEYCAP]
+    # A flag's two indicators are one glyph, written as one: a cursor pin between the halves
+    # would leave a terminal drawing two letters instead of a flag.
     assert texts(ew._join_clusters(line(f"|{_CA}|"))) == ["|", _CA, "|"]
     assert texts(ew._join_clusters(line(f"{_CA}{_CN}"))) == [_CA, _CN]
-    # A lone indicator is no pair, and stays a fragment of its own.
+    # A lone indicator is no pair, and a trailing or stranded joiner joins nothing.
     assert texts(ew._join_clusters(line(f"{_CA[0]} x"))) == [_CA[0], " ", "x"]
+    assert texts(ew._join_clusters(line(f"a{_ZWJ}"))) == ["a", _ZWJ]
+    assert texts(ew._join_clusters(line(f"{_STRANDED} x"))) == [_FLAG, _ZWJ, " ", "x"]
 
-    # A merged fragment iterates as the whole sequence, which is what makes prompt_toolkit
-    # build one Char of it instead of one per codepoint.
+    # A merged fragment iterates as the whole glyph, which is what makes prompt_toolkit build
+    # one Char of it instead of one per codepoint.
     (merged,) = texts(ew._join_clusters(line(_SHRUG)))
     assert list(merged) == [_SHRUG] and merged == _SHRUG
 
 
-def test_cluster_control_lays_a_sequence_into_a_single_screen_cell(monkeypatch) -> None:
-    """The delivery half: one ``Char`` per glyph, with every codepoint still written out.
+def test_cluster_control_lays_each_glyph_into_a_single_screen_cell(installed) -> None:  # noqa: ANN001
+    """The delivery half: one two-cell ``Char`` per glyph, every codepoint still written out.
 
-    Measuring the sequence right is not enough on its own — prompt_toolkit lays out one
-    codepoint at a time, so an uncorrected screen puts the male sign in a cell of its own and
-    everything after it a column late. The control merges the run, so the window makes a
-    single two-cell ``Char`` of it and the text after lands where the terminal draws it. The
-    codepoints themselves are untouched: all four still reach the screen, in order, so the
-    terminal composes the same glyph.
+    Measuring a glyph right is not enough on its own — prompt_toolkit lays out one codepoint at a
+    time, so an unmerged shrug puts its male sign in a cell of its own, and a warning mark with a
+    selector becomes a two-cell glyph in a one-cell slot. Merged, each is one ``Char`` two cells
+    wide, and the text after lands where the pins will put it.
     """
-    monkeypatch.delenv("MESHTERM_NARROW_EMOJI", raising=False)
-    monkeypatch.delenv("MESHTERM_WIDE_EMOJI", raising=False)
     from prompt_toolkit.application import Application
     from prompt_toolkit.application.current import set_app
     from prompt_toolkit.formatted_text import ANSI
@@ -388,30 +369,18 @@ def test_cluster_control_lays_a_sequence_into_a_single_screen_cell(monkeypatch) 
     from prompt_toolkit.layout.screen import Screen, WritePosition
     from prompt_toolkit.output import DummyOutput
 
-    text = f"|{_SHRUG}|{_FAMILY}|end"
+    warn = f"{_WARN}{_VS16}"
+    text = f"|{_SHRUG}|{_FAMILY}|{warn}|end"
+    window = Window(ew.ClusterTextControl(lambda: ANSI(text)), always_hide_cursor=True)
+    app = Application(layout=Layout(window), input=DummyInput(), output=DummyOutput())
+    with set_app(app):
+        screen = Screen(default_char=None, initial_width=40, initial_height=1)
+        window.write_to_screen(screen, MouseHandlers(), WritePosition(0, 0, 40, 1), "", False, None)
+    row = screen.data_buffer[0]
 
-    def paint() -> list:
-        window = Window(ew.ClusterTextControl(lambda: ANSI(text)), always_hide_cursor=True)
-        app = Application(layout=Layout(window), input=DummyInput(), output=DummyOutput())
-        with set_app(app):
-            screen = Screen(default_char=None, initial_width=40, initial_height=1)
-            window.write_to_screen(
-                screen, MouseHandlers(), WritePosition(0, 0, 40, 1), "", False, None
-            )
-        return screen.data_buffer[0]
-
-    snap = _snapshot()
-    try:
-        ew._CALIBRATED = False
-        ew.calibrate(force_width=1)
-        row = paint()
-        # Each sequence is one cell-occupying Char, two cells wide, exactly as drawn.
-        assert (row[1].char, row[1].width) == (_SHRUG, 2)
-        assert (row[4].char, row[4].width) == (_FAMILY, 2)
-        # So the text after them starts at column 6 rather than 13 — seven cells of border
-        # drift removed (one for the shrug, four for the family, two from the second bar).
-        assert "".join(row[x].char for x in range(6, 10)) == "|end"
-        # Nothing was dropped on the way: the row still spells the source exactly.
-        assert "".join(row[x].char for x in range(40)).rstrip() == text
-    finally:
-        _restore(snap)
+    assert (row[1].char, row[1].width) == (_SHRUG, 2)
+    assert (row[4].char, row[4].width) == (_FAMILY, 2)
+    assert (row[7].char, row[7].width) == (warn, 2)
+    assert "".join(row[x].char for x in range(9, 13)) == "|end"
+    # Nothing was dropped on the way: the row still spells the source exactly.
+    assert "".join(row[x].char for x in range(40)).rstrip() == text
