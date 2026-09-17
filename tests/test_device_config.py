@@ -1495,41 +1495,34 @@ async def test_the_preview_opens_node_pages_with_no_management_verbs(
     assert await task is False
 
 
-def test_a_locked_contact_closes_its_name_lane_on_a_padlock_in_one_column() -> None:
-    """Locked rows end their name lane on the padlock, lined up; unlocked rows draw nothing."""
-    from rich.cells import cell_len
-
+def test_a_locked_contact_leads_its_row_with_a_padlock_left_of_its_type_glyph() -> None:
+    """Locked rows open on the padlock; the rest keep the column blank, so glyphs line up."""
     from meshterm.core.models import Contact
     from meshterm.ui.contacts_screen import ContactsScreen
 
     contacts = [
         Contact(name="Al", public_key="aa" * 32),
         Contact(name="Bartholomew", public_key="bb" * 32),
-        Contact(name="Cy", public_key="cc" * 32),
     ]
     screen = ContactsScreen(
         "Us", "dd" * 32, contacts, 1, {}, _contacts_sort(), locked=frozenset({"aa" * 32})
     )
-    # The lanes size themselves on the first paint.
     screen.note_viewport(30)
     screen.render_body(72)
-    lines = {}
-    for choice in screen._choices():
-        plain = choice.title.plain if hasattr(choice.title, "plain") else str(choice.title)
-        for name in ("Al", "Bartholomew", "Cy"):
-            if plain[2:].startswith(name + " ") or plain[2:].startswith(name + "\u00a0"):
-                lines[name] = plain
-    assert "🔒" in lines["Al"]
-    assert "🔒" not in lines["Bartholomew"] and "🔒" not in lines["Cy"]
-    # The lane grew to hold the locked name *and* its mark without cutting the longest name.
-    assert "Bartholomew" in lines["Bartholomew"]
-    # The padlock closes the lane that "Bartholomew" fills: the locks stand in one column.
-    lock_end = lines["Al"].index("🔒") + 1
-    assert cell_len(lines["Al"][:lock_end]) == cell_len("● Bartholomew")
+    lines = {
+        name: choice.title.plain
+        for choice in screen._choices()
+        for name in ("Al", "Bartholomew")
+        if getattr(choice.value, "name", None) == name
+    }
+    assert lines["Al"].startswith("\U0001f512 ● Al ")
+    assert lines["Bartholomew"].startswith("   ● Bartholomew")
 
-    # Unlocking redraws in place: the same screen, the padlock gone.
+    # Unlocking redraws in place, and a list with no locks spends no cells on the column.
     screen.refresh_locks(frozenset())
-    assert not any("🔒" in str(getattr(c.title, "plain", c.title)) for c in screen._choices())
+    screen.render_body(72)
+    al = next(c for c in screen._choices() if getattr(c.value, "name", None) == "Al")
+    assert al.title.plain.startswith("● Al ")
 
 
 async def test_a_locked_contact_is_never_offered_to_the_sweep() -> None:

@@ -122,7 +122,7 @@ TRACE_LANES: tuple[ContactLane, ...] = (TRACED_LANE, HEARD_LANE, PKTS_LANE)
 #: about; when it left is.
 ARCHIVED_LANES: tuple[ContactLane, ...] = (ARCHIVED_LANE,)
 
-#: The padlock a locked contact's name lane closes on (see :attr:`ContactRow.locked`) — the
+#: The padlock a locked contact's row leads with (see :attr:`ContactRow.locked`) — the
 #: private-channel ``🔒`` of the icon lexicon, which is the same claim (this one is closed to
 #: something), and on the PicoCalc the font's own hand-drawn padlock ``⚿`` through
 #: :func:`~meshterm.ui.theme.glyph`. An unlocked contact draws nothing: the mark is an
@@ -130,9 +130,25 @@ ARCHIVED_LANES: tuple[ContactLane, ...] = (ARCHIVED_LANE,)
 _LOCK_ICON = "🔒"
 
 
-def _lock_mark() -> str:
-    """The lock suffix a locked row's name lane ends on: a space, then this platform's padlock."""
-    return " " + glyph(_LOCK_ICON)
+def _lock_lane_width(rows: list[ContactRow]) -> int:
+    """The lock column's width in cells: this platform's padlock and its gap, or ``0``.
+
+    The column sits left of the type glyph and exists only while some row is locked, so a
+    list with no locks spends no cells on it — on the PicoCalc's 53 those are a name's cells.
+    """
+    if not any(row.locked for row in rows):
+        return 0
+    return cell_len(glyph(_LOCK_ICON)) + 1
+
+
+def _lock_cell(row: ContactRow, lock_w: int) -> str:
+    """A row's lock column: the padlock and its gap when locked, blank otherwise."""
+    if not lock_w:
+        return ""
+    if not row.locked:
+        return " " * lock_w
+    mark = glyph(_LOCK_ICON)
+    return mark + " " * (lock_w - cell_len(mark))
 
 
 #: The muted ``(you)`` tag on the own-node lane (see :func:`_lane`), its width folded into
@@ -217,9 +233,8 @@ class ContactRow:
             Ignored by lists that don't declare the lane.
         archived_at: When this contact was archived off the device (aware UTC) — fills the
             ``ARCHIVED`` lane (:data:`ARCHIVED_LANES`). Ignored by lists without it.
-        locked: Whether the contact is locked against archiving. Closes the name lane on a
-            padlock, right-aligned so every lock in the list stands in one column; ``False``
-            draws nothing.
+        locked: Whether the contact is locked against archiving. Leads the row with a
+            padlock, left of the type glyph; ``False`` draws nothing there.
         you: Whether this is our own node: the ``★`` marker, the pure-white ``you`` name
             style with a muted ``(you)`` tag, faint ``—`` heard/packet lanes (we never
             overhear ourselves), pinned above the sorted block whatever the sort.
@@ -238,7 +253,10 @@ class ContactRow:
 
 
 def _header(
-    name_w: int, sort: ContactsSort, lanes: tuple[ContactLane, ...] = DEFAULT_LANES
+    name_w: int,
+    sort: ContactsSort,
+    lanes: tuple[ContactLane, ...] = DEFAULT_LANES,
+    lock_w: int = 0,
 ) -> Text:
     """Column labels over the contact lanes (see :func:`_lane`).
 
@@ -275,7 +293,8 @@ def _header(
         if not last:
             header.append(" " * (_GAP - 2), style="muted")
 
-    header = Text("    ", style="muted")  # pointer (2) + the row's type glyph and gap (2)
+    # The pointer (2), the lock column when the list has one, the type glyph and its gap (2).
+    header = Text(" " * (4 + lock_w), style="muted")
     column(header, "NAME", "name", name_w)
     for lane in lanes:
         # Right-aligned label over a right-aligned value, so a narrow field's header sits
@@ -308,6 +327,7 @@ def _you_lane(
     prefix_bytes: int,
     hash_w: int,
     lanes: tuple[ContactLane, ...] = DEFAULT_LANES,
+    lock_w: int = 0,
 ) -> Text:
     """Our own node's lane — laid out exactly like :func:`_lane`'s regular rows.
 
@@ -318,7 +338,7 @@ def _you_lane(
     reads a faint ``—``**, whatever the list declares: we never overhear, trace, or archive
     ourselves, so none of those has a value to show and each says so identically.
     """
-    text = Text(no_wrap=True, overflow="ellipsis")
+    text = Text(" " * lock_w, no_wrap=True, overflow="ellipsis")  # we are never locked
     text.append(SELF_MARK[0], style=SELF_MARK[1])
     text.append(" ")
     # The name lane, exactly name_w cells: the name (white) with a snug muted "(you)" tag —
@@ -349,15 +369,17 @@ def _lane(
     prefix_bytes: int,
     hash_w: int,
     lanes: tuple[ContactLane, ...] = DEFAULT_LANES,
+    lock_w: int = 0,
 ) -> Text:
     """One contact as fixed, colour-coded lanes under :func:`_header`'s columns.
 
-    The type glyph leads (the app's shared marker palette), so the mark reads ``▲`` for a
-    repeater, ``■`` for a room, ``◉`` for a sensor, ``●`` for a plain node. The name takes
+    A locked contact's padlock leads, in a column of its own (``lock_w`` cells, zero when
+    no row in the list is locked). The type glyph follows (the app's shared marker palette),
+    so the mark reads ``▲`` for a repeater, ``■`` for a room, ``◉`` for a sensor, ``●`` for a
+    plain node. The name takes
     the contact's hash-derived palette hue (a nameless contact's ``unknown`` placeholder
     stays muted — colour marks a name, and the hash lane already carries the identity) and
-    the flexing name lane (``name_w`` cells), a locked contact's closing on its padlock.
-    Each declared lane follows in order, drawn by
+    the flexing name lane (``name_w`` cells). Each declared lane follows in order, drawn by
     :func:`_lane_cell`; the key closes the row in the shared key widget, its hash lit at the
     device's routing width, or a muted ``?`` when no key is known at all. An own-node row
     (:attr:`ContactRow.you`) takes its own drawing — see :func:`_you_lane`.
@@ -369,24 +391,18 @@ def _lane(
         hash_w: The flexing key lane's width in cells (a short key pads out to it; see
             :func:`~meshterm.ui.widgets.highlighted_hash`).
         lanes: The middle lanes to draw between the name and the key.
+        lock_w: The lock column's width in cells (see :func:`_lock_lane_width`).
     """
     if row.you:
-        return _you_lane(row, name_w, prefix_bytes, hash_w, lanes)
-    glyph, glyph_style = NODE_GLYPHS.get(row.node_type, DEFAULT_GLYPH)
-    text = Text(no_wrap=True, overflow="ellipsis")
-    text.append(glyph, style=glyph_style)
+        return _you_lane(row, name_w, prefix_bytes, hash_w, lanes, lock_w)
+    mark, mark_style = NODE_GLYPHS.get(row.node_type, DEFAULT_GLYPH)
+    text = Text(_lock_cell(row, lock_w), no_wrap=True, overflow="ellipsis")
+    text.append(mark, style=mark_style)
     text.append(" ")
-    hue = name_style(row.name, row.key) if row.name else "muted"
-    if row.locked:
-        # The padlock takes the lane's last cells rather than following the name, so the
-        # locks stand in a column down the list; the lane was sized to hold a locked name
-        # *and* its mark (see ContactListScreen._widest_name), so only a name the terminal
-        # squeezed is cut to make room.
-        lock = _lock_mark()
-        text.append(fit_cells(row.name or "unknown", max(0, name_w - cell_len(lock))), hue)
-        text.append(lock)
-    else:
-        text.append(fit_cells(row.name or "unknown", name_w), style=hue)
+    text.append(
+        fit_cells(row.name or "unknown", name_w),
+        style=name_style(row.name, row.key) if row.name else "muted",
+    )
     for lane in lanes:
         text.append(_GAP_S)
         text.append_text(_lane_cell(row, lane))
@@ -567,7 +583,10 @@ class ContactListScreen(SelectScreen):
         items: list = list(self._lead)
         # The lane names lead the contacts as their landmark, so they pin overhead while the
         # list scrolls — a row deep in the sort can still be read off its columns.
-        items.append(Separator(_header(self._name_w, self._sort, self._lanes), heading=True))
+        lock_w = _lock_lane_width(self._contact_rows)
+        items.append(
+            Separator(_header(self._name_w, self._sort, self._lanes, lock_w), heading=True)
+        )
         pinned = [row for row in self._contact_rows if row.you]
         rest = [row for row in self._contact_rows if not row.you]
         for row in (*pinned, *_ordered(rest, self._sort, self._lanes)):
@@ -579,6 +598,7 @@ class ContactListScreen(SelectScreen):
                         self._prefix_bytes,
                         self._hash_w,
                         self._lanes,
+                        lock_w,
                     ),
                     row.value,
                 )
@@ -628,8 +648,7 @@ class ContactListScreen(SelectScreen):
         The name lane is sized to its content, not the terminal, so the columns anchor to
         the left instead of drifting apart as the window widens. The measure spans the
         regular rows (``unknown`` for the nameless, as the row renders them) and any
-        own-node row's name plus its ``(you)`` tag, so the tag always fits, and a locked row's
-        name plus its padlock, so the lock never costs a letter of the name.
+        own-node row's name plus its ``(you)`` tag, so the tag always fits.
         """
         widths = [cell_len("unknown")]
         for row in self._contact_rows:
@@ -638,8 +657,7 @@ class ContactListScreen(SelectScreen):
                     cell_len(row.name) + cell_len(_YOU_TAG) if row.name else cell_len("you")
                 )
             else:
-                lock = cell_len(_lock_mark()) if row.locked else 0
-                widths.append(cell_len(row.name or "unknown") + lock)
+                widths.append(cell_len(row.name or "unknown"))
         return max(widths)
 
     def _lane_widths(self, width: int) -> tuple[int, int]:
@@ -653,7 +671,11 @@ class ContactListScreen(SelectScreen):
         adds its gapped width to the fixed lead, so a list that drops two lanes (the
         Archived one) hands both back to the key.
         """
-        lead = _LEAD + sum(_GAP + lane.width for lane in self._lanes)
+        lead = (
+            _LEAD
+            + _lock_lane_width(self._contact_rows)
+            + sum(_GAP + lane.width for lane in self._lanes)
+        )
         name_cap = max(_NAME_MIN, width - lead - _HASH_MIN)
         name_w = max(_NAME_MIN, min(self._widest_name(), name_cap))
         hash_w = max(_HASH_MIN, width - lead - name_w)
