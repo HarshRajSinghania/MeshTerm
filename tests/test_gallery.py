@@ -40,7 +40,9 @@ from meshterm.core.advert_store import AdvertPolicy
 from meshterm.core.channels import DEFAULT_PUBLIC_SECRET, derive_secret
 from meshterm.core.courier_store import CourierStore
 from meshterm.core.models import (
+    NODE_TYPE_CHAT,
     NODE_TYPE_REPEATER,
+    NODE_TYPE_SENSOR,
     ChatMessage,
     Contact,
     Conversation,
@@ -233,7 +235,18 @@ def _archive_ranked():  # noqa: ANN201
         ("Lakeside", "3d" * 32, dict(heard_age_days=30.0, packets=22, known_days=250.0, hops=1.0)),
         ("sensor-2", "7c" * 32, dict(heard_age_days=210.0, packets=2, known_days=260.0)),
     ]
-    contacts = [Contact(name=n, public_key=k, key_prefix=k[:12]) for n, k, _ in specs]
+    # Typed as their names say, so the preview draws a repeater's ``▲`` and a sensor's ``◉``
+    # beside the plain ``●`` of ``hop-9``, which never advertised a type.
+    types = {
+        "Alice": NODE_TYPE_CHAT,
+        "A Rather Long Repeater Name For Width": NODE_TYPE_REPEATER,
+        "Lakeside": NODE_TYPE_REPEATER,
+        "sensor-2": NODE_TYPE_SENSOR,
+    }
+    contacts = [
+        Contact(name=n, public_key=k, key_prefix=k[:12], node_type=types.get(n))
+        for n, k, _ in specs
+    ]
     signals = {k[:12]: ContactSignals(node=k[:12], **sig) for _, k, sig in specs}
     return rank_contacts(contacts, signals)
 

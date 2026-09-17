@@ -74,7 +74,7 @@ from .menus import Lane, column_header, fit_cells, section_heading
 from .theme import name_style
 from .tui import Choice, Separator
 from .tui.screen import CANCEL
-from .widgets import _recency_style, format_age
+from .widgets import DEFAULT_GLYPH, NODE_GLYPHS, _recency_style, format_age
 
 if TYPE_CHECKING:
     from ..context import AppContext
@@ -117,6 +117,10 @@ _GAP = 2
 #: MeshCore advert name runs to, and narrow enough to leave the evidence lanes readable at
 #: the PicoCalc's 53 columns.
 _NAME_W = 22
+
+#: The type-mark lane ahead of the name: the node's glyph and its space, which is how the
+#: Contacts list leads every row (see :func:`~meshterm.ui.contactlist._lane`).
+_MARK_W = 2
 
 
 def _count_cell(tally: int | None) -> tuple[str, str]:
@@ -212,11 +216,17 @@ def _preview_header(widths: tuple[int, ...], width: int) -> str:
     last = len(_EVIDENCE) - 1
     for index, (lane, lane_w) in enumerate(zip(_EVIDENCE, widths, strict=True)):
         lanes.append(Lane(f"{lane.label:>{lane_w}}", 0 if index == last else lane_w + _GAP))
-    return column_header(lanes, width)
+    # Past the pointer and the type mark, so ``NAME`` sits over the name, not the glyph.
+    return column_header(lanes, width, indent=2 + _MARK_W)
 
 
 def _victim_row(scored: ScoredContact, widths: tuple[int, ...]) -> Text:
-    """One preview line: the contact's name in its own hue, then its evidence, lane by lane.
+    """One preview line: the contact's type mark and name, then its evidence, lane by lane.
+
+    The row leads the way the Contacts list's does — the shared type mark in its own colour
+    (``▲`` repeater, ``■`` room, ``◉`` sensor, ``●`` plain node), then the name — so the
+    contact reads as the same row here as on the list the reader came from, and a repeater
+    about to be archived says so before its name is read.
 
     The name keeps its key-derived colour like everywhere else in the app — this is a list of
     nodes, and a reader picking one out of thirty rows should not have to read it letter by
@@ -234,7 +244,10 @@ def _victim_row(scored: ScoredContact, widths: tuple[int, ...]) -> Text:
     """
     contact = scored.contact
     name = contact.name or contact.key_prefix or "?"
+    mark, mark_style = NODE_GLYPHS.get(contact.node_type, DEFAULT_GLYPH)
     row = Text()
+    row.append(mark, style=mark_style)
+    row.append(" " * (_MARK_W - cell_len(mark)))
     row.append(
         fit_cells(name, _NAME_W - _GAP) + " " * _GAP,
         style=name_style(name, contact.public_key or contact.key_prefix),
@@ -507,9 +520,9 @@ def _preview_items(victims: list[ScoredContact]) -> list:
     """The preview's rows: a pinned column header, one line per victim, then Apply/Back.
 
     Each contact row is ``deletable``, so ``Delete`` lifts it out of the sweep, and pins its
-    **name** out of the ``←→`` scroll (``hscroll_from``): the evidence lanes are what a
-    narrow terminal cuts, and sliding the name away to read them would cost the row the one
-    thing that says which contact is being read.
+    type mark and **name** out of the ``←→`` scroll (``hscroll_from``): the evidence lanes
+    are what a narrow terminal cuts, and sliding the name away to read them would cost the
+    row the one thing that says which contact is being read.
 
     The lanes are measured here, across every victim, which is also why a spared row rebuilds
     the rows through this function rather than dropping one: the widths it leaves behind may
@@ -519,7 +532,12 @@ def _preview_items(victims: list[ScoredContact]) -> list:
     return [
         Separator(lambda w: _preview_header(widths, w), pinned=True),
         *(
-            Choice(title=_victim_row(v, widths), value=v, deletable=True, hscroll_from=_NAME_W)
+            Choice(
+                title=_victim_row(v, widths),
+                value=v,
+                deletable=True,
+                hscroll_from=_MARK_W + _NAME_W,
+            )
             for v in victims
         ),
         # The same shape ``exit_rows`` draws, in this flow's own words: Apply has no key of

@@ -526,6 +526,55 @@ async def test_archive_sweeps_under_a_progress_bar_and_reports_in_a_dialog() -> 
     assert sorted(archived) == ["Old0", "Old1", "Old2"]
 
 
+def test_a_preview_row_leads_with_the_contacts_type_mark() -> None:
+    """Each contact the sweep would take leads with its type mark, as the Contacts list's do.
+
+    The mark is a lane of its own ahead of the name, in the type's colour rather than the
+    name's. The header moves over with it — ``NAME`` over the name, every evidence word still
+    over its values — and ``←→`` keeps the mark pinned beside the name it belongs to.
+    """
+    from meshterm.core.contact_score import ContactSignals, ScoredContact
+    from meshterm.core.models import NODE_TYPE_REPEATER, Contact
+    from meshterm.ui.sweep_screen import (
+        _MARK_W,
+        _NAME_W,
+        _lane_widths,
+        _preview_header,
+        _preview_items,
+        _victim_row,
+    )
+    from meshterm.ui.theme import name_style
+
+    def scored(name: str, key: str, node_type: int | None) -> ScoredContact:
+        return ScoredContact(
+            contact=Contact(name=name, public_key=key, key_prefix=key[:12], node_type=node_type),
+            signals=ContactSignals(node=key[:12], packets=3),
+            score=1.0,
+            percentile=1,
+        )
+
+    victims = [scored("Hilltop", "3d" * 32, NODE_TYPE_REPEATER), scored("Walker", "5e" * 32, None)]
+    widths = _lane_widths(victims)
+    hilltop, walker = (_victim_row(v, widths) for v in victims)
+    assert hilltop.plain.startswith("▲ Hilltop")
+    assert walker.plain.startswith("● Walker")  # never advertised a type: the plain node
+
+    def styles_at(row, index: int) -> list[str]:  # noqa: ANN001
+        return [str(span.style) for span in row.spans if span.start <= index < span.end]
+
+    assert styles_at(hilltop, 0) == ["type.repeater"]
+    assert styles_at(hilltop, hilltop.plain.index("Hilltop")) == [name_style("Hilltop", "3d" * 32)]
+
+    # The header is drawn from the pointer column's edge and a row from just past it.
+    header = _preview_header(widths, 72)
+    assert header.index("NAME") == 2 + hilltop.plain.index("Hilltop")
+    assert header.index("PKTS") + len("PKTS") - 1 == 2 + hilltop.plain.index("3")
+
+    items = _preview_items(victims)
+    rows = [c for c in items if isinstance(getattr(c, "value", None), ScoredContact)]
+    assert len(rows) == 2 and all(c.hscroll_from == _MARK_W + _NAME_W for c in rows)
+
+
 async def test_sparing_a_row_shrinks_the_sweep_without_leaving_the_preview() -> None:
     """Delete on a preview row lifts that contact out of the sweep, in place.
 
