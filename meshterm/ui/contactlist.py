@@ -32,7 +32,7 @@ from rich.text import Text
 
 from .marks import SELF_MARK
 from .menus import fit_cells
-from .theme import name_style
+from .theme import glyph, name_style
 from .tui.select import Choice, SelectScreen, Separator
 from .widgets import (
     DEFAULT_GLYPH,
@@ -122,6 +122,19 @@ TRACE_LANES: tuple[ContactLane, ...] = (TRACED_LANE, HEARD_LANE, PKTS_LANE)
 #: about; when it left is.
 ARCHIVED_LANES: tuple[ContactLane, ...] = (ARCHIVED_LANE,)
 
+#: The padlock a locked contact's name lane closes on (see :attr:`ContactRow.locked`) — the
+#: private-channel ``🔒`` of the icon lexicon, which is the same claim (this one is closed to
+#: something), and on the PicoCalc the font's own hand-drawn padlock ``⚿`` through
+#: :func:`~meshterm.ui.theme.glyph`. An unlocked contact draws nothing: the mark is an
+#: exception worth noticing, and a lane of open padlocks would bury the few that aren't.
+_LOCK_ICON = "🔒"
+
+
+def _lock_mark() -> str:
+    """The lock suffix a locked row's name lane ends on: a space, then this platform's padlock."""
+    return " " + glyph(_LOCK_ICON)
+
+
 #: The muted ``(you)`` tag on the own-node lane (see :func:`_lane`), its width folded into
 #: the name lane's content sizing so the tag never truncates.
 _YOU_TAG = "  (you)"
@@ -204,6 +217,9 @@ class ContactRow:
             Ignored by lists that don't declare the lane.
         archived_at: When this contact was archived off the device (aware UTC) — fills the
             ``ARCHIVED`` lane (:data:`ARCHIVED_LANES`). Ignored by lists without it.
+        locked: Whether the contact is locked against archiving. Closes the name lane on a
+            padlock, right-aligned so every lock in the list stands in one column; ``False``
+            draws nothing.
         you: Whether this is our own node: the ``★`` marker, the pure-white ``you`` name
             style with a muted ``(you)`` tag, faint ``—`` heard/packet lanes (we never
             overhear ourselves), pinned above the sorted block whatever the sort.
@@ -217,6 +233,7 @@ class ContactRow:
     count: int | None = None
     last_traced: datetime | None = None
     archived_at: datetime | None = None
+    locked: bool = False
     you: bool = False
 
 
@@ -339,7 +356,8 @@ def _lane(
     repeater, ``■`` for a room, ``◉`` for a sensor, ``●`` for a plain node. The name takes
     the contact's hash-derived palette hue (a nameless contact's ``unknown`` placeholder
     stays muted — colour marks a name, and the hash lane already carries the identity) and
-    the flexing name lane (``name_w`` cells). Each declared lane follows in order, drawn by
+    the flexing name lane (``name_w`` cells), a locked contact's closing on its padlock.
+    Each declared lane follows in order, drawn by
     :func:`_lane_cell`; the key closes the row in the shared key widget, its hash lit at the
     device's routing width, or a muted ``?`` when no key is known at all. An own-node row
     (:attr:`ContactRow.you`) takes its own drawing — see :func:`_you_lane`.
@@ -358,10 +376,17 @@ def _lane(
     text = Text(no_wrap=True, overflow="ellipsis")
     text.append(glyph, style=glyph_style)
     text.append(" ")
-    text.append(
-        fit_cells(row.name or "unknown", name_w),
-        style=name_style(row.name, row.key) if row.name else "muted",
-    )
+    hue = name_style(row.name, row.key) if row.name else "muted"
+    if row.locked:
+        # The padlock takes the lane's last cells rather than following the name, so the
+        # locks stand in a column down the list; the lane was sized to hold a locked name
+        # *and* its mark (see ContactListScreen._widest_name), so only a name the terminal
+        # squeezed is cut to make room.
+        lock = _lock_mark()
+        text.append(fit_cells(row.name or "unknown", max(0, name_w - cell_len(lock))), hue)
+        text.append(lock)
+    else:
+        text.append(fit_cells(row.name or "unknown", name_w), style=hue)
     for lane in lanes:
         text.append(_GAP_S)
         text.append_text(_lane_cell(row, lane))
@@ -603,7 +628,8 @@ class ContactListScreen(SelectScreen):
         The name lane is sized to its content, not the terminal, so the columns anchor to
         the left instead of drifting apart as the window widens. The measure spans the
         regular rows (``unknown`` for the nameless, as the row renders them) and any
-        own-node row's name plus its ``(you)`` tag, so the tag always fits.
+        own-node row's name plus its ``(you)`` tag, so the tag always fits, and a locked row's
+        name plus its padlock, so the lock never costs a letter of the name.
         """
         widths = [cell_len("unknown")]
         for row in self._contact_rows:
@@ -612,7 +638,8 @@ class ContactListScreen(SelectScreen):
                     cell_len(row.name) + cell_len(_YOU_TAG) if row.name else cell_len("you")
                 )
             else:
-                widths.append(cell_len(row.name or "unknown"))
+                lock = cell_len(_lock_mark()) if row.locked else 0
+                widths.append(cell_len(row.name or "unknown") + lock)
         return max(widths)
 
     def _lane_widths(self, width: int) -> tuple[int, int]:

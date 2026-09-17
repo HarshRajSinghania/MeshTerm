@@ -35,11 +35,11 @@ before this history began) has no arrival time to decay from and is protected ou
 rather than being punished for MeshTerm's own ignorance — see :data:`PROTECT_UNOBSERVED`.
 
 **Some contacts are never candidates.** A score is a heuristic and a heuristic must not
-overrule an explicit choice, so :func:`protection_for` short-circuits four cases before any
-arithmetic: a watched node, anyone you have sent a direct message to, a repeater whose
-admin credentials are stored, and the unobserved contact above. They are still scored and
-still ranked — they are real contacts and the percentile scale is the whole population —
-but they are never swept.
+overrule an explicit choice, so :func:`protection_for` short-circuits five cases before any
+arithmetic: a contact you locked, a watched node, anyone you have sent a direct message to,
+a repeater whose admin credentials are stored, and the unobserved contact above. They are
+still scored and still ranked — they are real contacts and the percentile scale is the whole
+population — but they are never swept.
 
 **The score is never displayed.** A raw ``47.3`` means nothing without the distribution it
 came from. What this module hands a screen instead is a *rank* — the list comes back ordered,
@@ -59,6 +59,10 @@ from statistics import median
 
 from .geo import haversine_km
 from .models import Contact
+
+#: Protection reason: the reader locked this contact from its page. The most explicit claim
+#: there is — a lock says nothing but "never archive this one" — so it is checked first.
+PROTECT_LOCKED = "locked"
 
 #: Protection reason: the node is starred in the Watchtower. An explicit pin outranks every
 #: heuristic in this module — the user already said this one matters.
@@ -81,10 +85,17 @@ PROTECT_UNOBSERVED = "unobserved"
 
 #: The order protections are reported in when a contact qualifies for several — most
 #: deliberate first, so the preview explains a row by the strongest claim on it.
-PROTECTION_ORDER = (PROTECT_WATCHED, PROTECT_MESSAGED, PROTECT_ADMIN, PROTECT_UNOBSERVED)
+PROTECTION_ORDER = (
+    PROTECT_LOCKED,
+    PROTECT_WATCHED,
+    PROTECT_MESSAGED,
+    PROTECT_ADMIN,
+    PROTECT_UNOBSERVED,
+)
 
 #: How a protection reads in the UI, keyed by the constants above.
 PROTECTION_LABELS = {
+    PROTECT_LOCKED: "locked",
     PROTECT_WATCHED: "watched",
     PROTECT_MESSAGED: "you messaged",
     PROTECT_ADMIN: "admin login",
@@ -181,6 +192,8 @@ class ContactSignals:
             which is what :data:`PROTECT_UNOBSERVED` keys on.
         watched: Whether the node is starred in the Watchtower.
         has_admin: Whether admin credentials are stored for it.
+        locked: Whether the reader locked the contact against archiving (see
+            :meth:`~meshterm.core.contact_store.ContactStore.set_locked`).
     """
 
     node: str
@@ -196,6 +209,7 @@ class ContactSignals:
     known_days: float | None = None
     watched: bool = False
     has_admin: bool = False
+    locked: bool = False
 
 
 @dataclass(frozen=True)
@@ -378,6 +392,7 @@ def protection_for(signals: ContactSignals) -> str | None:
         One of the ``PROTECT_*`` constants, or ``None``.
     """
     claims = {
+        PROTECT_LOCKED: signals.locked,
         PROTECT_WATCHED: signals.watched,
         PROTECT_MESSAGED: signals.dm_outbound > 0,
         PROTECT_ADMIN: signals.has_admin,

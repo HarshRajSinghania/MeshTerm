@@ -17,6 +17,12 @@ allowed to change behaviour, not just add to it.
 
 ## [Unreleased]
 
+- **A contact can be locked.** Lock contact on a contact's page keeps it from ever being
+  archived: the archive sweep counts it protected, and the page hides Archive until you
+  unlock it. Locked contacts show a padlock at the end of their name in the Contacts list —
+  🔒, or the console font's own padlock on the PicoCalc. The lock is kept by MeshTerm, not
+  the radio, and reading the device never clears it.
+
 - **Purge contacts is Archive contacts**, because archiving is what it does: every contact
   it takes off the device stays in MeshTerm and can be restored. The row, its screens, its
   confirm button and its progress bar all say Archive, and the row wears the 💾 that

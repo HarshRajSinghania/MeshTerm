@@ -186,8 +186,18 @@ def _contacts(cols: int, rows: int) -> Screen:
         Contact(name="A Rather Long Repeater Name For Width", public_key=_HUB_KEY),
     ]
     # A non-zero archived tally, so the tail draws both maintenance rows — its populated
-    # state, and the widest the tail ever gets.
-    return ContactsScreen("Homestead", "cc" * 32, contacts, 1, {"aa" * 6: 7}, sort, archived=12)
+    # state, and the widest the tail ever gets — and a locked contact, so its padlock is held
+    # to both platforms' glyph contracts.
+    return ContactsScreen(
+        "Homestead",
+        "cc" * 32,
+        contacts,
+        1,
+        {"aa" * 6: 7},
+        sort,
+        archived=12,
+        locked=frozenset({"aa" * 32}),
+    )
 
 
 def _archive_ranked():  # noqa: ANN201

@@ -34,6 +34,13 @@ it back. So a restore is one write, and the chat screen already performs it on d
 send is rejected for an unknown recipient (see
 :class:`~meshterm.core.connection.ContactNotOnDeviceError`).
 
+A live contact can also be **locked**, which is the reader's own word that it stays: a
+locked contact is never a sweep candidate (see
+:data:`~meshterm.core.contact_score.PROTECT_LOCKED`) and its page offers no Archive. The flag
+lives here rather than on the device because the firmware has no such field — it is
+MeshTerm's claim about the contact, kept beside the other one it makes (the archive stamp),
+and a device read never clears it.
+
 The one place to be careful is a firmware-less bridge, whose contact table is RAM-only and
 for which this store *is* the memory: archiving there removes the contact from the lists for
 real, and only a restore brings it back.
@@ -47,7 +54,7 @@ contact set actually changes, and flushes atomically.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from .atomicwrite import write_atomically
@@ -97,6 +104,9 @@ class RememberedContact:
             while it is a live contact. An archived contact is remembered in full but kept
             *out* of :func:`merge_contacts`, so it stops occupying a device slot without
             being forgotten — and the stamp is what lets a list say how long ago it went.
+        locked: Whether the reader locked this contact against archiving. MeshTerm's own
+            state, not the device's, so :meth:`ContactStore.remember_all` carries it across
+            every fresh read of the contact rather than resetting it.
     """
 
     public_key: str
@@ -106,6 +116,7 @@ class RememberedContact:
     lat: float | None = None
     lon: float | None = None
     archived_at: int | None = None
+    locked: bool = False
 
     @property
     def archived(self) -> bool:
@@ -219,7 +230,11 @@ class ContactStore:
             if not contact.public_key:
                 continue  # unaddressable — nothing to remember it by
             remembered = RememberedContact.from_contact(contact)
-            if current.get(remembered.public_key) != remembered:
+            known = current.get(remembered.public_key)
+            if known is not None and known.locked:
+                # The lock is ours, not the device's: a fresh read knows nothing about it.
+                remembered = replace(remembered, locked=True)
+            if known != remembered:
                 current[remembered.public_key] = remembered
                 changed = True
         if changed:
@@ -256,16 +271,7 @@ class ContactStore:
         dev = _norm(device_pubkey)
         if not dev or not contact.public_key:
             return  # unaddressable — there would be nothing to restore it by
-        remembered = RememberedContact.from_contact(contact)
-        entry = RememberedContact(
-            public_key=remembered.public_key,
-            name=remembered.name,
-            node_type=remembered.node_type,
-            last_advert=remembered.last_advert,
-            lat=remembered.lat,
-            lon=remembered.lon,
-            archived_at=int(when),
-        )
+        entry = replace(RememberedContact.from_contact(contact), archived_at=int(when))
         current = dict(self._state.get(dev, {}))
         if current.get(entry.public_key) == entry:
             return
@@ -295,18 +301,44 @@ class ContactStore:
         if entry is None or not entry.archived:
             return None
         current = dict(contacts)
-        current[key] = RememberedContact(
-            public_key=entry.public_key,
-            name=entry.name,
-            node_type=entry.node_type,
-            last_advert=entry.last_advert,
-            lat=entry.lat,
-            lon=entry.lon,
-            archived_at=None,
-        )
+        current[key] = replace(entry, archived_at=None)
         self._state[dev] = current
         self._save()
         return entry
+
+    def locked_keys(self, device_pubkey: str) -> frozenset[str]:
+        """The full keys (lowercase hex) of every contact locked on this device."""
+        remembered = self._state.get(_norm(device_pubkey), {}).values()
+        return frozenset(c.public_key for c in remembered if c.locked)
+
+    def is_locked(self, device_pubkey: str, contact_pubkey: str) -> bool:
+        """Whether one contact is locked against archiving on this device."""
+        entry = self._state.get(_norm(device_pubkey), {}).get(_norm(contact_pubkey))
+        return entry is not None and entry.locked
+
+    def set_locked(self, device_pubkey: str, contact: Contact, locked: bool) -> None:
+        """Lock or unlock one contact, upserting it so a contact the store never saw can be.
+
+        Only a live contact is locked — the lock exists to keep a contact *off* the archive
+        path, so locking an archived one would claim something about a contact that has
+        already gone. Persists only a real change.
+
+        Args:
+            device_pubkey: The device's own public key.
+            contact: The contact to lock or unlock, addressed by its full key.
+            locked: The state to leave it in.
+        """
+        dev = _norm(device_pubkey)
+        if not dev or not contact.public_key:
+            return  # unaddressable — nothing to hang the flag on
+        current = dict(self._state.get(dev, {}))
+        key = _norm(contact.public_key)
+        known = current.get(key) or RememberedContact.from_contact(contact)
+        if known.archived or known.locked == locked:
+            return
+        current[key] = replace(known, locked=locked)
+        self._state[dev] = current
+        self._save()
 
     def forget(self, device_pubkey: str, contact_pubkey: str) -> None:
         """Drop one remembered contact; persist only a real change."""
@@ -350,6 +382,8 @@ def _contact_to_json(contact: RememberedContact) -> dict:
         entry["lon"] = contact.lon
     if contact.archived_at is not None:
         entry["archived_at"] = contact.archived_at
+    if contact.locked:
+        entry["locked"] = True
     return entry
 
 
@@ -369,6 +403,7 @@ def _contact_from_json(entry: object) -> RememberedContact | None:
         lat=_opt_float(entry.get("lat")),
         lon=_opt_float(entry.get("lon")),
         archived_at=_opt_int(entry.get("archived_at")),
+        locked=entry.get("locked") is True,
     )
 
 

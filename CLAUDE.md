@@ -333,7 +333,8 @@ as a grouped list does. Filling a page in is editing its `.md`; no Python follow
   to a whole route). Arrow mode spells the same claim with the separator alone, a leading
   or trailing `→` with no hop on the far side of it.
 - Concept icons: 📡 advert · 🕒 clock/sync · 🔄 reboot · 💾 backup · 📂 restore ·
-  🔑 channel/credential key · 🔐 identity/auth secret · 🗑 clear/delete · ✎ compose/edit ·
+  🔑 channel/credential key · 🔐 identity/auth secret ·
+  🔒 lock (a locked contact, a private channel) · 🔓 unlock · 🗑 clear/delete · ✎ compose/edit ·
   ⚙ parameter · `#` count · ▶ run · ⚡ explore/probe · ★ best/winner · ⭐ watch ·
   📤 send now · 📨 courier/queue · 💬 chat · 🔔 notify · 🔕 mute (notifications off) ·
   📱 QR · 🔗 link · ↻ re-read · ↕ reorder · ⇄ reverse (flip a path's direction) ·

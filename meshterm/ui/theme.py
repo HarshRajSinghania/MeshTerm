@@ -660,7 +660,8 @@ _GLYPH_MAP: dict[str, str] = {
     # Channel openness (widgets.channel_glyph)
     "＃": "#",   # name-derived channel
     "🌐": "@",   # well-known public channel
-    "🔒": "⚿",   # private channel (the padlock mark)
+    "🔒": "⚿",   # private channel, locked contact (the padlock mark)
+    "🔓": "⚿",   # unlock — the same padlock; the row's word says which way it turns
     # Concept icons (menu/list rows)
     "📡": "☼",   # advert tool — same concept as the advert class
     "🕒": "◷",   # clock/sync (the clock-face mark)

@@ -294,19 +294,20 @@ def _rung_row(label: str, kept: int, archived: int, label_w: int) -> Text:
     return row
 
 
-async def _rank(ctx: AppContext, contacts: list[Contact]) -> list[ScoredContact]:
+async def _rank(ctx: AppContext, contacts: list[Contact], self_key: str) -> list[ScoredContact]:
     """Gather every signal these contacts have and rank them, strongest first.
 
     Five grouped scans of the history (:meth:`
     ~meshterm.persistence.repository.Repository.contact_signals`), one pass over the channel
-    transcript for name attribution, and the two stores that carry the explicit protections
-    — the Watchtower's stars and the remembered admin logins. Our own position comes from
-    the device's self-info, and is simply absent on a device that advertises none, which the
-    distance term reads as unknown for everybody.
+    transcript for name attribution, and the three stores that carry the explicit protections
+    — the contacts you locked, the Watchtower's stars and the remembered admin logins. Our
+    own position comes from the device's self-info, and is simply absent on a device that
+    advertises none, which the distance term reads as unknown for everybody.
 
     Args:
         ctx: Shared application context.
         contacts: The device's contacts (our own node is not among them).
+        self_key: The device's own public key (hex), which scopes the locks.
 
     Returns:
         The full ranking, strongest first.
@@ -328,6 +329,8 @@ async def _rank(ctx: AppContext, contacts: list[Contact]) -> list[ScoredContact]
         if folded:
             seen[folded] = seen.get(folded, 0) + 1
 
+    store = getattr(ctx, "contact_store", None)
+    locked = store.locked_keys(self_key) if store is not None and self_key else frozenset()
     watch = getattr(ctx, "watch_store", None)
     admin = getattr(ctx, "admin_store", None)
     for contact, node in zip(contacts, nodes, strict=True):
@@ -342,6 +345,7 @@ async def _rank(ctx: AppContext, contacts: list[Contact]) -> list[ScoredContact]
             channel_attributed=unique,
             watched=bool(watch is not None and watch.is_watched(node)),
             has_admin=bool(admin is not None and admin.get(contact)),
+            locked=(contact.public_key or "").lower().removeprefix("0x") in locked,
         )
 
     self_lat = self_lon = None
@@ -385,7 +389,7 @@ async def archive_contacts(ctx: AppContext, self_key: str) -> int:
 
     async with ctx.ui.busy_overlay("Rating contacts"):
         contacts = await ctx.devstate.contacts()
-        ranked = await _rank(ctx, contacts)
+        ranked = await _rank(ctx, contacts, self_key)
 
     sweepable = [scored for scored in ranked if not scored.protected]
     if not sweepable:

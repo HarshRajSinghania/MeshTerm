@@ -462,7 +462,9 @@ async def test_archive_sweeps_under_a_progress_bar_and_reports_in_a_dialog() -> 
         log=logging.getLogger("test.archive"),
         repo=_Repo(),
         contact_store=SimpleNamespace(
-            archive=lambda dev, contact, when: archived.append(contact.name)
+            locked_keys=lambda *a: frozenset(),
+            is_locked=lambda *a: False,
+            archive=lambda dev, contact, when: archived.append(contact.name),
         ),
         watch_store=None,
         admin_store=None,
@@ -702,7 +704,11 @@ async def test_deleting_one_contact_drops_it_from_the_device_and_the_store() -> 
     ctx = SimpleNamespace(
         ui=ui,
         log=logging.getLogger("test.remove"),
-        contact_store=SimpleNamespace(forget=lambda dev, key: forgotten.append((dev, key))),
+        contact_store=SimpleNamespace(
+            locked_keys=lambda *a: frozenset(),
+            is_locked=lambda *a: False,
+            forget=lambda dev, key: forgotten.append((dev, key)),
+        ),
         devstate=SimpleNamespace(invalidate_contacts=lambda: invalidated.append(True)),
         device=lambda: _device(_Device()),
     )
@@ -748,7 +754,11 @@ async def test_cancelling_the_remove_confirm_touches_nothing() -> None:
     ctx = SimpleNamespace(
         ui=ui,
         log=logging.getLogger("test.remove"),
-        contact_store=SimpleNamespace(forget=lambda *a: touched.append("forgot")),
+        contact_store=SimpleNamespace(
+            locked_keys=lambda *a: frozenset(),
+            is_locked=lambda *a: False,
+            forget=lambda *a: touched.append("forgot"),
+        ),
         devstate=SimpleNamespace(invalidate_contacts=lambda: touched.append("invalidated")),
         device=lambda: _device(_Device()),
     )
@@ -793,7 +803,11 @@ async def test_a_refused_removal_is_shown_and_the_contact_stays() -> None:
     ctx = SimpleNamespace(
         ui=ui,
         log=logging.getLogger("test.remove"),
-        contact_store=SimpleNamespace(forget=lambda *a: forgotten.append(a)),
+        contact_store=SimpleNamespace(
+            locked_keys=lambda *a: frozenset(),
+            is_locked=lambda *a: False,
+            forget=lambda *a: forgotten.append(a),
+        ),
         devstate=SimpleNamespace(invalidate_contacts=lambda: forgotten.append("cache")),
         device=lambda: _device(_Device()),
     )
@@ -846,7 +860,11 @@ async def test_a_contact_the_device_never_held_is_still_removed_here() -> None:
     ctx = SimpleNamespace(
         ui=ui,
         log=logging.getLogger("test.remove"),
-        contact_store=SimpleNamespace(forget=lambda dev, key: forgotten.append((dev, key))),
+        contact_store=SimpleNamespace(
+            locked_keys=lambda *a: frozenset(),
+            is_locked=lambda *a: False,
+            forget=lambda dev, key: forgotten.append((dev, key)),
+        ),
         devstate=SimpleNamespace(invalidate_contacts=lambda: invalidated.append(True)),
         device=lambda: _device(_Device()),
     )
@@ -1043,7 +1061,9 @@ async def test_archiving_one_contact_takes_it_off_the_device_and_keeps_it() -> N
         ui=ui,
         log=logging.getLogger("test.archive"),
         contact_store=SimpleNamespace(
-            archive=lambda dev, contact, when: archived.append((dev, contact.public_key))
+            locked_keys=lambda *a: frozenset(),
+            is_locked=lambda *a: False,
+            archive=lambda dev, contact, when: archived.append((dev, contact.public_key)),
         ),
         devstate=SimpleNamespace(invalidate_contacts=lambda: invalidated.append(True)),
         device=lambda: _device(_Device()),
@@ -1082,7 +1102,11 @@ async def test_restoring_writes_the_contact_back_before_clearing_the_mark() -> N
     ctx = SimpleNamespace(
         ui=TuiUi(session),
         log=logging.getLogger("test.restore"),
-        contact_store=SimpleNamespace(restore=lambda dev, key: restored.append(key)),
+        contact_store=SimpleNamespace(
+            locked_keys=lambda *a: frozenset(),
+            is_locked=lambda *a: False,
+            restore=lambda dev, key: restored.append(key),
+        ),
         devstate=SimpleNamespace(invalidate_contacts=lambda: None),
         device=lambda: _device(_Refuses()),
     )
@@ -1469,3 +1493,79 @@ async def test_the_preview_opens_node_pages_with_no_management_verbs(
     assert session.top is screen
     screen.handle("escape")
     assert await task is False
+
+
+def test_a_locked_contact_closes_its_name_lane_on_a_padlock_in_one_column() -> None:
+    """Locked rows end their name lane on the padlock, lined up; unlocked rows draw nothing."""
+    from rich.cells import cell_len
+
+    from meshterm.core.models import Contact
+    from meshterm.ui.contacts_screen import ContactsScreen
+
+    contacts = [
+        Contact(name="Al", public_key="aa" * 32),
+        Contact(name="Bartholomew", public_key="bb" * 32),
+        Contact(name="Cy", public_key="cc" * 32),
+    ]
+    screen = ContactsScreen(
+        "Us", "dd" * 32, contacts, 1, {}, _contacts_sort(), locked=frozenset({"aa" * 32})
+    )
+    # The lanes size themselves on the first paint.
+    screen.note_viewport(30)
+    screen.render_body(72)
+    lines = {}
+    for choice in screen._choices():
+        plain = choice.title.plain if hasattr(choice.title, "plain") else str(choice.title)
+        for name in ("Al", "Bartholomew", "Cy"):
+            if plain[2:].startswith(name + " ") or plain[2:].startswith(name + "\u00a0"):
+                lines[name] = plain
+    assert "🔒" in lines["Al"]
+    assert "🔒" not in lines["Bartholomew"] and "🔒" not in lines["Cy"]
+    # The lane grew to hold the locked name *and* its mark without cutting the longest name.
+    assert "Bartholomew" in lines["Bartholomew"]
+    # The padlock closes the lane that "Bartholomew" fills: the locks stand in one column.
+    lock_end = lines["Al"].index("🔒") + 1
+    assert cell_len(lines["Al"][:lock_end]) == cell_len("● Bartholomew")
+
+    # Unlocking redraws in place: the same screen, the padlock gone.
+    screen.refresh_locks(frozenset())
+    assert not any("🔒" in str(getattr(c.title, "plain", c.title)) for c in screen._choices())
+
+
+async def test_a_locked_contact_is_never_offered_to_the_sweep() -> None:
+    """The ranking reads the store's locks, so a locked contact is protected, not a victim."""
+    import logging
+    from types import SimpleNamespace
+
+    from meshterm.core.contact_score import PROTECT_LOCKED, ContactSignals
+    from meshterm.core.models import Contact
+    from meshterm.ui.sweep_screen import _rank
+
+    contacts = [
+        Contact(name="Kept", public_key="aa" * 32, key_prefix="aa" * 6),
+        Contact(name="Loose", public_key="bb" * 32, key_prefix="bb" * 6),
+    ]
+
+    class _Repo:
+        def contact_signals(self, nodes):  # noqa: ANN001, ANN202
+            return {
+                n: ContactSignals(node=n, heard_age_days=400.0, known_days=500.0) for n in nodes
+            }
+
+        def channel_post_counts(self):  # noqa: ANN202
+            return {}
+
+    async def _self_info():  # noqa: ANN202
+        return {}
+
+    ctx = SimpleNamespace(
+        repo=_Repo(),
+        log=logging.getLogger("test.lock"),
+        contact_store=SimpleNamespace(locked_keys=lambda dev: frozenset({"aa" * 32})),
+        watch_store=None,
+        admin_store=None,
+        devstate=SimpleNamespace(self_info=_self_info),
+    )
+    ranked = {s.contact.name: s for s in await _rank(ctx, contacts, "cc" * 32)}
+    assert ranked["Kept"].protection == PROTECT_LOCKED
+    assert not ranked["Loose"].protected

@@ -1236,3 +1236,30 @@ def test_node_detail_single_tab_hides_the_switch_hint() -> None:
     assert "↑↓ move" in screen.footer_hint and screen.footer_hint.endswith("Esc back")
     # Nothing to switch to, so the lane leaves the slot empty rather than dimming it.
     assert screen.fkey_lane[2] is None
+
+
+def test_toggling_the_lock_rewrites_the_rows_and_keeps_the_cursor_on_it() -> None:
+    """Lock becomes Unlock on the same row, and Archive is withdrawn while the lock holds."""
+    tm = _Action("timemachine", "⏳", "", "Time machine — 42 receptions")
+    delete = _Action("remove", "🗑", "err", "Delete contact…")
+    screen = _screen(
+        info_actions=[
+            tm,
+            _Action("lock", "🔒", "", "Lock contact"),
+            _Action("archive", "💾", "", "Archive contact"),
+            delete,
+        ]
+    )
+    resolved: list = []
+    screen.resolve = lambda value: resolved.append(value)  # type: ignore[method-assign]
+    screen.note_viewport(30)
+    screen.render_body(72)
+    screen.handle("down")
+    screen.handle("enter")
+    assert resolved == ["lock"]
+
+    screen.replace_info_actions([tm, _Action("unlock", "🔓", "", "Unlock contact"), delete])
+    screen.render_body(72)
+    screen.handle("enter")
+    assert resolved == ["lock", "unlock"]
+    assert [a.key for a in screen._info_actions] == ["timemachine", "unlock", "remove"]

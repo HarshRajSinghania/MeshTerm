@@ -83,6 +83,7 @@ class ContactsScreen(ContactListScreen):
         counts: dict[str, int],
         sort: ContactsSort,
         archived: int = 0,
+        locked: frozenset[str] = frozenset(),
     ) -> None:
         """Create the contacts screen over already-fetched contact data.
 
@@ -100,21 +101,12 @@ class ContactsScreen(ContactListScreen):
                 ``View archived contacts`` row and shows the count on it, so the tally is
                 visible without opening the list; zero draws no row, since a screen should
                 not offer a way into an empty list.
+            locked: The full keys (lowercase hex) of the contacts locked against archiving;
+                each of those rows closes its name lane on a padlock.
         """
-        rows = [ContactRow(value=YOU, name=self_name, key=self_key, you=True)]
-        for c in contacts:
-            rows.append(
-                ContactRow(
-                    # The contact itself is the row's identity, so Enter hands the whole
-                    # record straight to the detail page — no re-lookup by name/key.
-                    value=c,
-                    name=c.name,
-                    key=c.public_key,
-                    node_type=c.node_type,
-                    last_seen=c.last_seen,
-                    count=contact_packets(c, counts),
-                )
-            )
+        self._self_name, self._self_key = self_name, self_key
+        self._contacts, self._counts = contacts, counts
+        rows = self._contact_rows_for(locked)
         # The maintenance actions close the list, past every contact whatever the sort: a
         # blank spacer, then the sweep (a `…` — it opens further prompts), then the way in
         # to what the sweep has already taken. The two sit together because they are the
@@ -147,6 +139,34 @@ class ContactsScreen(ContactListScreen):
             sort=sort,
             tail=tail,
         )
+
+    def _contact_rows_for(self, locked: frozenset[str]) -> list[ContactRow]:
+        """Our own node, then every contact, each marked locked or not by ``locked``."""
+        rows = [ContactRow(value=YOU, name=self._self_name, key=self._self_key, you=True)]
+        for c in self._contacts:
+            rows.append(
+                ContactRow(
+                    # The contact itself is the row's identity, so Enter hands the whole
+                    # record straight to the detail page — no re-lookup by name/key.
+                    value=c,
+                    name=c.name,
+                    key=c.public_key,
+                    node_type=c.node_type,
+                    last_seen=c.last_seen,
+                    count=contact_packets(c, self._counts),
+                    locked=(c.public_key or "").lower().removeprefix("0x") in locked,
+                )
+            )
+        return rows
+
+    def refresh_locks(self, locked: frozenset[str]) -> None:
+        """Redraw the padlocks in place after a detail page may have locked or unlocked one.
+
+        A lock changes a lane, not which contacts exist, so this is the
+        :meth:`~meshterm.ui.contactlist.ContactListScreen.update_rows` case rather than a
+        rebuild: the cursor, the sort, the scroll and a typed filter all stay where they were.
+        """
+        self.update_rows(self._contact_rows_for(locked))
 
 
 async def open_contacts(
@@ -199,6 +219,7 @@ async def open_contacts(
             counts,
             sort,
             archived=_archived_count(ctx, self_key),
+            locked=_locked_keys(ctx, self_key),
         )
 
     screen = build()
@@ -235,6 +256,9 @@ async def open_contacts(
                 if await open_node_detail(ctx, None if chosen == YOU else chosen):
                     rebuild = True
                     break
+                # The page may have locked or unlocked the contact without ending the visit;
+                # the store answers from memory, so the padlocks are simply redrawn.
+                screen.refresh_locks(_locked_keys(ctx, self_key))
         if not rebuild:
             return
         contacts = await ctx.devstate.contacts()
@@ -248,3 +272,12 @@ def _archived_count(ctx: AppContext, self_key: str) -> int:
     if store is None or not dev_pub:
         return 0
     return len(store.archived(dev_pub))
+
+
+def _locked_keys(ctx: AppContext, self_key: str) -> frozenset[str]:
+    """The keys of the contacts locked on this device — which rows draw a padlock."""
+    store = getattr(ctx, "contact_store", None)
+    dev_pub = (self_key or "").lower().removeprefix("0x")
+    if store is None or not dev_pub:
+        return frozenset()
+    return store.locked_keys(dev_pub)

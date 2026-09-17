@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from meshterm.core.contact_score import (
     PROTECT_ADMIN,
+    PROTECT_LOCKED,
     PROTECT_MESSAGED,
     PROTECT_UNOBSERVED,
     PROTECT_WATCHED,
@@ -145,11 +146,12 @@ def test_a_newcomer_is_given_a_fortnight_to_earn_its_keep() -> None:
 
 
 def test_protections_outrank_the_arithmetic() -> None:
-    """A star, a sent message, an admin login or an unheard contact is never a candidate.
+    """A lock, a star, a sent message, an admin login or an unheard contact is never a candidate.
 
     A heuristic must not overrule an explicit choice, and it must not punish a contact for
     MeshTerm's own ignorance.
     """
+    assert protection_for(ContactSignals(node="a" * 12, **_BASE, locked=True)) == PROTECT_LOCKED
     assert protection_for(ContactSignals(node="a" * 12, **_BASE, watched=True)) == PROTECT_WATCHED
     assert protection_for(ContactSignals(node="a" * 12, **_BASE, dm_outbound=1)) == PROTECT_MESSAGED
     assert protection_for(ContactSignals(node="a" * 12, **_BASE, has_admin=True)) == PROTECT_ADMIN
@@ -325,3 +327,9 @@ def test_a_stronger_contact_never_scores_below_a_weaker_one_on_every_axis() -> N
     )
     assert ranked["Better"].score > ranked["Worse"].score
     assert ranked["Better"].percentile > ranked["Worse"].percentile
+
+
+def test_a_lock_explains_a_contact_before_any_other_claim_on_it() -> None:
+    """A lock says nothing but "keep this one", so it is the reason the preview gives."""
+    both = ContactSignals(node="a" * 12, **_BASE, locked=True, watched=True, dm_outbound=3)
+    assert protection_for(both) == PROTECT_LOCKED

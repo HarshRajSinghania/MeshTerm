@@ -312,3 +312,44 @@ def test_a_keyless_contact_cannot_be_archived(tmp_path) -> None:  # noqa: ANN001
     store = ContactStore(tmp_path / "contacts.json")
     store.archive(PUB_A, Contact(name="Ghost"), when=1_700_000_000)
     assert store.archived(PUB_A) == []
+
+
+def test_a_lock_is_ours_and_survives_every_fresh_read_of_the_contact(tmp_path) -> None:  # noqa: ANN001
+    """The device knows nothing of a lock, so reading the device must never clear one."""
+    from meshterm.core.models import Contact
+
+    store = ContactStore(tmp_path / "contacts.json")
+    alice = Contact(name="Alice", public_key="aa" * 32, key_prefix="aa" * 6)
+    bob = Contact(name="Bob", public_key="bb" * 32, key_prefix="bb" * 6)
+    # Locking a contact the store never saw upserts it, as archiving does.
+    store.set_locked(PUB_A, alice, True)
+    assert store.is_locked(PUB_A, "aa" * 32)
+    assert store.locked_keys(PUB_A) == frozenset({"aa" * 32})
+
+    # A fresh read — a rename included — keeps the lock and changes the rest.
+    store.remember_all(PUB_A, [Contact(name="Alice II", public_key="aa" * 32), bob])
+    assert store.is_locked(PUB_A, "aa" * 32)
+    assert not store.is_locked(PUB_A, "bb" * 32)
+    assert [c.name for c in store.contacts(PUB_A)] == ["Alice II", "Bob"]
+
+    # Persisted, and scoped to the device it was set on.
+    reloaded = ContactStore(tmp_path / "contacts.json")
+    assert reloaded.locked_keys(PUB_A) == frozenset({"aa" * 32})
+    assert reloaded.locked_keys("ff" * 32) == frozenset()
+
+    reloaded.set_locked(PUB_A, alice, False)
+    assert ContactStore(tmp_path / "contacts.json").locked_keys(PUB_A) == frozenset()
+
+
+def test_an_archived_or_keyless_contact_takes_no_lock(tmp_path) -> None:  # noqa: ANN001
+    """The lock keeps a live contact off the archive path; there is nothing else to lock."""
+    from meshterm.core.models import Contact
+
+    store = ContactStore(tmp_path / "contacts.json")
+    alice = Contact(name="Alice", public_key="aa" * 32, key_prefix="aa" * 6)
+    store.archive(PUB_A, alice, when=1_700_000_000)
+    store.set_locked(PUB_A, alice, True)
+    assert store.locked_keys(PUB_A) == frozenset()
+
+    store.set_locked(PUB_A, Contact(name="Ghost"), True)
+    assert store.locked_keys(PUB_A) == frozenset()

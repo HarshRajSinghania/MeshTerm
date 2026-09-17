@@ -446,10 +446,7 @@ class NodeDetailScreen(Screen):
         #: The action rows' icon column, in cells — measured once over every mark this page
         #: can draw, so a one-cell ``🗑`` pads out to its two-cell siblings and every label
         #: starts in the same column. Zero on a platform that draws no icon lane at all.
-        self._icon_lane = menus.icon_lane(
-            action.glyph
-            for action in (*self._info_actions, *([trace_action] if trace_action else []))
-        )
+        self._icon_lane = self._measure_icon_lane()
         self._tab_index = 0
         self._row_index = 0
         #: The highlighted route on the Routes tab (drives the graph); tracks the cursor as
@@ -573,6 +570,31 @@ class NodeDetailScreen(Screen):
         if self._minimap is None or not self._tabs:
             return 0
         return 2 if self._tabs[self._tab_index].kind == "info" else 0
+
+    def _measure_icon_lane(self) -> int:
+        """The action rows' icon column over every mark currently on the page."""
+        trace = [self._trace_action] if self._trace_action else []
+        return menus.icon_lane(action.glyph for action in (*self._info_actions, *trace))
+
+    def replace_info_actions(self, actions: list[_Action]) -> None:
+        """Swap the Info tab's action rows in place, keeping the cursor on the row it was on.
+
+        For an action that changes what the page offers without ending the visit — locking a
+        contact turns its row into Unlock and withdraws Archive. The highlight follows the
+        committed row by its :attr:`_Action.key` family (``lock`` and ``unlock`` are one
+        row), so the reader's next press lands where their last one did.
+        """
+        focus = self._focusables()
+        current = focus[self._row_index % len(focus)][1] if focus else None
+        was = getattr(current, "key", None)
+        self._info_actions = list(actions)
+        self._icon_lane = self._measure_icon_lane()
+        family = {"lock": "unlock", "unlock": "lock"}
+        for index, (_kind, payload) in enumerate(self._focusables()):
+            key = getattr(payload, "key", None)
+            if key is not None and key in (was, family.get(was or "")):
+                self._row_index = index
+                break
 
     def handle(self, action: str, data: str = "") -> None:
         """Answer one key press on the page.
@@ -1089,6 +1111,13 @@ async def open_node_detail(
     on the Info tab, and the page offers exactly the ones that make sense — a live contact
     can be archived or deleted, an archived one restored or deleted.
 
+    **Locking is management that stays.** A live contact can be locked against archiving
+    (see :meth:`~meshterm.core.contact_store.ContactStore.set_locked`): the sweep then never
+    counts it a candidate, and this page withdraws its Archive row for as long as the lock
+    holds. The toggle rewrites the page's action rows in place rather than ending the visit
+    — nothing about the contact the page describes has gone — and the list underneath redraws
+    its padlock when the reader comes back to it.
+
     ``manage`` is how a caller says the page is being opened to *look*, not to act. The
     archive preview passes ``False``: a screen whose whole job is choosing what to archive
     should not also hand out a second, singular way to archive — or a delete — from inside
@@ -1100,7 +1129,8 @@ async def open_node_detail(
         ctx: The shared application context (must be running the interactive TUI).
         contact: The contact to detail, or ``None`` for our own node (an identity-and-ledger
             page — we never overhear ourselves, so there is no reception history to show).
-        manage: Whether to offer the contact-management actions (archive, restore, delete).
+        manage: Whether to offer the contact-management actions (lock, archive, restore,
+            delete).
             ``False`` draws none of them, and the page can then only ever return ``False``.
 
     Returns:
@@ -1328,18 +1358,41 @@ async def open_node_detail(
         and contact is not None
         and bool(contact.public_key or contact.key_prefix)
     )
-    if manageable:
-        # The constructive verb first, then the destructive one, so the row a mistaken press
-        # is likeliest to land on is the recoverable one. Archive and restore are the two
-        # halves of one reversible move, and take the ``💾``/``📂`` pair the lexicon already
-        # gives put-it-away and bring-it-back; only a contact with a full key can be written
-        # back to the device, so a prefix-only contact is never offered the archive that
-        # would strand it.
+    store = getattr(ctx, "contact_store", None)
+    dev_pub = self_key.lower().removeprefix("0x")
+    whole_key = contact is not None and len(contact.public_key.lower().removeprefix("0x")) == 64
+    # A lock is MeshTerm's own mark, hung on the full key in the contact store, and only a
+    # live contact carries one — it exists to keep a contact off the archive path.
+    lockable = manageable and not archived and whole_key and store is not None and bool(dev_pub)
+    base_actions = list(info_actions)
+
+    def management(locked: bool) -> list[_Action]:
+        """The page's action rows, closing on the management group for this lock state."""
+        rows = list(base_actions)
+        if not manageable:
+            return rows
+        # The lock first: it changes nothing on the device and ends nothing, so it is the
+        # safest row in the group to land on. Then the constructive verb, then the
+        # destructive one, so the row a mistaken press is likeliest to land on is the
+        # recoverable one. Archive and restore are the two halves of one reversible move,
+        # and take the ``💾``/``📂`` pair the lexicon already gives put-it-away and
+        # bring-it-back; only a contact with a full key can be written back to the device,
+        # so a prefix-only contact is never offered the archive that would strand it — and
+        # a locked one is never offered it at all, which is what the lock is for.
+        if lockable:
+            if locked:
+                rows.append(_Action("unlock", "🔓", "", "Unlock contact"))
+            else:
+                rows.append(_Action("lock", "🔒", "", "Lock contact"))
         if archived:
-            info_actions.append(_Action("restore", "📂", "ok", "Restore to device"))
-        elif len((contact.public_key or "").lower().removeprefix("0x")) == 64:
-            info_actions.append(_Action("archive", "💾", "", "Archive contact"))
-        info_actions.append(_Action("remove", "🗑", "err", "Delete contact…"))
+            rows.append(_Action("restore", "📂", "ok", "Restore to device"))
+        elif whole_key and not locked:
+            rows.append(_Action("archive", "💾", "", "Archive contact"))
+        rows.append(_Action("remove", "🗑", "err", "Delete contact…"))
+        return rows
+
+    locked = bool(lockable and store.is_locked(dev_pub, contact.public_key))
+    info_actions = management(locked)
     try:
         adv_type = int(node_type) if node_type is not None else 1
     except (TypeError, ValueError):
@@ -1410,6 +1463,13 @@ async def open_node_detail(
                 if await _restore_archived(ctx, contact, self_key, label):
                     contact_removed = True
                     break
+            elif action in ("lock", "unlock"):
+                # No confirm and no notice: the lock is reversible from the very row that set
+                # it, and the row turning into its opposite is the acknowledgement.
+                assert contact is not None and store is not None  # only offered when lockable
+                locked = action == "lock"
+                store.set_locked(dev_pub, contact, locked)
+                screen.replace_info_actions(management(locked))
             elif action == "archive":
                 assert contact is not None
                 if await _archive_contact(ctx, contact, self_key, label):
