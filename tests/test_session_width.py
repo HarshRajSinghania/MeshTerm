@@ -52,6 +52,24 @@ def test_session_wraps_the_real_terminal_on_regular(monkeypatch) -> None:
     assert out.get_size() == Size(rows=30, columns=101)
 
 
+def test_session_pins_the_real_terminal_inside_the_width_extension(monkeypatch) -> None:
+    """Both wraps on REGULAR, reclaim outermost: its size is what everything lays out against."""
+    from meshterm.ui.tui.colsnap import PinnedOutput
+
+    fake = SimpleNamespace(get_size=lambda: Size(rows=30, columns=100))
+    monkeypatch.setattr("prompt_toolkit.output.defaults.create_output", lambda: fake)
+    monkeypatch.delenv("MESHTERM_FULL_WIDTH", raising=False)
+    monkeypatch.delenv("MESHTERM_COLUMN_SNAP", raising=False)
+    out = TuiSession()._resolve_output()
+    assert isinstance(out, _WidthExtendedOutput)
+    assert isinstance(out._inner, PinnedOutput) and out._inner._inner is fake
+
+    # Pinning alone, where the column is not reclaimed.
+    monkeypatch.setenv("MESHTERM_FULL_WIDTH", "0")
+    pinned = TuiSession()._resolve_output()
+    assert isinstance(pinned, PinnedOutput) and pinned._inner is fake
+
+
 def test_session_leaves_the_bare_terminal_on_picocalc(monkeypatch) -> None:
     """PICOCALC's exact-width console → no reclaim: a phantom column would tear the frame."""
     monkeypatch.delenv("MESHTERM_FULL_WIDTH", raising=False)
@@ -69,7 +87,19 @@ def test_env_override_forces_reclaim_on_despite_picocalc(monkeypatch) -> None:
 
 
 def test_env_override_forces_reclaim_off_despite_regular(monkeypatch) -> None:
-    """``MESHTERM_FULL_WIDTH=0`` wins over REGULAR's on-by-default."""
+    """``MESHTERM_FULL_WIDTH=0`` wins over REGULAR's on-by-default.
+
+    The terminal is still wrapped for pinning, which has a gate of its own; with that turned
+    off too there is nothing left to wrap, and prompt_toolkit builds its own output.
+    """
+    fake = SimpleNamespace(get_size=lambda: Size(rows=30, columns=100))
+    monkeypatch.setattr("prompt_toolkit.output.defaults.create_output", lambda: fake)
     monkeypatch.setenv("MESHTERM_FULL_WIDTH", "0")
+    monkeypatch.delenv("MESHTERM_COLUMN_SNAP", raising=False)
     set_platform(REGULAR)
+    out = TuiSession()._resolve_output()
+    assert not isinstance(out, _WidthExtendedOutput)
+    assert out.get_size() == Size(rows=30, columns=100)  # no column reclaimed
+
+    monkeypatch.setenv("MESHTERM_COLUMN_SNAP", "0")
     assert TuiSession()._resolve_output() is None

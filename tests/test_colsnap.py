@@ -246,3 +246,283 @@ def test_the_row_writer_pins_what_it_writes(monkeypatch) -> None:  # noqa: ANN00
     plain = FastRenderer(Style([]), off, full_screen=True, frame_source=lambda: frame)
     plain.render(None, None)
     assert "\x1b[11G" not in "".join(off.written)
+
+
+def test_a_platform_that_draws_no_emoji_pins_nothing() -> None:
+    """The PicoCalc draws only glyphs its own font has verified, so there is nothing to pin."""
+    from meshterm.platforms import PICOCALC, set_platform
+
+    assert colsnap.enabled()
+    set_platform(PICOCALC)
+    assert not colsnap.enabled()
+
+
+# --- prompt_toolkit's renderer: the dialog path -------------------------------------------------
+
+
+class _Tty:
+    """A two-dimensional terminal, for the renderer that moves its cursor relatively.
+
+    Honours what prompt_toolkit's differential renderer and :class:`colsnap.PinnedOutput` send:
+    carriage return, newline, backspace, cursor save and restore, and the CSI cursor moves.
+    Colour and mode sequences are ignored, which is all a terminal does with them as far as
+    column arithmetic goes. Glyph widths come from prompt_toolkit's own measurement unless
+    ``draws`` names a glyph this terminal disagrees about.
+    """
+
+    _SEQUENCE = re.compile(r"\x1b(?:\[([0-9;?]*)([A-Za-z@`])|([78]))")
+
+    def __init__(self, cols: int, rows: int, *, draws: dict[str, int] | None = None) -> None:
+        """Start blank, with the cursor home."""
+        self.cols, self.rows = cols, rows
+        self.draws = draws or {}
+        self.grid = [[" "] * cols for _ in range(rows)]
+        self.x = self.y = 0
+        self._saved = (0, 0)
+
+    def feed(self, data: str) -> None:
+        """Interpret ``data`` as the terminal would."""
+        position = 0
+        for match in self._SEQUENCE.finditer(data):
+            self._text(data[position : match.start()])
+            position = match.end()
+            if match.group(3) == "7":
+                self._saved = (self.x, self.y)
+            elif match.group(3) == "8":
+                self.x, self.y = self._saved
+            else:
+                self._csi(match.group(1), match.group(2))
+        self._text(data[position:])
+
+    def _csi(self, params: str, final: str) -> None:
+        """One control sequence: the cursor moves, the erases, and nothing else."""
+        if params.startswith("?"):
+            return
+        numbers = [int(part) if part else 0 for part in params.split(";")] if params else []
+        count = numbers[0] if numbers and numbers[0] else 1
+        if final == "A":
+            self.y = max(0, self.y - count)
+        elif final == "B":
+            self.y = min(self.rows - 1, self.y + count)
+        elif final == "C":
+            self.x = min(self.cols - 1, self.x + count)
+        elif final == "D":
+            self.x = max(0, self.x - count)
+        elif final == "G":
+            self.x = count - 1
+        elif final in "Hf":
+            row = numbers[0] if numbers and numbers[0] else 1
+            column = numbers[1] if len(numbers) > 1 and numbers[1] else 1
+            self.y, self.x = row - 1, column - 1
+        elif final == "K":
+            self.grid[self.y][self.x :] = [" "] * (self.cols - self.x)
+        elif final == "J":
+            self.grid[self.y][self.x :] = [" "] * (self.cols - self.x)
+            for row in range(self.y + 1, self.rows):
+                self.grid[row] = [" "] * self.cols
+
+    def _text(self, text: str) -> None:
+        """Place each glyph at the cursor, advancing by this terminal's idea of its width."""
+        from prompt_toolkit.utils import get_cwidth
+
+        for cluster in clusters(text):
+            if cluster == "\r":
+                self.x = 0
+            elif cluster == "\n":
+                self.y = min(self.rows - 1, self.y + 1)
+            elif cluster == "\b":
+                self.x = max(0, self.x - 1)
+            else:
+                size = self.draws.get(cluster, get_cwidth(cluster))
+                if self.x < self.cols:
+                    self.grid[self.y][self.x] = cluster
+                    for overhang in range(1, size):
+                        if self.x + overhang < self.cols:
+                            self.grid[self.y][self.x + overhang] = ""
+                self.x += size
+
+    def glyph_at(self, row: int, column: int) -> str:
+        """The glyph drawn at ``(row, column)``."""
+        return self.grid[row][column]
+
+
+def _screen(rows: list[str], cols: int):  # noqa: ANN202 - a prompt_toolkit Screen
+    """Lay ``rows`` out exactly as prompt_toolkit lays out a window's text."""
+    from prompt_toolkit.layout import Window
+    from prompt_toolkit.layout.controls import FormattedTextControl
+    from prompt_toolkit.layout.mouse_handlers import MouseHandlers
+    from prompt_toolkit.layout.screen import Screen, WritePosition
+
+    screen = Screen()
+    window = Window(FormattedTextControl("\n".join(rows)), wrap_lines=False)
+    window.write_to_screen(
+        screen, MouseHandlers(), WritePosition(0, 0, cols, len(rows)), "", False, None
+    )
+    return screen
+
+
+def _paint(output, screen, previous, position, cols: int, rows: int):  # noqa: ANN001, ANN202
+    """One pass of prompt_toolkit's own differential writer over ``screen``."""
+    from types import SimpleNamespace
+
+    from prompt_toolkit.data_structures import Size
+    from prompt_toolkit.output.color_depth import ColorDepth
+    from prompt_toolkit.renderer import (
+        _output_screen_diff,
+        _StyleStringHasStyleCache,
+        _StyleStringToAttrsCache,
+    )
+    from prompt_toolkit.styles import DummyStyleTransformation, Style
+
+    attrs = _StyleStringToAttrsCache(Style([]).get_attrs_for_style_str, DummyStyleTransformation())
+    position, _style = _output_screen_diff(
+        SimpleNamespace(layout=SimpleNamespace(current_window=None)),
+        output,
+        screen,
+        position,
+        ColorDepth.DEPTH_24_BIT,
+        previous,
+        None,
+        False,
+        True,
+        attrs,
+        _StyleStringHasStyleCache(attrs),
+        Size(rows=rows, columns=cols),
+        cols if previous is not None else 0,
+    )
+    return position
+
+
+def _vt100(cols: int, rows: int):  # noqa: ANN202 - a Vt100_Output writing into memory
+    """A real VT100 output, so every cursor move is spelled the way the terminal receives it."""
+    import io
+
+    from prompt_toolkit.data_structures import Size
+    from prompt_toolkit.output.vt100 import Vt100_Output
+
+    return Vt100_Output(io.StringIO(), lambda: Size(rows=rows, columns=cols), term="xterm")
+
+
+def _drained(output) -> str:  # noqa: ANN001
+    """Everything written to ``output`` since the last drain."""
+    vt100 = getattr(output, "_inner", output)
+    data = "".join(vt100._buffer)
+    vt100._buffer.clear()
+    return data
+
+
+def _assert_landed(tty: _Tty, row: int, text: str) -> None:
+    """Every visible glyph of ``text`` is in the column prompt_toolkit measured it into."""
+    from prompt_toolkit.utils import get_cwidth
+
+    column = 0
+    for cluster in clusters(text):
+        if cluster != " ":
+            assert tty.glyph_at(row, column) == cluster, f"column {column} of row {row}"
+        column += get_cwidth(cluster)
+
+
+def test_a_dialog_row_frames_flush_on_a_terminal_that_draws_the_glyph_narrow() -> None:
+    """prompt_toolkit's renderer, unpinned and pinned, on a terminal that disagrees about 👋.
+
+    The renderer writes the whole row in one run after its first move, adding two cells for the
+    wave to a cursor of its own while the terminal adds one. Unpinned, the rest of the row is
+    drawn a column early. Pinned, every glyph is where the renderer measured it.
+    """
+    cols, rows = 24, 2
+    text = [f"│ {_WAVE} Lakeside  5m │", "│ Plain row    5m │"]
+    screen = _screen(text, cols)
+
+    loose, loose_tty = _vt100(cols, rows), _Tty(cols, rows, draws={_WAVE: 1})
+    _paint(loose, screen, None, _point(), cols, rows)
+    loose_tty.feed(_drained(loose))
+    assert loose_tty.glyph_at(0, cell_len(text[0]) - 1) != "│", "unpinned, the border moves"
+
+    pinned, pinned_tty = (
+        colsnap.PinnedOutput(_vt100(cols, rows)),
+        _Tty(cols, rows, draws={_WAVE: 1}),
+    )
+    _paint(pinned, screen, None, _point(), cols, rows)
+    pinned_tty.feed(_drained(pinned))
+    for row, line in enumerate(text):
+        _assert_landed(pinned_tty, row, line)
+
+
+def test_a_repaint_after_the_glyph_lands_where_the_renderer_measured_it() -> None:
+    """The move that follows a pinned glyph is computed relatively, and still lands.
+
+    A second paint changes the glyph *and* a value later on the same row, with unchanged cells
+    between them, so the renderer writes the new glyph and then jumps forward by the distance its
+    own arithmetic says. That jump is only right if the terminal's cursor was put back in step
+    after the glyph — which is the whole claim of the relative pin.
+    """
+    cols, rows = 24, 1
+    first = [f"│ {_WAVE} Lakeside  5m │"]
+    second = [f"│ {_ROCKET} Lakeside  7m │"]
+    before, after = _screen(first, cols), _screen(second, cols)
+
+    for pin, lands in ((False, False), (True, True)):
+        output = _vt100(cols, rows)
+        if pin:
+            output = colsnap.PinnedOutput(output)
+        tty = _Tty(cols, rows, draws={_WAVE: 1, _ROCKET: 1})
+        position = _paint(output, before, None, _point(), cols, rows)
+        tty.feed(_drained(output))
+        _paint(output, after, before, position, cols, rows)
+        tty.feed(_drained(output))
+        seven = cell_len(second[0].split("7m")[0])
+        assert (tty.glyph_at(0, seven) == "7") is lands
+
+
+def test_the_pinned_output_brackets_only_a_lone_uncertain_glyph() -> None:
+    """What reaches the terminal for each kind of write prompt_toolkit's renderer makes."""
+
+    class _Recorder:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, str]] = []
+
+        def write(self, data: str) -> None:
+            self.calls.append(("write", data))
+
+        def write_raw(self, data: str) -> None:
+            self.calls.append(("raw", data))
+
+    recorder = _Recorder()
+    output = colsnap.PinnedOutput(recorder)
+    for data in ("a", "\r\n", "│", "⠿", "é", "ab"):
+        output.write(data)
+    assert recorder.calls == [
+        ("write", "a"),
+        ("write", "\r\n"),
+        ("write", "│"),
+        ("write", "⠿"),
+        ("write", "é"),
+        ("write", "ab"),
+    ], "a cell of text passes straight through"
+
+    for glyph in (_WAVE, _FAMILY, _CA):
+        recorder.calls.clear()
+        output.write(glyph)
+        from prompt_toolkit.utils import get_cwidth
+
+        step = get_cwidth(glyph)
+        assert recorder.calls == [
+            ("raw", "\x1b7"),
+            ("write", glyph),
+            ("raw", f"\x1b8\x1b[{step}C"),
+        ]
+
+    recorder.calls.clear()
+    output.write(f"{_WAVE}{_WAVE}")  # two glyphs is not a cell, and is not pinned
+    assert recorder.calls == [("write", f"{_WAVE}{_WAVE}")]
+    assert output.calls is recorder.calls  # everything else forwards
+
+
+_ROCKET = "\U0001f680"  # 🚀 a second emoji the disagreeing terminal draws in one cell
+
+
+def _point():  # noqa: ANN202 - a prompt_toolkit Point at the origin
+    """The cursor at home, where a first paint starts."""
+    from prompt_toolkit.data_structures import Point
+
+    return Point(x=0, y=0)

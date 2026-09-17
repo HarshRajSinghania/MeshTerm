@@ -56,16 +56,27 @@ so the list is a performance claim and never the thing correctness rests on. Tha
 point of the inversion: the old exception sets had to be *complete* to keep the app aligned,
 and this one only has to be *cheap*.
 
-**Where this applies.** :mod:`~meshterm.ui.tui.fastrender` writes each changed row itself, as
-one run from column 0, and that is the only place in the app where a row's bytes are ours to
-touch on their way out. A frame prompt_toolkit lays out instead — a floating dialog, and the
-backdrop it forces a full repaint of — still goes through its differential renderer, which
-tracks the cursor in arithmetic of its own and is not corrected here.
+**Two writers, two spellings of the same pin.** A frame reaches the terminal one of two ways,
+and each knows something different about where its cursor is:
 
-The escape hatch is ``MESHTERM_COLUMN_SNAP=0``, the same shape as the emoji-width knobs next
-door (``MESHTERM_EMOJI_VS16``, ``MESHTERM_NARROW_EMOJI``, ``MESHTERM_WIDE_EMOJI``) and for the
-same reason: this is terminal geometry, read once at session build, not a choice anybody makes
-about how the app behaves.
+* :mod:`~meshterm.ui.tui.fastrender` writes a plain full-screen frame itself, each changed row
+  as one run from column 0. It knows every column absolutely, so :func:`snap_row` spells the
+  pin as an absolute address, ``CSI n G``.
+* Anything prompt_toolkit lays out — a floating dialog, and the backdrop it repaints — goes out
+  through its differential renderer, which never knows a column absolutely: it steps a cursor
+  of its own by relative moves and adds each character's measured width as it writes. So
+  :class:`PinnedOutput` spells the pin *relative to the glyph itself* — save the cursor, draw
+  the glyph, restore, step forward exactly the width the renderer is about to add. The
+  terminal's cursor then lands where the renderer's arithmetic says it is, after every glyph,
+  and a relative move computed from that arithmetic is a correct move. Nothing is tracked, so
+  nothing can drift out of step with the renderer's own bookkeeping.
+
+A platform that never draws a glyph outside its own font has nothing to pin, and pins nothing:
+the PicoCalc folds every emoji away before it reaches the console, and every glyph it does draw
+is one :mod:`~meshterm.ui.fontset` has verified on the device.
+
+The escape hatch is ``MESHTERM_COLUMN_SNAP=0``: this is terminal geometry, read once at session
+build, not a choice anybody makes about how the app behaves.
 """
 
 from __future__ import annotations
@@ -73,9 +84,12 @@ from __future__ import annotations
 import os
 import re
 from collections import OrderedDict
+from typing import Any
 
+from prompt_toolkit.utils import get_cwidth
 from rich.cells import cell_len
 
+from ...platforms import get_platform
 from .emoji_width import clusters
 
 #: The glyph ranges MeshTerm draws in bulk whose single-cell width both width authorities
@@ -127,15 +141,24 @@ _CACHE: OrderedDict[str, str] = OrderedDict()
 #: Rows the cache holds before evicting the least recently used.
 _CACHE_MAX = 1024
 
+#: DECSC and DECRC: save the cursor, and return to it. What :class:`PinnedOutput` brackets a
+#: glyph with, so the step after it is measured from where the glyph *started* rather than from
+#: wherever the terminal's own width table left the cursor. Both also save and restore the
+#: current colour, which is harmless here: nothing changes it between the two.
+_SAVE = "\x1b7"
+_RESTORE = "\x1b8"
+
 
 def enabled() -> bool:
-    """Whether written rows carry absolute column addresses.
+    """Whether written glyphs are pinned to the columns the app measured them into.
 
-    On always, with ``MESHTERM_COLUMN_SNAP=0`` to turn it off for one run — the escape hatch a
-    terminal that mishandles ``CSI n G`` would need, and the switch that shows what the
-    alignment looks like without it. Read at session build, like its neighbours.
+    On wherever the platform draws emoji, with ``MESHTERM_COLUMN_SNAP=0`` to turn it off for one
+    run — the escape hatch a terminal that mishandles the pins would need, and the switch that
+    shows what the alignment looks like without them. Off on a platform that draws no emoji at
+    all, where every glyph is one the platform's own font has already verified. Read at session
+    build, like its neighbours.
     """
-    return os.environ.get("MESHTERM_COLUMN_SNAP") != "0"
+    return os.environ.get("MESHTERM_COLUMN_SNAP") != "0" and get_platform().emoji
 
 
 def _pinned(cluster: str) -> bool:
@@ -220,4 +243,57 @@ def _pin_text(text: str, parts: list[str], column: int, owed: int) -> tuple[int,
     return column, owed
 
 
-__all__ = ["enabled", "snap_row"]
+def _lone_pinned_glyph(data: str) -> bool:
+    """Whether ``data`` is exactly one glyph, and one :func:`_pinned` says needs pinning.
+
+    What prompt_toolkit's renderer writes is one screen cell's content at a time — a character,
+    or a whole sequence it was handed as one (see
+    :class:`~meshterm.ui.tui.emoji_width.ClusterTextControl`) — so that is the only shape pinned.
+    Anything longer is not a cell, and passes through as it came.
+    """
+    if len(data) == 1:
+        return bool(_UNPINNED.match(data))
+    for cluster in clusters(data):
+        return cluster == data
+    return False
+
+
+class PinnedOutput:
+    """A prompt_toolkit ``Output`` proxy that pins every uncertain glyph it is asked to write.
+
+    prompt_toolkit's renderer writes a screen cell with ``write`` and then adds that cell's
+    measured width to a cursor it keeps for itself; every later move on the row is computed
+    from that cursor, relatively. Where the terminal draws the glyph at another width, the two
+    cursors part company and every move after it lands a column out. This proxy closes the gap
+    at the one moment it opens: a glyph :func:`_pinned` cannot vouch for is written between a
+    cursor save and a restore, and followed by a forward step of exactly the width the renderer
+    is about to add — so the terminal's cursor is back in step before the renderer's next move.
+
+    Everything else — ``write_raw``, the cursor moves, the size, the attributes — forwards to the
+    wrapped output untouched, and so does ``write`` for anything that is not a lone uncertain
+    glyph, which is almost every call it gets.
+    """
+
+    def __init__(self, inner: Any) -> None:
+        """Wrap ``inner``, the concrete prompt_toolkit output for the real terminal."""
+        self._inner = inner
+
+    def write(self, data: str) -> None:
+        """Write ``data``, pinning the cursor after it when it is a glyph worth pinning."""
+        inner = self._inner
+        if data.isascii() or not _lone_pinned_glyph(data):
+            inner.write(data)
+            return
+        width = get_cwidth(data)
+        inner.write_raw(_SAVE)
+        inner.write(data)
+        # A forward step of zero is read as a step of one, so a glyph that measures nothing
+        # (a stranded joiner) just returns to where it started.
+        inner.write_raw(f"{_RESTORE}\x1b[{width}C" if width else _RESTORE)
+
+    def __getattr__(self, name: str) -> Any:
+        """Forward every other attribute and method straight to the wrapped output."""
+        return getattr(self._inner, name)
+
+
+__all__ = ["PinnedOutput", "enabled", "snap_row"]

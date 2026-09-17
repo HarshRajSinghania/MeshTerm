@@ -260,7 +260,7 @@ def _joined_out(text: str) -> str:
 def clusters(text: str) -> Iterator[str]:
     """Split ``text`` into the glyphs the terminal actually draws, never inside one.
 
-    The same run :func:`_join_zwj_clusters` gathers out of a laid-out line, read off a plain
+    The same run :func:`_join_clusters` gathers out of a laid-out line, read off a plain
     string instead: a base, whatever extends it (:data:`_EXTENDERS` — a variation selector, a
     skin tone), then any number of *joiner + component + extenders* groups, plus the
     Regional Indicator **pair** a country flag is drawn from. A joiner that joins nothing
@@ -751,21 +751,32 @@ class _Cluster(str):
         yield str(self)
 
 
-def _join_zwj_clusters(line: list) -> list:
-    """Merge each emoji ZWJ sequence in one screen line into a single :class:`_Cluster` fragment.
+def _join_clusters(line: list) -> list:
+    """Merge each multi-glyph emoji in one screen line into a single :class:`_Cluster` fragment.
 
     The line arrives one codepoint per fragment (that is what
-    :class:`~prompt_toolkit.formatted_text.ANSI` produces), so a sequence is a run to be
-    gathered: a base, its optional variation selector or skin tone (:data:`_EXTENDERS`), then any
-    number of *joiner + component + optional extenders* groups. A run with no joiner in it is
-    handed back untouched — including a lone VS16 pair or toned emoji, which prompt_toolkit
-    already folds into the preceding cell on its own, and a joiner with no pictograph after it
-    (see :func:`_joins`), which is not a sequence at all.
+    :class:`~prompt_toolkit.formatted_text.ANSI` produces), so a glyph built from several is a run
+    to be gathered, the same run :func:`clusters` reads off a plain string. Two shapes need it:
 
-    The whole line is handed back unchanged when it holds no joiner, which is almost every line;
-    the scan is one comparison per cell and runs only when a control's content actually changes.
+    * **A ZWJ sequence**: a base, its optional variation selector or skin tone
+      (:data:`_EXTENDERS`), then any number of *joiner + component + optional extenders* groups.
+      prompt_toolkit would otherwise give each component a cell of its own.
+    * **A flag**: a pair of Regional Indicators. Each indicator takes a cell of its own in
+      prompt_toolkit's arithmetic, and summing them was already made right; what merging adds is
+      that the pair is *written* as one. The renderer's writes are what
+      :class:`~meshterm.ui.tui.colsnap.PinnedOutput` pins, and a pin between the two halves of
+      a flag is a cursor move between them, after which a terminal no longer joins them into
+      one glyph at all.
+
+    A run with neither is handed back untouched — including a lone VS16 pair or toned emoji,
+    which prompt_toolkit already folds into the preceding cell on its own, and a joiner with no
+    pictograph after it (see :func:`_joins`), which is not a sequence at all.
+
+    The whole line is handed back unchanged when it holds no joiner and no indicator, which is
+    almost every line; the scan is one pass per line and runs only when a control's content
+    actually changes.
     """
-    if not any(item[1] == _ZWJ for item in line):
+    if not any(item[1] == _ZWJ or _is_regional_indicator(item[1]) for item in line):
         return line
     merged: list = []
     index = 0
@@ -775,6 +786,15 @@ def _join_zwj_clusters(line: list) -> list:
         while end < count and line[end][1] in _EXTENDERS:
             end += 1
         joined = False
+        if (
+            _is_regional_indicator(line[index][1])
+            and end < count
+            and _is_regional_indicator(line[end][1])
+        ):
+            joined = True
+            end += 1
+            while end < count and line[end][1] in _EXTENDERS:
+                end += 1
         while end + 1 < count and line[end][1] == _ZWJ and _joins(line[end + 1][1]):
             joined = True
             end += 2  # the joiner and the codepoint it joins
@@ -794,7 +814,7 @@ class ClusterTextControl(FormattedTextControl):
     """A :class:`~prompt_toolkit.layout.controls.FormattedTextControl` that keeps emoji whole.
 
     The control is the last place a screen's text is still arranged in lines and still ours to
-    touch, which is exactly what merging a ZWJ sequence needs: ``split_lines`` runs before this
+    touch, which is exactly what merging a sequence needs: ``split_lines`` runs before this
     point and returns plain ``str`` parts, so a :class:`_Cluster` marked any earlier would not
     survive to be laid out. Everything downstream — the width lookup, the wrapping, the screen
     buffer — reads the merged lines.
@@ -823,7 +843,7 @@ class ClusterTextControl(FormattedTextControl):
             def get_line(i: int, _source=source, _cache=cache) -> list:
                 line = _cache.get(i)
                 if line is None:
-                    line = _cache[i] = _join_zwj_clusters(_source(i))
+                    line = _cache[i] = _join_clusters(_source(i))
                 return line
 
             content.get_line = get_line

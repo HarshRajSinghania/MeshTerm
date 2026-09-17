@@ -320,7 +320,7 @@ def test_drawable_folds_only_what_no_terminal_can_draw() -> None:
     assert ew.drawable(f"Bob {_FAMILY}{_THUMB}") == f"Bob {_FAMILY}{_THUMB}"
 
 
-def test_join_zwj_clusters_merges_only_joined_runs() -> None:
+def test_join_clusters_merges_only_joined_runs() -> None:
     """The fragment merge gathers a whole sequence and leaves everything else alone.
 
     prompt_toolkit's ANSI text arrives one codepoint per fragment, so a sequence is a run:
@@ -335,29 +335,35 @@ def test_join_zwj_clusters_merges_only_joined_runs() -> None:
 
     # A line with no joiner is handed straight back — the same object, not a copy.
     plain = line("hi 📡")
-    assert ew._join_zwj_clusters(plain) is plain
+    assert ew._join_clusters(plain) is plain
 
     # The shrug's four fragments become one; the bars around it are untouched.
-    assert texts(ew._join_zwj_clusters(line(f"|{_SHRUG}|"))) == ["|", _SHRUG, "|"]
+    assert texts(ew._join_clusters(line(f"|{_SHRUG}|"))) == ["|", _SHRUG, "|"]
     # Three joined people, five fragments, still one glyph.
-    assert texts(ew._join_zwj_clusters(line(_FAMILY))) == [_FAMILY]
+    assert texts(ew._join_clusters(line(_FAMILY))) == [_FAMILY]
     # A selector on the *base*, before the joiner, belongs to the run: ❤️‍🔥.
     burning = "❤️‍\U0001f525"
-    assert texts(ew._join_zwj_clusters(line(burning))) == [burning]
+    assert texts(ew._join_clusters(line(burning))) == [burning]
     # A bare VS16 pair is not a sequence — prompt_toolkit already folds it into the cell
     # before it, so those fragments are left exactly as they came.
-    assert texts(ew._join_zwj_clusters(line(f"☀️{_SHRUG}"))) == ["☀", "️", _SHRUG]
+    assert texts(ew._join_clusters(line(f"☀️{_SHRUG}"))) == ["☀", "️", _SHRUG]
     # A trailing joiner with nothing to join is not a sequence either.
-    assert texts(ew._join_zwj_clusters(line(f"a{_ZWJ}"))) == ["a", _ZWJ]
+    assert texts(ew._join_clusters(line(f"a{_ZWJ}"))) == ["a", _ZWJ]
     # A skin tone on the base belongs to the run the way its selector does.
-    assert texts(ew._join_zwj_clusters(line(f"|{_TECHIE}|"))) == ["|", _TECHIE, "|"]
+    assert texts(ew._join_clusters(line(f"|{_TECHIE}|"))) == ["|", _TECHIE, "|"]
     # A stranded joiner, followed by the name lane's padding, is not a sequence: the space
     # after it keeps a fragment — and so a cell — of its own.
-    assert texts(ew._join_zwj_clusters(line(f"{_STRANDED} x"))) == [_FLAG, _ZWJ, " ", "x"]
+    assert texts(ew._join_clusters(line(f"{_STRANDED} x"))) == [_FLAG, _ZWJ, " ", "x"]
+    # A flag's two indicators are one glyph too, written as one: a cursor pin between the
+    # halves would leave a terminal drawing two letters instead of a flag.
+    assert texts(ew._join_clusters(line(f"|{_CA}|"))) == ["|", _CA, "|"]
+    assert texts(ew._join_clusters(line(f"{_CA}{_CN}"))) == [_CA, _CN]
+    # A lone indicator is no pair, and stays a fragment of its own.
+    assert texts(ew._join_clusters(line(f"{_CA[0]} x"))) == [_CA[0], " ", "x"]
 
     # A merged fragment iterates as the whole sequence, which is what makes prompt_toolkit
     # build one Char of it instead of one per codepoint.
-    (merged,) = texts(ew._join_zwj_clusters(line(_SHRUG)))
+    (merged,) = texts(ew._join_clusters(line(_SHRUG)))
     assert list(merged) == [_SHRUG] and merged == _SHRUG
 
 

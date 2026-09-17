@@ -34,7 +34,7 @@ from rich.text import Text
 from ...core import win32dll
 from ...platforms import get_platform
 from ...services import modifier_watch
-from . import fastrender, fkeys, frame
+from . import colsnap, fastrender, fkeys, frame
 from .emoji_width import ClusterTextControl
 from .overlay import BusyOverlay
 from .progress import TuiProgress
@@ -1665,18 +1665,33 @@ class TuiSession:
         return app
 
     def _resolve_output(self) -> Any:
-        """The output the app renders to — optionally widened to reclaim the last column.
+        """The output the app renders to: the real terminal, pinned and optionally widened.
 
         Only the *real* terminal (``self._output is None``, so prompt_toolkit would build its
-        own output) is wrapped, and only when :func:`_reclaim_last_column` says on: a test
-        that supplies its own output keeps the exact size it set, so headless rendering stays
-        deterministic. See :class:`_WidthExtendedOutput` for what the wrap does.
+        own output) is wrapped: a test that supplies its own output keeps the exact size and
+        the exact bytes it set, so headless rendering stays deterministic. Two wraps, each
+        where its own gate says so, and either may be the only one:
+
+        * :class:`~meshterm.ui.tui.colsnap.PinnedOutput`, where
+          :func:`~meshterm.ui.tui.colsnap.enabled` — every glyph prompt_toolkit's renderer
+          writes lands in the column that renderer measured it into.
+        * :class:`_WidthExtendedOutput`, where :func:`_reclaim_last_column` — outermost, since
+          the size it reports is what both renderers and the compositor lay out against.
+
+        With neither, this is ``None`` and prompt_toolkit builds its own output as before.
         """
-        if self._output is not None or not _reclaim_last_column():
+        pin = colsnap.enabled()
+        reclaim = _reclaim_last_column()
+        if self._output is not None or not (pin or reclaim):
             return self._output
         from prompt_toolkit.output.defaults import create_output
 
-        return _WidthExtendedOutput(create_output())
+        output: Any = create_output()
+        if pin:
+            output = colsnap.PinnedOutput(output)
+        if reclaim:
+            output = _WidthExtendedOutput(output)
+        return output
 
     # --- rendering -----------------------------------------------------------
 
