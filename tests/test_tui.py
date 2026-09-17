@@ -183,6 +183,20 @@ def test_select_cursor_line_tracks_selection() -> None:
     assert screen.cursor_line() == 2
 
 
+def test_select_cursor_line_counts_a_prompt_once() -> None:
+    """Under a prompt, the reported cursor line is the highlighted row's own line.
+
+    The rows are laid out after the prompt's lines, so the index they are recorded at
+    already counts them. Adding the prompt's height on top reported a line further down,
+    and the frame kept *that* line in view: walking ↑ then carried the real highlight above
+    the window's top edge (the purge preview, whose prompt sits over a long list).
+    """
+    items = [Choice(f"c{i}", i) for i in range(12)]
+    screen = SelectScreen("pick", items, prompt="Read the list, then pick one.", default=3)
+    lines = screen.render_body(40)
+    assert "❯ c3" in Text.from_ansi(lines[screen.cursor_line()]).plain
+
+
 def test_select_callable_title_re_renders_live() -> None:
     """A callable title is resolved on every repaint, so a live badge tracks state."""
     unread = {"n": 0}
@@ -449,6 +463,26 @@ def test_select_pinned_column_header_keeps_the_last_row_reachable() -> None:
     assert Text.from_ansi(visible[0]).plain.strip() == "SETTING          VALUE"
     assert any("peer7" in Text.from_ansi(row).plain for row in visible)
     assert below is False
+
+
+def test_select_walking_up_from_the_bottom_keeps_the_highlight_in_view() -> None:
+    """↑ from the last row to the first never leaves the highlight outside the window.
+
+    At the bottom the window slides down under its pinned rows, so they cost stale lines at
+    the top rather than the last ones. Walking back up, the highlight reaches the top line
+    of the scroll window before the scroll has to move. A slide past that line hid the row
+    the reader had just stepped onto, for one step with a column header pinned and for two
+    with a section heading under it.
+    """
+    for viewport in (5, 6, 7, 8):
+        screen = _columned_menu()
+        screen.handle("end")
+        for _ in range(len(screen._choices())):
+            visible, _above, _below = frame._visible_slice(screen, screen.render_body(40), viewport)
+            rows = [Text.from_ansi(row).plain for row in visible]
+            current = screen._current_choice().label
+            assert any(f"❯ {current}" in row for row in rows), (viewport, current, rows)
+            screen.handle("up")
 
 
 def test_select_resolves_a_width_aware_separator_at_the_render_width() -> None:

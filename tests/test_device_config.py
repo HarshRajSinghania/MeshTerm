@@ -622,6 +622,50 @@ async def test_sparing_every_row_leaves_the_sweep_with_nothing_to_do() -> None:
     assert victims == []
 
 
+@pytest.mark.parametrize("platform_name", ["regular", "picocalc"])
+def test_the_purge_preview_keeps_its_cursor_in_its_box_walking_both_ways(
+    platform_name: str,
+) -> None:
+    """The preview's highlight stays inside its box however far the reader walks, and back.
+
+    A long sweep scrolls, and it is a list with a prompt over a pinned column header. Both
+    once let the cursor leave the window on the way back up: the prompt was counted twice in
+    the line the frame keeps in view, so the real row rode above the box's top edge, and at
+    the bottom the header's slide dropped the row the reader had just stepped onto. Walked
+    through the real dialog compositor on each platform, at its own readable width.
+    """
+    from rich.text import Text
+
+    from meshterm.core.contact_score import ContactSignals, ScoredContact
+    from meshterm.core.models import Contact
+    from meshterm.platforms import PICOCALC, REGULAR, set_platform
+    from meshterm.ui.purge_screen import _preview_screen
+    from meshterm.ui.tui.frame import compose_dialog
+
+    platform = {"regular": REGULAR, "picocalc": PICOCALC}[platform_name]
+    set_platform(platform)
+
+    def scored(index: int) -> ScoredContact:
+        key = f"{index:02x}" * 32
+        return ScoredContact(
+            contact=Contact(name=f"Faraway {index}", public_key=key, key_prefix=key[:12]),
+            signals=ContactSignals(node=key[:12], heard_age_days=40.0 + index, packets=index),
+            score=float(index),
+            percentile=index,
+        )
+
+    screen = _preview_screen([scored(i) for i in range(40)])
+    cols, rows = platform.readable_cols, 24
+    # The cursor opens on Apply, at the bottom. Walk to the first contact, down to Back,
+    # and up again: every step is a paint the reader sees.
+    walk = [None] + ["up"] * 45 + ["down"] * 45 + ["up"] * 45
+    for step, key in enumerate(walk):
+        if key is not None:
+            screen.handle(key)
+        box = Text.from_ansi(compose_dialog(screen, cols, rows)).plain
+        assert "❯" in box, f"step {step} ({key}): the highlight left the box\n{box}"
+
+
 async def test_deleting_one_contact_drops_it_from_the_device_and_the_store() -> None:
     """The single-contact delete: a red confirm, then both halves of the union forgotten.
 

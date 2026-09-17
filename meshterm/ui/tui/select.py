@@ -711,14 +711,12 @@ class SelectScreen(Screen):
         # One entry per body line: a finished string, or a callable that draws it when the
         # frame asks. Positions are exact either way, which is all the layout below reads.
         lines: list[str | Callable[[], str]] = []
-        # A prompt (when set) sits above the list, offsetting every row below it; the cursor
-        # line and sticky-header indices below are shifted by exactly this many lines.
-        prefix = 0
+        # A prompt (when set) sits above the list, offsetting every row below it. Every index
+        # recorded below — the cursor line, the sticky headers — is read off ``len(lines)``,
+        # which already counts the prompt's lines, so none of them adds the offset again.
         if self._prompt:
-            plines = render_lines(Text(self._prompt), width)
-            lines.extend(plines)
+            lines.extend(render_lines(Text(self._prompt), width))
             lines.append("")
-            prefix = len(plines) + 1
         # Record each section heading (a Separator that says it is one) as a sticky block, so
         # one that scrolls off is re-pinned to the top rows by the base Screen.sticky_block —
         # and a pinned separator (a column header) as the whole-list header pinned above it.
@@ -780,9 +778,8 @@ class SelectScreen(Screen):
                 lines.append(self._detail_drawer(detail, width))
         if not choices:
             lines.append(render_to_ansi(Text("no matches", style="muted"), width))
-        # Remember where the highlighted row landed so the session can keep it in view,
-        # shifted past any prompt lines drawn above the list.
-        self._cursor = None if cursor_at is None else cursor_at + prefix
+        # Remember where the highlighted row landed so the session can keep it in view.
+        self._cursor = cursor_at
         return LazyLines(lines)
 
     def _row_drawer(self, item: Choice, is_sel: bool, width: int) -> Callable[[], str]:

@@ -39,17 +39,26 @@ _PIN_SETTLE_PASSES = 3
 _BANNER_CROP_ROWS = 9
 
 
-def _window_start(scroll: int, total: int, viewport: int, pinned: int) -> int:
+def _window_start(
+    scroll: int, total: int, viewport: int, pinned: int, cursor: int | None = None
+) -> int:
     """The body line the visible window starts at, given ``pinned`` reserved top rows.
 
     Normally the scroll offset itself. Scrolled fully to the bottom, the reserved rows must
     not cost the *last* body lines (a chat's input row would vanish exactly when the
     transcript fills the screen), so the window slides down by as many rows as are pinned —
     the lines it drops are at the top, right under the pins, where they are stale.
+
+    Except the ``cursor``'s, which is never stale: the slide stops at the highlighted line.
+    A reader walking ↑ back up a list that is still scrolled to its bottom reaches the
+    window's top line with the scroll yet to move, and a slide past that line hid the very
+    row they had just stepped onto. Where the two cannot share the window the highlight
+    keeps its row and the last line waits below the ``↓`` marker.
     """
     cap = max(1, viewport - pinned)
     if scroll >= total - viewport and total > cap:
-        return min(scroll + pinned, total - cap)
+        start = min(scroll + pinned, total - cap)
+        return start if cursor is None else max(scroll, min(start, cursor))
     return scroll
 
 
@@ -102,14 +111,14 @@ def _visible_slice(screen: Screen, lines: list[str], viewport: int) -> tuple[lis
     screen.scroll = scroll
 
     if pinned:
-        start = _window_start(scroll, total, viewport, len(pinned))
+        start = _window_start(scroll, total, viewport, len(pinned), cursor)
         if start != scroll:
             # The window slid down off the scroll offset, so the pins must describe the row
             # it now *starts* at — otherwise a section heading among the dropped lines would
             # simply vanish instead of being pinned. Re-ask, then re-settle the start against
             # however many rows that reserves (never unpinning: the slide depends on it).
             pinned = screen.sticky_rows(start) or pinned
-            start = _window_start(scroll, total, viewport, len(pinned))
+            start = _window_start(scroll, total, viewport, len(pinned), cursor)
         cap = max(1, viewport - len(pinned))
         visible = pinned + lines[start : start + cap]
         more_below = start + cap < total
