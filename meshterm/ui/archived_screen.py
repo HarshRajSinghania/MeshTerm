@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """The Archived contacts list: what the sweep took off the device, and when.
 
-A purge (see :mod:`~meshterm.ui.purge_screen`) removes a contact from the *device* — the
-scarce resource — and keeps it here in full. This screen is where those contacts live: the
-same sortable, filterable lane layout as the Contacts list, in its own lane set
+An archive sweep (see :mod:`~meshterm.ui.sweep_screen`) removes a contact from the *device*
+— the scarce resource — and keeps it here in full. This screen is where those contacts live:
+the same sortable, filterable lane layout as the Contacts list, in its own lane set
 (``NAME · ARCHIVED · KEY``, :data:`~meshterm.ui.contactlist.ARCHIVED_LANES`), with its own
 sort ring over exactly those three columns.
 

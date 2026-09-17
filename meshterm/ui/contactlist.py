@@ -465,7 +465,7 @@ class ContactListScreen(SelectScreen):
 
         Built on ``super()``'s lane rather than the bare default, so a contact list that
         carries section headings (the Time Machine's whole-mesh lead, the Contacts screen's
-        purge tail) keeps the section jumps the select list promotes onto F1/F2.
+        archive tail) keeps the section jumps the select list promotes onto F1/F2.
         """
         from .tui.fkeys import FPair
 
@@ -536,7 +536,7 @@ class ContactListScreen(SelectScreen):
         """The lead rows, the sort-aware column header, the contact lanes, then any tail rows.
 
         Own-node rows lead the lanes and stay first whatever the sort: only the block
-        below them reorders (see :func:`_ordered`). Tail rows (a purge action, the exit
+        below them reorders (see :func:`_ordered`). Tail rows (an archive action, the exit
         group) close the list, past every contact whatever the sort.
         """
         items: list = list(self._lead)

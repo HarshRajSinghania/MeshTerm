@@ -207,7 +207,7 @@ class DeviceState:
 
         So the three are merged by taking the latest, here — once, at the one point every
         screen fetches contacts through, so heard lanes, recency sorts, silence alerts and
-        the purge ladder all see the same honest value. Taking the *latest* rather than
+        the archive ladder all see the same honest value. Taking the *latest* rather than
         preferring either side means a device time still stands whenever the firmware caught
         an advert we did not record (monitoring off, app not running); we only override it
         with proof of a later reception. A contact we have truly never heard stays ``None``

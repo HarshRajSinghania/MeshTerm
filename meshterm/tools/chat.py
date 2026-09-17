@@ -135,7 +135,7 @@ class ChatTool(Tool):
             # scroll nor the erase atom is written into the base: the select list splices
             # each in exactly when its key would act — ←→ only while the highlighted row
             # overflows, Del only on a thread that has history to lose — and the three of
-            # them together are what has to stay inside 72 cells (the purge preview's list
+            # them together are what has to stay inside 72 cells (the archive preview's list
             # is the same arithmetic). `Del erase` is that budget's doing: the row already
             # names the conversation, so the atom spends its cells on the verb, and `erase`
             # is the word the app uses elsewhere for taking data away.

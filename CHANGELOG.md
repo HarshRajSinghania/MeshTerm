@@ -17,6 +17,11 @@ allowed to change behaviour, not just add to it.
 
 ## [Unreleased]
 
+- **Purge contacts is Archive contacts**, because archiving is what it does: every contact
+  it takes off the device stays in MeshTerm and can be restored. The row, its screens, its
+  confirm button and its progress bar all say Archive, and the row wears the 💾 that
+  archiving one contact already wore, not the red 🗑 a deletion gets.
+
 - **`scripts/` is sorted by handheld.** The PicoCalc's Calculinux bring-up, its two
   console-font builds, the GPL-2.0 text that belongs beside the 6×8 one, and the
   `xiao-radio/` firmware kit all live under `scripts/picocalc/`; the SPI bridge is

@@ -58,7 +58,7 @@ def test_an_unknown_signal_scores_neutral_not_zero() -> None:
     location at all, plenty of nodes are never overheard as a relayed packet so carry no hop
     count, and a channel poster whose name matches no contact can't be attributed. If any of
     those resolved to zero, every unmeasurable contact would sink together and the sweep
-    would be purging by how much metadata a node happens to broadcast.
+    would be archiving by how much metadata a node happens to broadcast.
     """
     # Two contacts identical in every measured way; one is simply unplaced and unrouted.
     ranked = _by_name(

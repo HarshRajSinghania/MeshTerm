@@ -190,7 +190,7 @@ def _contacts(cols: int, rows: int) -> Screen:
     return ContactsScreen("Homestead", "cc" * 32, contacts, 1, {"aa" * 6: 7}, sort, archived=12)
 
 
-def _purge_ranked():  # noqa: ANN201
+def _archive_ranked():  # noqa: ANN201
     """A ranked contact table for the sweep's screens — scored by the real function.
 
     Deliberately *not* hand-stamped percentiles. The whole point of the gallery is that a
@@ -228,25 +228,25 @@ def _purge_ranked():  # noqa: ANN201
     return rank_contacts(contacts, signals)
 
 
-def _purge_victims():  # noqa: ANN201
+def _archive_victims():  # noqa: ANN201
     """The sweep's victim list: the weakest half of the ranking, weakest first."""
     from meshterm.core.contact_score import sweep_candidates
 
-    ranked = _purge_ranked()
+    ranked = _archive_ranked()
     return sweep_candidates(ranked, keep=2)
 
 
-def _purge_ladder(cols: int, rows: int) -> Screen:
-    from meshterm.ui.purge_screen import _target_screen
+def _archive_ladder(cols: int, rows: int) -> Screen:
+    from meshterm.ui.sweep_screen import _target_screen
 
-    ranked = _purge_ranked()
+    ranked = _archive_ranked()
     return _target_screen(ranked, [r for r in ranked if not r.protected])
 
 
-def _purge_preview(cols: int, rows: int) -> Screen:
-    from meshterm.ui.purge_screen import _preview_screen
+def _archive_preview(cols: int, rows: int) -> Screen:
+    from meshterm.ui.sweep_screen import _preview_screen
 
-    return _preview_screen(_purge_victims())
+    return _preview_screen(_archive_victims())
 
 
 def _archived(cols: int, rows: int) -> Screen:
@@ -972,8 +972,8 @@ def _share_qr(cols: int, rows: int) -> Screen:
 _ENTRIES: list[_Entry] = [
     _Entry("dashboard", _dashboard),
     _Entry("contacts", _contacts),
-    _Entry("purge_ladder", _purge_ladder),
-    _Entry("purge_preview", _purge_preview),
+    _Entry("archive_ladder", _archive_ladder),
+    _Entry("archive_preview", _archive_preview),
     _Entry("archived", _archived),
     _Entry("node_detail", _node_detail),
     _Entry("node_detail_map", _node_detail_map),

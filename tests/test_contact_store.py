@@ -238,7 +238,7 @@ async def test_devstate_merge_keeps_a_repeater_a_repeater(ctx) -> None:
 def test_an_archived_contact_is_remembered_but_kept_out_of_the_merge(tmp_path) -> None:  # noqa: ANN001
     """Archiving frees a device slot without losing the contact — and without undoing itself.
 
-    The sweep's whole shape (see :mod:`meshterm.ui.purge_screen`): the contact is deleted
+    The sweep's whole shape (see :mod:`meshterm.ui.sweep_screen`): the contact is deleted
     from the *device*, which is the scarce resource, and kept here in full. The subtlety is
     the merge — this store's normal job is to union remembered contacts back into any list
     the device isn't reporting, which would put an archived contact straight back and make

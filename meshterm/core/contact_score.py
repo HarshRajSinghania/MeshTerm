@@ -4,7 +4,7 @@
 A companion's contact table is finite, and a mesh fills it with whatever adverts happen to
 arrive — so a radio left running long enough ends up holding mostly nodes heard once, in
 passing, from four hops away, while there is no room left to *discover* anyone new. The
-Contacts screen's bulk sweep (see :func:`~meshterm.ui.purge_screen.purge_contacts`) is how
+Contacts screen's bulk sweep (see :func:`~meshterm.ui.sweep_screen.archive_contacts`) is how
 that table gets its headroom back, and this module is the judgement it runs on: one score
 per contact, so the sweep can take the weakest and leave the ones you would actually miss.
 
@@ -18,7 +18,7 @@ must not have.
 contacts on a real mesh advertise no location, plenty are never overheard as a relayed
 packet so have no hop count, and a channel poster whose name matches no contact cannot be
 attributed at all. If "we don't know" resolved to ``0.0``, every one of those would sink to
-the bottom *together*, and the sweep would purge by how much metadata a node happens to
+the bottom *together*, and the sweep would archive by how much metadata a node happens to
 broadcast rather than by how much it is worth. So a term that cannot be computed returns
 ``None`` and is filled with the **population median** of the contacts that could compute it
 (:func:`_fill_unknowns`) — the contact lands exactly where an average peer would on that
@@ -45,7 +45,7 @@ but they are never swept.
 came from. What this module hands a screen instead is a *rank* — the list comes back ordered,
 and :attr:`~ScoredContact.percentile` places one contact in the field without a legend and
 without going stale when the weights change (see :func:`percentile_rank`). What a screen draws
-beside a contact is neither: the purge preview shows the :class:`ContactSignals` themselves, a
+beside a contact is neither: the archive preview shows the :class:`ContactSignals` themselves, a
 lane per measured kind, because the thing a reader can check against what they know is the
 evidence, not this module's reading of it.
 """
@@ -69,13 +69,13 @@ PROTECT_WATCHED = "watched"
 #: undone by a score. (Inbound-only traffic does *not* protect — anyone can message you.)
 PROTECT_MESSAGED = "messaged"
 
-#: Protection reason: a repeater or room server whose admin password is stored. Purging it
+#: Protection reason: a repeater or room server whose admin password is stored. Archiving it
 #: costs the login, which is a far larger loss than a contact slot is a gain.
 PROTECT_ADMIN = "admin"
 
 #: Protection reason: MeshTerm has never heard this contact, so every evidence term is
 #: empty for a reason that says nothing about the node. It came from the device's own table
-#: (or was added by hand) before this history began; sweeping it would be purging by how
+#: (or was added by hand) before this history began; sweeping it would be archiving by how
 #: long MeshTerm has been running rather than by anything the contact did.
 PROTECT_UNOBSERVED = "unobserved"
 
@@ -214,9 +214,9 @@ class ScoredContact:
         protection: Why this contact can never be swept, or ``None`` if it can. One of the
             ``PROTECT_*`` constants.
 
-    The **signals** are what a screen shows, not the score or its terms: the purge preview
+    The **signals** are what a screen shows, not the score or its terms: the archive preview
     draws one lane per measured kind straight off :attr:`signals` (see
-    :mod:`~meshterm.ui.purge_screen`), so a reader auditing a sweep reads the evidence in
+    :mod:`~meshterm.ui.sweep_screen`), so a reader auditing a sweep reads the evidence in
     the same units it was gathered in rather than a phrase this module chose for them.
     """
 
@@ -541,7 +541,7 @@ def sweep_candidates(ranked: Sequence[ScoredContact], keep: int) -> list[ScoredC
     protections against the target instead would mean starring a node quietly deepened the
     next sweep, which is the opposite of what a star is for. The picker's rungs therefore
     report their own real removal counts rather than arithmetic on the table size (see
-    :func:`~meshterm.ui.purge_screen.purge_contacts`).
+    :func:`~meshterm.ui.sweep_screen.archive_contacts`).
 
     Args:
         ranked: The full ranking from :func:`rank_contacts`, strongest first.

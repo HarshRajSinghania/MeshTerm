@@ -251,12 +251,12 @@ def test_marked_label_lines_up_a_mixed_list_when_told_its_lane() -> None:
 
     lane = icon_lane((_NARROW, _WIDE))
     rows = [
-        marked_label(_NARROW, "Purge contacts…", "err", lane=lane),
+        marked_label(_NARROW, "Archive contacts…", "err", lane=lane),
         marked_label(_WIDE, "View archived contacts", "", lane=lane),
     ]
     starts = {
         cell_len(row.plain[: row.plain.index(word)])
-        for row, word in zip(rows, ("Purge", "View"), strict=True)
+        for row, word in zip(rows, ("Archive", "View"), strict=True)
     }
     assert starts == {lane + 1}
 
@@ -287,10 +287,10 @@ def test_align_icons_starts_every_word_in_the_same_cell() -> None:
     """
     plain_row = "Reorder"
     labels = align_icons(
-        [f"{_NARROW} Purge contacts…", Text.assemble((_WIDE, "ok"), " View archived"), plain_row]
+        [f"{_NARROW} Archive contacts…", Text.assemble((_WIDE, "ok"), " View archived"), plain_row]
     )
     assert [_plain(label) for label in labels] == [
-        f"{_NARROW}  Purge contacts…",
+        f"{_NARROW}  Archive contacts…",
         f"{_WIDE} View archived",
         "Reorder",
     ]
@@ -337,8 +337,8 @@ def test_align_icons_pads_nothing_where_the_platform_draws_no_icons() -> None:
 
     set_platform(PICOCALC)
     try:
-        labels = align_icons([f"{_NARROW} Purge contacts…", f"{_WIDE} View archived"])
-        assert [_plain(label) for label in labels] == ["Purge contacts…", "View archived"]
+        labels = align_icons([f"{_NARROW} Archive contacts…", f"{_WIDE} View archived"])
+        assert [_plain(label) for label in labels] == ["Archive contacts…", "View archived"]
     finally:
         set_platform(REGULAR)
 

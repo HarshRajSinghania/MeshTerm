@@ -25,7 +25,7 @@ the node itself, in full:
     the rest), ``Time machine``, ``Share contact`` — a popup contact card (QR code +
     ``meshcore://`` link, see :func:`~meshterm.ui.config_editor.show_contact_card`),
     offered whenever the node's full key is known — and, last, ``Remove contact``: the
-    single-contact counterpart to the Contacts list's bulk purge (see
+    single-contact counterpart to the Contacts list's bulk archive (see
     :mod:`~meshterm.ui.contacts_screen`), dropping *this* node from the device's contact
     table behind a red confirm. It is the one thing on the page that changes anything, so
     it sits at the foot of the actions, and committing it closes the page — the contact it
@@ -1090,7 +1090,7 @@ async def open_node_detail(
     can be archived or deleted, an archived one restored or deleted.
 
     ``manage`` is how a caller says the page is being opened to *look*, not to act. The
-    purge preview passes ``False``: a screen whose whole job is choosing what to archive
+    archive preview passes ``False``: a screen whose whole job is choosing what to archive
     should not also hand out a second, singular way to archive — or a delete — from inside
     its own candidate list. The rule is that management verbs belong to the list a contact
     actually lives in, never to a page opened out of a list that is about to act on it
@@ -1451,7 +1451,7 @@ async def _archive_contact(ctx: AppContext, contact: Contact, self_key: str, lab
     """Confirm and archive one contact off the device; ``True`` once it is gone from the radio.
 
     The single-contact counterpart to the bulk sweep (see
-    :func:`~meshterm.ui.purge_screen.purge_contacts`), doing exactly what the sweep does to
+    :func:`~meshterm.ui.sweep_screen.archive_contacts`), doing exactly what the sweep does to
     each of its victims: remove from the device, then record it in the cross-session store
     with an archive stamp so nothing is actually lost.
 
@@ -1515,7 +1515,7 @@ async def _restore_archived(ctx: AppContext, contact: Contact, self_key: str, la
     """Write an archived contact back onto the device; ``True`` once it is live again.
 
     The inverse of the Contacts sweep, one contact at a time (see
-    :mod:`~meshterm.ui.purge_screen`). The device write comes **first** and the store's
+    :mod:`~meshterm.ui.sweep_screen`). The device write comes **first** and the store's
     archive mark is cleared only once it succeeded — a failed write must never leave a
     contact listed as live on a radio that doesn't hold it, which would be a row you cannot
     message and cannot restore.
@@ -1560,7 +1560,7 @@ async def _remove_contact(ctx: AppContext, contact: Contact, self_key: str, labe
     """Confirm and drop one contact from the device; ``True`` once it is gone.
 
     The single-contact counterpart to the Contacts list's bulk sweep (see
-    :func:`~meshterm.ui.purge_screen.purge_contacts`) — but a *deletion* where that one
+    :func:`~meshterm.ui.sweep_screen.archive_contacts`) — but a *deletion* where that one
     archives: this is the way to make MeshTerm forget a node entirely, so it removes the
     contact in both places, because the list a screen sees is the *union* of the two: the device's
     own contact table, and the contacts MeshTerm remembers for that device (see
@@ -1641,7 +1641,7 @@ async def _remove_contact(ctx: AppContext, contact: Contact, self_key: str, labe
         ctx.contact_store.forget(dev_pub, contact.public_key)
     # The device's table just changed under the session cache; the list we return to re-reads.
     ctx.devstate.invalidate_contacts()
-    # No success notice: unlike the purge — whose outcome is a count nobody could predict —
+    # No success notice: unlike the archive sweep — whose outcome is a count nobody could predict —
     # this one is self-evident. The page closes on the contact it detailed and the list
     # behind it comes back without the row, which says it better than a dialog to dismiss.
     return True

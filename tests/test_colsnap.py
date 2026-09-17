@@ -165,7 +165,7 @@ def test_the_row_frames_flush_on_a_terminal_that_draws_the_glyph_wide() -> None:
     assert pinned.at(edge) == "│"
 
 
-def test_every_lane_of_a_purge_preview_row_lands_where_the_screen_measured_it() -> None:
+def test_every_lane_of_a_archive_preview_row_lands_where_the_screen_measured_it() -> None:
     """The screen this started on: a swept contact whose name carries an emoji.
 
     The name lane is already fitted in display cells (:func:`~meshterm.ui.menus.fit_cells`),
@@ -174,7 +174,7 @@ def test_every_lane_of_a_purge_preview_row_lands_where_the_screen_measured_it() 
     """
     from meshterm.core.contact_score import ContactSignals, ScoredContact
     from meshterm.core.models import Contact
-    from meshterm.ui.purge_screen import _NAME_W, _lane_widths, _victim_row
+    from meshterm.ui.sweep_screen import _NAME_W, _lane_widths, _victim_row
     from meshterm.ui.tui.render import render_to_ansi
 
     key = "ab" * 32

@@ -25,7 +25,7 @@ the pushed Contacts list:
    candidate list. It ends in the Apply/Back pair that
    :func:`~meshterm.ui.menus.exit_rows` draws for staged changes, because that is what this
    is: a choice with a cost on both sides, not an exit.
-3. **Confirm.** An amber Cancel/Purge dialog, not the red typed gate a deletion gets: this
+3. **Confirm.** An amber Cancel/Archive dialog, not the red typed gate a deletion gets: this
    is reversible. Every contact keeps its key, its reception history and its transcripts,
    the Archived list is one row away on the Contacts screen, and a restore is a single
    write. Saving the red for what cannot be undone is what keeps the red meaning anything.
@@ -97,7 +97,7 @@ _DAY = 86400
 #: The last-heard rungs, ``(label, min_age_seconds)``. A contact qualifies when its age is
 #: *at least* that long; a never-heard contact is excluded here and swept only by
 #: :data:`_NEVER`, so an age rung can't quietly take a contact that simply hasn't adverted
-#: yet. The same ladder the age-only purge offered before this flow absorbed it.
+#: yet. The same ladder the age-only sweep offered before this flow absorbed it.
 AGE_RUNGS: tuple[tuple[str, int], ...] = (
     ("Not heard in 1 week", 7 * _DAY),
     ("Not heard in 1 month", 30 * _DAY),
@@ -353,12 +353,12 @@ async def _rank(ctx: AppContext, contacts: list[Contact]) -> list[ScoredContact]
         if lat and lon:
             self_lat, self_lon = float(lat), float(lon)
     except Exception as exc:  # noqa: BLE001 - an unplaced device just loses one weak term
-        ctx.log.debug("purge: no self position (%s); distance term stays unknown", exc)
+        ctx.log.debug("archive: no self position (%s); distance term stays unknown", exc)
 
     return rank_contacts(contacts, signals, self_lat=self_lat, self_lon=self_lon)
 
 
-async def purge_contacts(ctx: AppContext, self_key: str) -> int:
+async def archive_contacts(ctx: AppContext, self_key: str) -> int:
     """Run the whole sweep — rank, pick a target, preview, confirm, archive. Returns the count.
 
     Runs over the pushed Contacts list as its backdrop, so every step floats and Esc walks
@@ -488,7 +488,7 @@ def _target_screen(ranked: list[ScoredContact], sweepable: list[ScoredContact]):
             items.append(Choice(title=_rung_row(label, kept, len(victims), label_w), value=value))
     held = f" · {protected} protected" if protected else ""
     return SelectScreen(
-        f"Purge contacts — {len(ranked)} known{held}",
+        f"Archive contacts — {len(ranked)} known{held}",
         items,
         prompt=(
             "Archives the weakest off the device, keeping them here. Ranked on messages, "
@@ -536,7 +536,7 @@ def _preview_screen(victims: list[ScoredContact]):
     from .tui import SelectScreen
 
     return SelectScreen(
-        f"Purge contacts — {_count_desc(len(victims))} to archive",
+        f"Archive contacts — {_count_desc(len(victims))} to archive",
         _preview_items(victims),
         prompt="Archived contacts leave the device but stay here, with their history.",
         # Neither the scroll nor the keep atom is written into the base hint: the select
@@ -602,7 +602,7 @@ async def _preview(ctx: AppContext, victims: list[ScoredContact]) -> bool:
                 # The title counts the victims, so it is content too and moves with them.
                 screen.replace_items(
                     _preview_items(victims),
-                    title=f"Purge contacts — {_count_desc(len(victims))} to archive",
+                    title=f"Archive contacts — {_count_desc(len(victims))} to archive",
                 )
                 continue
             # Any other row is a contact: Enter opens its node detail page, so a reader who
@@ -640,8 +640,8 @@ async def _sweep(ctx: AppContext, self_key: str, victims: list[ScoredContact]) -
         f"Archive {_count_desc(len(victims))}? They come off this device's contact list, "
         "freeing space for new ones. MeshTerm keeps them — with their keys, reception "
         "history and messages — under Archived contacts, and any of them can be restored.",
-        [("Cancel", False), ("Purge", True)],
-        title="Purge contacts",
+        [("Cancel", False), ("Archive", True)],
+        title="Archive contacts",
         default=1,
         danger=True,
     ):
@@ -652,7 +652,7 @@ async def _sweep(ctx: AppContext, self_key: str, victims: list[ScoredContact]) -
     store = ctx.contact_store
     stamp = int(time.time())
     archived = failed = 0
-    with ctx.ui.progress("Purge contacts") as progress:
+    with ctx.ui.progress("Archive contacts") as progress:
         task = progress.add_task("Archiving", total=len(victims))
         for scored in victims:
             contact = scored.contact
@@ -661,10 +661,10 @@ async def _sweep(ctx: AppContext, self_key: str, victims: list[ScoredContact]) -
             except ContactNotOnDeviceError:
                 # Already absent from the radio: the sweep's device-side work is done, and
                 # archiving it here is what makes the row go away. Not a failure.
-                ctx.log.debug("purge: %s was not on the device; archiving ours", contact.name)
+                ctx.log.debug("archive: %s was not on the device; archiving ours", contact.name)
             except Exception as exc:  # noqa: BLE001 - one bad removal mustn't abort the sweep
                 failed += 1
-                ctx.log.debug("purge: could not remove %s: %s", contact.name, exc)
+                ctx.log.debug("archive: could not remove %s: %s", contact.name, exc)
                 continue
             finally:
                 progress.advance(task)
@@ -681,5 +681,5 @@ async def _sweep(ctx: AppContext, self_key: str, victims: list[ScoredContact]) -
         )
     else:
         outcome = Text("no contacts could be archived", style="err")
-    await ctx.ui.session.message_dialog(outcome, title="Purge contacts")
+    await ctx.ui.session.message_dialog(outcome, title="Archive contacts")
     return archived

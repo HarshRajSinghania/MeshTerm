@@ -187,7 +187,7 @@ def test_a_direct_message_counts_as_hearing_its_sender() -> None:
 
     A direct message never touches the firmware's ``last_advert`` and is stored as a message
     rather than an observation, so a node we actively chat with could read days stale (and be
-    swept by the purge ladder's quiet rungs) while talking to us. The peer prefix the wire
+    swept by the archive ladder's quiet rungs) while talking to us. The peer prefix the wire
     addressed need not match the contact table's width, so either may be the shorter.
     """
     dev = FakeDevice()

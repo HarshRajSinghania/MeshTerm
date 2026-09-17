@@ -11,15 +11,15 @@ and backing out of that page returns to the list right where it stood. The one-s
 (``meshterm contacts --sort …``) still renders the static
 :func:`~meshterm.ui.widgets.contacts_table`; only the menu gets the live list.
 
-Below the contacts sits the list's own maintenance action — **Purge contacts** — the bulk
+Below the contacts sits the list's own maintenance action — **Archive contacts** — the bulk
 counterpart, which exists because a companion's contact table is finite and a busy mesh
 fills it with nodes heard once in passing until there is no room left to discover anyone
 new. It ranks the whole table (see :mod:`~meshterm.core.contact_score`) and archives the
 weakest off the device while MeshTerm keeps them; the flow, its ladder and its preview live
-in :mod:`~meshterm.ui.purge_screen`. Our own node, pinned above the list, is never a
+in :mod:`~meshterm.ui.sweep_screen`. Our own node, pinned above the list, is never a
 candidate — it isn't in the device's contact table.
 
-What a sweep took is never hidden: **View archived contacts** sits directly under the purge
+What a sweep took is never hidden: **View archived contacts** sits directly under the archive action
 action and opens the archived list (see :mod:`~meshterm.ui.archived_screen`) — its own
 screen, in the same lane layout, sorted on its own ``NAME · ARCHIVED · KEY`` columns. It
 earns a screen rather than a section at the foot of this one because it is a different list
@@ -42,7 +42,7 @@ from typing import TYPE_CHECKING
 from .archived_screen import open_archived
 from .contactlist import ContactListScreen, ContactRow
 from .menus import icon_lane, marked_label
-from .purge_screen import purge_contacts
+from .sweep_screen import archive_contacts
 from .tui import Choice, Separator
 from .tui.screen import CANCEL
 from .widgets import ContactsSort, contact_packets
@@ -57,13 +57,13 @@ YOU = ("you",)
 
 #: The contact-list tail sentinels (distinct from any :class:`~meshterm.core.models.Contact`
 #: and from :data:`YOU`): the sweep, and the way in to what it has already taken.
-_PURGE = ("purge",)
+_ARCHIVE = ("archive",)
 _ARCHIVED = ("archived",)
 
 #: Every mark the tail's maintenance rows lead with — the set the icon column is measured
 #: over (see :func:`~meshterm.ui.menus.icon_lane`). Declared rather than inferred so the
 #: column is one width for the whole tail whichever of the two rows a given visit draws.
-_TAIL_ICONS = ("🗑", "📂")
+_TAIL_ICONS = ("💾", "📂")
 
 
 class ContactsScreen(ContactListScreen):
@@ -116,20 +116,21 @@ class ContactsScreen(ContactListScreen):
                 )
             )
         # The maintenance actions close the list, past every contact whatever the sort: a
-        # blank spacer, then the err-tinted sweep (a `…` — it opens further prompts), then
-        # the way in to what the sweep has already taken. The two sit together because they
-        # are the two halves of one idea, and the archived row is *under* the purge for the
-        # same reason: it is where the purge's output went.
-        # One icon column for both rows: 🗑 draws a single cell where 📂 draws two, so an
-        # unpadded mark would start the purge row's label a column left of the other's.
+        # blank spacer, then the sweep (a `…` — it opens further prompts), then the way in
+        # to what the sweep has already taken. The two sit together because they are the
+        # two halves of one idea, and the archived row is *under* the sweep for the same
+        # reason: it is where the sweep's output went. The sweep wears the single-contact
+        # Archive action's 💾 and no red: it archives, and red is kept for data loss.
+        # One icon column for both rows, measured rather than assumed, so a mark narrower
+        # than its neighbour can't start its row's label a column left of the other's.
         lane = icon_lane(_TAIL_ICONS)
         tail: list = []
         if contacts:
             tail = [
                 Separator(" "),
                 Choice(
-                    title=marked_label("🗑", "Purge contacts…", "err", lane=lane),
-                    value=_PURGE,
+                    title=marked_label("💾", "Archive contacts…", "", lane=lane),
+                    value=_ARCHIVE,
                 ),
             ]
         if archived:
@@ -160,7 +161,7 @@ async def open_contacts(
     """Open the interactive contacts list; Enter opens Node detail, Esc leaves.
 
     The list stays pushed for the whole visit, so whichever node's detail page Enter commits
-    (or the purge flow, or the archived list, that the tail actions open) nests *above* it
+    (or the archive flow, or the archived list, that the tail actions open) nests *above* it
     and Esc from there is one pop back onto the row it was opened from — same sort, same
     filter, same scroll. Anything that changes which contacts the device holds — a sweep
     here, a single archive, restore or delete on a detail page, or a restore made from
@@ -208,13 +209,13 @@ async def open_contacts(
                 chosen = await visit.result()
                 if chosen is CANCEL or chosen is None:  # Esc
                     return
-                if chosen == _PURGE:
-                    # The purge ladder, its preview and its confirm all float over the list,
+                if chosen == _ARCHIVE:
+                    # The archive ladder, its preview and its confirm all float over the list,
                     # which is already the backdrop. A sweep that archived anything
                     # invalidates the contacts cache, so the list is re-read and rebuilt —
                     # the one deliberate reset in this screen's life, because the rows it was
                     # keeping a place in are genuinely gone from the device.
-                    if await purge_contacts(ctx, self_key):
+                    if await archive_contacts(ctx, self_key):
                         rebuild = True
                         break
                     continue

@@ -189,7 +189,7 @@ def test_select_cursor_line_counts_a_prompt_once() -> None:
     The rows are laid out after the prompt's lines, so the index they are recorded at
     already counts them. Adding the prompt's height on top reported a line further down,
     and the frame kept *that* line in view: walking ↑ then carried the real highlight above
-    the window's top edge (the purge preview, whose prompt sits over a long list).
+    the window's top edge (the archive preview, whose prompt sits over a long list).
     """
     items = [Choice(f"c{i}", i) for i in range(12)]
     screen = SelectScreen("pick", items, prompt="Read the list, then pick one.", default=3)

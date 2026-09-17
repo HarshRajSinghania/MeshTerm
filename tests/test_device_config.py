@@ -311,7 +311,7 @@ def test_contacts_screen_lists_contacts_in_the_shared_lanes() -> None:
     import re
 
     from meshterm.core.models import Contact, utcnow
-    from meshterm.ui.contacts_screen import _PURGE, YOU, ContactsScreen
+    from meshterm.ui.contacts_screen import _ARCHIVE, YOU, ContactsScreen
     from meshterm.ui.tui.screen import CANCEL
 
     contacts = [
@@ -333,8 +333,8 @@ def test_contacts_screen_lists_contacts_in_the_shared_lanes() -> None:
     assert f"{7:>5}" in body  # Alice's overheard packets, right-aligned in its lane
     assert "never" in body  # Bob has no last_seen
     # Each contact row carries the Contact itself, so Enter hands the whole record on; the
-    # tail closes the list with the purge action (there is no exit row — Esc leaves).
-    assert choices[-1].value == _PURGE
+    # tail closes the list with the archive action (there is no exit row — Esc leaves).
+    assert choices[-1].value == _ARCHIVE
     assert all(isinstance(c.value, Contact) for c in choices[1:-1])
 
     # Plain arrows move the highlight without touching the sort.
@@ -354,7 +354,7 @@ def test_contacts_screen_lists_contacts_in_the_shared_lanes() -> None:
     assert resolved == [highlighted, CANCEL]
 
 
-def test_purge_age_rungs_split_stale_from_never_heard() -> None:
+def test_archive_age_rungs_split_stale_from_never_heard() -> None:
     """An age rung takes only contacts once heard and since gone quiet; never-heard has its own.
 
     The ladder's second section is the plain predictable operation a ranking cannot express,
@@ -364,7 +364,7 @@ def test_purge_age_rungs_split_stale_from_never_heard() -> None:
     """
     from meshterm.core.contact_score import ContactSignals, ScoredContact
     from meshterm.core.models import Contact
-    from meshterm.ui.purge_screen import _DAY, _NEVER, victims_for
+    from meshterm.ui.sweep_screen import _DAY, _NEVER, victims_for
 
     def scored(name: str, days, score: float) -> ScoredContact:  # noqa: ANN001
         contact = Contact(name=name, public_key=f"{ord(name[0]):02x}" * 32)
@@ -396,7 +396,7 @@ def test_purge_age_rungs_split_stale_from_never_heard() -> None:
     assert names(("age", 7 * _DAY)) == ["Ancient", "Old"]
 
 
-async def test_purge_sweeps_under_a_progress_bar_and_reports_in_a_dialog() -> None:
+async def test_archive_sweeps_under_a_progress_bar_and_reports_in_a_dialog() -> None:
     """The whole sweep, end to end: ladder → preview → amber confirm → bar → outcome dialog.
 
     Two things the busy overlay could not do (JP, 2026-08-10). It only ever said "working",
@@ -414,8 +414,8 @@ async def test_purge_sweeps_under_a_progress_bar_and_reports_in_a_dialog() -> No
 
     from meshterm.core.contact_score import ContactSignals
     from meshterm.core.models import Contact, utcnow
-    from meshterm.ui.purge_screen import purge_contacts
     from meshterm.ui.surface import TuiUi
+    from meshterm.ui.sweep_screen import archive_contacts
     from meshterm.ui.tui.progress import ProgressScreen
     from meshterm.ui.tui.session import TuiSession
 
@@ -459,7 +459,7 @@ async def test_purge_sweeps_under_a_progress_bar_and_reports_in_a_dialog() -> No
     ui.dialog = _dialog  # type: ignore[method-assign]
     ctx = SimpleNamespace(
         ui=ui,
-        log=logging.getLogger("test.purge"),
+        log=logging.getLogger("test.archive"),
         repo=_Repo(),
         contact_store=SimpleNamespace(
             archive=lambda dev, contact, when: archived.append(contact.name)
@@ -474,12 +474,12 @@ async def test_purge_sweeps_under_a_progress_bar_and_reports_in_a_dialog() -> No
         device=lambda: _device(_Device()),
     )
 
-    task = asyncio.ensure_future(purge_contacts(ctx, "cc" * 32))
+    task = asyncio.ensure_future(archive_contacts(ctx, "cc" * 32))
 
     # Walk past the five standing rungs into the second section and take "not heard in 1
     # year", which catches all three — the standing rungs keep a share, so none of them
     # ever takes a whole table.
-    ladder = await _step_until_screen(session, lambda s: s.title.startswith("Purge contacts"))
+    ladder = await _step_until_screen(session, lambda s: s.title.startswith("Archive contacts"))
     body = _screen_text(ladder)
     # A rung is counted in columns, and what it *keeps* — the number that has to fit the
     # device — leads what it archives.
@@ -503,12 +503,12 @@ async def test_purge_sweeps_under_a_progress_bar_and_reports_in_a_dialog() -> No
     bar = await _step_until_screen(session, lambda s: isinstance(s, ProgressScreen))
     assert asked and asked[0]["danger"] is True
     assert "destructive" not in asked[0]
-    assert [label for label, _v in asked[0]["buttons"]] == ["Cancel", "Purge"]
+    assert [label for label, _v in asked[0]["buttons"]] == ["Cancel", "Archive"]
     assert "restored" in asked[0]["prompt"]
 
     # The sweep runs under the progress dialog, which is the frontmost screen for its whole
     # lifetime — so the list underneath cannot be walked while it works.
-    assert bar.title == "Purge contacts"
+    assert bar.title == "Archive contacts"
     assert bar.render_body(60)  # a real bar, with a real total to count down
     bar.handle("down")  # every key is swallowed; nothing underneath moves
 
@@ -538,8 +538,8 @@ async def test_sparing_a_row_shrinks_the_sweep_without_leaving_the_preview() -> 
 
     from meshterm.core.contact_score import ContactSignals, ScoredContact
     from meshterm.core.models import Contact
-    from meshterm.ui.purge_screen import _preview
     from meshterm.ui.surface import TuiUi
+    from meshterm.ui.sweep_screen import _preview
     from meshterm.ui.tui.session import TuiSession
 
     def scored(name: str, pct: int) -> ScoredContact:
@@ -601,8 +601,8 @@ async def test_sparing_every_row_leaves_the_sweep_with_nothing_to_do() -> None:
 
     from meshterm.core.contact_score import ContactSignals, ScoredContact
     from meshterm.core.models import Contact
-    from meshterm.ui.purge_screen import _preview
     from meshterm.ui.surface import TuiUi
+    from meshterm.ui.sweep_screen import _preview
     from meshterm.ui.tui.session import TuiSession
 
     key = "aa" * 32
@@ -623,7 +623,7 @@ async def test_sparing_every_row_leaves_the_sweep_with_nothing_to_do() -> None:
 
 
 @pytest.mark.parametrize("platform_name", ["regular", "picocalc"])
-def test_the_purge_preview_keeps_its_cursor_in_its_box_walking_both_ways(
+def test_the_archive_preview_keeps_its_cursor_in_its_box_walking_both_ways(
     platform_name: str,
 ) -> None:
     """The preview's highlight stays inside its box however far the reader walks, and back.
@@ -639,7 +639,7 @@ def test_the_purge_preview_keeps_its_cursor_in_its_box_walking_both_ways(
     from meshterm.core.contact_score import ContactSignals, ScoredContact
     from meshterm.core.models import Contact
     from meshterm.platforms import PICOCALC, REGULAR, set_platform
-    from meshterm.ui.purge_screen import _preview_screen
+    from meshterm.ui.sweep_screen import _preview_screen
     from meshterm.ui.tui.frame import compose_dialog
 
     platform = {"regular": REGULAR, "picocalc": PICOCALC}[platform_name]
@@ -963,19 +963,19 @@ async def test_the_list_rebuilds_when_the_detail_page_deletes_the_contact(
     await task
 
 
-def test_contacts_screen_tail_offers_purge_only_when_populated() -> None:
-    """A populated list closes with the purge action; an empty one has no tail at all."""
+def test_contacts_screen_tail_offers_archive_only_when_populated() -> None:
+    """A populated list closes with the archive action; an empty one has no tail at all."""
     from meshterm.core.models import Contact
-    from meshterm.ui.contacts_screen import _PURGE, ContactsScreen
+    from meshterm.ui.contacts_screen import _ARCHIVE, ContactsScreen
 
     populated = ContactsScreen(
         "Us", "cc" * 32, [Contact(name="Alice", public_key="aa" * 32)], 1, {}, _contacts_sort()
     )
-    assert populated._choices()[-1].value == _PURGE
+    assert populated._choices()[-1].value == _ARCHIVE
 
     empty = ContactsScreen("Us", "cc" * 32, [], 1, {}, _contacts_sort())
     values = [c.value for c in empty._choices()]
-    assert _PURGE not in values  # nothing to purge — no action row
+    assert _ARCHIVE not in values  # nothing to archive — no action row
 
 
 def test_the_archived_row_appears_only_when_something_is_archived() -> None:
@@ -986,7 +986,7 @@ def test_the_archived_row_appears_only_when_something_is_archived() -> None:
     own screen is what keeps archiving from being something you lose track of.
     """
     from meshterm.core.models import Contact
-    from meshterm.ui.contacts_screen import _ARCHIVED, _PURGE, ContactsScreen
+    from meshterm.ui.contacts_screen import _ARCHIVE, _ARCHIVED, ContactsScreen
 
     contacts = [Contact(name="Alice", public_key="aa" * 32)]
 
@@ -995,16 +995,16 @@ def test_the_archived_row_appears_only_when_something_is_archived() -> None:
 
     some = ContactsScreen("Us", "cc" * 32, contacts, 1, {}, _contacts_sort(), archived=12)
     values = [c.value for c in some._choices()]
-    # Under the purge, because it is where the purge's output went.
-    assert values[-2:] == [_PURGE, _ARCHIVED]
+    # Under the archive action, because it is where the sweep's output went.
+    assert values[-2:] == [_ARCHIVE, _ARCHIVED]
     row = next(c for c in some._choices() if c.value == _ARCHIVED)
     assert "View archived contacts" in row.label and "12" in row.label
 
     # It stands on its own for a device whose whole table has been swept: there is nothing
-    # left to purge, but there is very much something to go and look at.
+    # left to archive, but there is very much something to go and look at.
     swept = ContactsScreen("Us", "cc" * 32, [], 1, {}, _contacts_sort(), archived=3)
     values = [c.value for c in swept._choices()]
-    assert _PURGE not in values and values[-1] == _ARCHIVED
+    assert _ARCHIVE not in values and values[-1] == _ARCHIVED
 
 
 async def test_archiving_one_contact_takes_it_off_the_device_and_keeps_it() -> None:
@@ -1423,7 +1423,7 @@ async def _channels(device: MockDevice) -> list[dict]:
 async def test_the_preview_opens_node_pages_with_no_management_verbs(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Enter on a purge candidate opens its page to *look* at, not to act on.
+    """Enter on a archive candidate opens its page to *look* at, not to act on.
 
     The rule (JP, 2026-09-01): management verbs belong to the list a contact actually lives
     in, never to a page opened out of a list that is about to act on it wholesale. A preview
@@ -1436,8 +1436,8 @@ async def test_the_preview_opens_node_pages_with_no_management_verbs(
     import meshterm.ui.node_detail_screen as nd
     from meshterm.core.contact_score import ContactSignals, ScoredContact
     from meshterm.core.models import Contact
-    from meshterm.ui.purge_screen import _preview
     from meshterm.ui.surface import TuiUi
+    from meshterm.ui.sweep_screen import _preview
     from meshterm.ui.tui.session import TuiSession
 
     opened: list[dict] = []
