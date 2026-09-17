@@ -85,6 +85,9 @@ chmod +x meshterm-0.3.6-*
 ./meshterm-0.3.6-*
 ```
 
+On macOS, downloading it with `curl` instead of a browser saves you a fight with Gatekeeper
+— the note below has the line.
+
 ### A word about terminals, on Windows
 
 MeshTerm is drawn with emoji icons, braille charts and powerline path chips. Whether you
@@ -119,8 +122,19 @@ becomes just `meshterm` from anywhere.
 > code-signed — signing costs real money on both platforms and this is a free side
 > project.
 >
-> - **macOS**: *"cannot be opened because the developer cannot be verified"*. Clear it with
->   `xattr -d com.apple.quarantine meshterm-0.3.6-*` and run it again.
+> - **macOS**: *"cannot be opened because the developer cannot be verified"* — or, on Sequoia
+>   and later, *"Apple could not verify…"*, and right-click → Open no longer gets past it.
+>   The flag that causes it is set by your **browser**, not by macOS, so the easiest answer
+>   is to not use one:
+>
+>   ```bash
+>   curl -L -O https://github.com/jpmartineau/MeshTerm/releases/download/v0.3.6/meshterm-0.3.6-macos-arm64
+>   chmod +x meshterm-0.3.6-macos-arm64 && ./meshterm-0.3.6-macos-arm64
+>   ```
+>
+>   `curl` marks nothing, so it simply runs — on an Intel Mac, swap `arm64` for `x64`. If it's
+>   already downloaded, clear the flag instead: `xattr -d com.apple.quarantine meshterm-0.3.6-*`.
+>   Installing with pipx (below) avoids all of this too, since nothing is downloaded as a binary.
 > - **Windows**: *"Windows protected your PC"*. Click **More info → Run anyway**.
 >
 > Every release ships a `SHA256SUMS` file if you'd rather check the download first.
