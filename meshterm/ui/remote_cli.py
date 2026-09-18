@@ -13,8 +13,9 @@ The input line behaves like a shell:
   :class:`~meshterm.core.remote_store.RemoteStore`) so last week's incantation is one
   keystroke away next session.
 * **Tab** completes the current text against the known repeater commands — the fixed
-  verbs plus every ``get``/``set`` spelling in the settings catalog — and the best
-  match previews muted, ghost-text style, after the cursor.
+  verbs, every ``get``/``set`` spelling in the settings catalog, and any key *this node*
+  taught us here on an earlier visit — and the best match previews muted, ghost-text
+  style, after the cursor.
 * **Enter** sends. The transcript keeps every exchange of the session, newest at the
   bottom, and the view follows the prompt as it grows.
 
@@ -25,7 +26,7 @@ the radio, the history store, and the reply plumbing) and feeds replies back thr
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 
 from rich.console import Group
 from rich.text import Text
@@ -70,6 +71,7 @@ class RemoteCliScreen(Screen):
         history: list[str],
         send: Callable[[str], None],
         session: object,
+        extra_keys: Iterable[str] = (),
     ) -> None:
         """Create the command line over a node's persisted history.
 
@@ -78,6 +80,9 @@ class RemoteCliScreen(Screen):
             history: The node's prior commands, oldest first (recalled with ↑).
             send: Commits one command (owner-guarded; no-op while one is flying).
             session: The running TUI session (for repaints).
+            extra_keys: Settings *this node* has that the catalog hasn't, found here on an
+                earlier visit. They complete like any other key: the prompt is where they
+                were learned, so it is where they should be one Tab away.
         """
         super().__init__()
         self.title = f"Command line — {node_label}"
@@ -89,7 +94,13 @@ class RemoteCliScreen(Screen):
         self._history = list(history)
         self._recall: int | None = None  # index into history while ↑/↓ browse it
         self._draft = ""  # what was typed before recall began, restored on ↓ past the end
-        self._completions = known_commands()
+        self._completions = sorted(
+            {
+                *known_commands(),
+                *(f"get {key}" for key in extra_keys),
+                *(f"set {key} " for key in extra_keys),
+            }
+        )
         self.busy = False
         self._spinner = Spinner()
         self._prompt_line = 0  # body index of the input line (pinned into view)

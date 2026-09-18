@@ -35,11 +35,16 @@ class CachedValue:
         supported: ``False`` when the node answered the read with an error — its firmware
             has no such setting (a board without a front-end module, a build without a
             bridge). Kept apart from *never read*, which is no entry at all.
+        discovered: ``True`` for a setting the catalog hasn't got, learned from a command
+            the reader ran on *this node's* command line. It is the row's whole claim to
+            exist, so a node that stops answering the key loses the row rather than
+            earning an ``n/a`` — the catalog is what says a key *might* be there.
     """
 
     value: str
     read_at: datetime | None
     supported: bool = True
+    discovered: bool = False
 
 
 class RemoteStore:
@@ -84,13 +89,20 @@ class RemoteStore:
                 except ValueError:
                     read_at = None
             out[key] = CachedValue(
-                value=str(entry.get("value", "")), read_at=read_at, supported=supported
+                value=str(entry.get("value", "")),
+                read_at=read_at,
+                supported=supported,
+                discovered=bool(entry.get("discovered", False)),
             )
         return out
 
     def remember_setting(self, node: Contact, key: str, value: str) -> None:
         """Cache one setting's value for ``node``, stamped now."""
         self._put(node, key, {"value": value, "read_at": utcnow().isoformat()})
+
+    def remember_discovered(self, node: Contact, key: str, value: str) -> None:
+        """Cache a setting the catalog hasn't got, which ``node`` has just proved it has."""
+        self._put(node, key, {"value": value, "read_at": utcnow().isoformat(), "discovered": True})
 
     def remember_unsupported(self, node: Contact, key: str) -> None:
         """Record that ``node`` answered a read of ``key`` with an error, stamped now."""
@@ -104,10 +116,18 @@ class RemoteStore:
             self._write(records)
 
     def _put(self, node: Contact, key: str, entry: dict) -> None:
-        """Store one setting's cache entry for ``node``."""
+        """Store one setting's cache entry for ``node``, keeping it discovered if it was.
+
+        A discovered row is refreshed by the same reads and writes as any other — through
+        :meth:`remember_setting` — and that must not quietly demote it to a catalog row it
+        has no entry for, which would leave a row nothing draws.
+        """
         records = self._load_all()
         record = records.setdefault(admin_key(node), {})
         settings = record.setdefault("settings", {})
+        previous = settings.get(key)
+        if isinstance(previous, dict) and previous.get("discovered"):
+            entry = {**entry, "discovered": True}
         settings[key] = entry
         self._write(records)
 

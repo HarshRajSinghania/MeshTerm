@@ -23,12 +23,16 @@ from meshterm.core.connection import MockDevice
 from meshterm.core.device_store import DeviceStore
 from meshterm.core.models import Contact, utcnow
 from meshterm.core.remote_config import (
+    DISCOVERED_HELP,
     REPEATER_SETTINGS,
+    SettingCommand,
     composite_reads,
+    discovered_setting,
     get_setting,
     known_commands,
     normalize_value,
     parse_reply_value,
+    parse_setting_command,
     range_hint,
     read_plan,
     reply_is_error,
@@ -780,3 +784,199 @@ def test_admin_actions_start_every_label_in_the_same_cell() -> None:
                 starts[label] = cell_len(plain[: plain.index(label)])
     assert set(starts) == set(labels)
     assert len(set(starts.values())) == 1, f"a label starts a column early: {starts}"
+
+
+# --- settings discovered on the command line -------------------------------------------
+
+
+def test_only_get_and_set_are_read_as_settings() -> None:
+    """The CLI's own grammar is the filter; every top-level verb falls out of it.
+
+    Nothing is excluded by name: ``reboot``, ``advert`` and ``powersaving`` are simply not
+    ``get <key>`` or ``set <key> <value>``, and ``setperm`` only starts with the letters.
+    """
+    assert parse_setting_command("get radio.rxps") == SettingCommand("get", "radio.rxps")
+    assert parse_setting_command("  set reboot.interval 24  ") == SettingCommand(
+        "set", "reboot.interval", "24"
+    )
+    assert parse_setting_command("set owner.info a b c") == SettingCommand(
+        "set", "owner.info", "a b c"
+    )
+    for command in (
+        "reboot",
+        "advert",
+        "clock sync",
+        "powersaving on",
+        "setperm ab12 rw",
+        "start ota",
+        "get",  # no key
+        "set tx",  # no value
+        "get ../etc",  # not a key's spelling
+    ):
+        assert parse_setting_command(command) is None, command
+
+
+def test_a_write_the_node_accepts_is_proof_the_key_is_there(tui_ctx) -> None:
+    """``set`` teaches a row: the firmware matches its keys exactly and refuses the rest.
+
+    ``handleSetCmd`` compares ``"radio "`` *with* the trailing space, so a longer key can
+    never land in a shorter one's branch, and an unknown one answers ``unknown config:``.
+    """
+    repeater_admin.learn_from_cli(tui_ctx, NODE, "set radio.rxps balanced", "OK")
+    cached = tui_ctx.remote_store.settings(NODE)["radio.rxps"]
+    assert (cached.value, cached.discovered) == ("balanced", True)
+
+    repeater_admin.learn_from_cli(tui_ctx, NODE, "set nonesuch 1", "unknown config: nonesuch")
+    assert "nonesuch" not in tui_ctx.remote_store.settings(NODE)
+
+
+def test_a_read_answered_out_of_a_shorter_keys_branch_is_no_discovery(tui_ctx) -> None:
+    """``get`` matches on a bare prefix, so a plausible reply can belong to another key.
+
+    Stock firmware answers ``get radio.rxps`` from the ``get radio`` branch. With no typing
+    to reject it — a discovered key has none — the guard is that the reply is exactly what
+    the shadowing key last said.
+    """
+    for key, value in (("freq", "910.525"), ("bw", "62.5"), ("sf", "7"), ("cr", "5")):
+        tui_ctx.remote_store.remember_setting(NODE, key, value)
+
+    repeater_admin.learn_from_cli(tui_ctx, NODE, "get radio.rxps", "> 910.525,62.5,7,5")
+    assert "radio.rxps" not in tui_ctx.remote_store.settings(NODE)
+
+    repeater_admin.learn_from_cli(tui_ctx, NODE, "get radio.rxps", "> desired=off level=2")
+    assert tui_ctx.remote_store.settings(NODE)["radio.rxps"].value == "desired=off level=2"
+
+
+def test_a_read_nothing_shadows_is_taken_at_its_word(tui_ctx) -> None:
+    """No catalog key prefixes ``reboot.interval``, so its reply can only be its own."""
+    repeater_admin.learn_from_cli(tui_ctx, NODE, "get reboot.interval", "> 24")
+    assert tui_ctx.remote_store.settings(NODE)["reboot.interval"].value == "24"
+
+    repeater_admin.learn_from_cli(tui_ctx, NODE, "get nonesuch", "??: nonesuch")
+    assert "nonesuch" not in tui_ctx.remote_store.settings(NODE)
+
+
+def test_an_unread_shadow_leaves_the_question_unanswerable(tui_ctx) -> None:
+    """A shadowed key whose shadow was never read is not discovered: we cannot tell."""
+    repeater_admin.learn_from_cli(tui_ctx, NODE, "get radio.rxps", "> 910.525,62.5,7,5")
+    assert "radio.rxps" not in tui_ctx.remote_store.settings(NODE)
+
+
+def test_the_private_key_is_never_written_to_disk(tui_ctx, tmp_path: Path) -> None:
+    """``get prv.key`` prints in the transcript and goes no further."""
+    secret = "ab" * 32
+    repeater_admin.learn_from_cli(tui_ctx, NODE, "get prv.key", "> " + secret)
+    assert "prv.key" not in tui_ctx.remote_store.settings(NODE)
+    written = [p for p in tmp_path.rglob("*.json") if secret in p.read_text(encoding="utf-8")]
+    assert written == []
+
+
+def test_a_catalog_key_read_on_the_command_line_refreshes_its_row(tui_ctx) -> None:
+    """The cache is the page, so the command line fills it exactly as a read does.
+
+    ``get tx`` used to leave the TX power row showing what it said last week, and
+    ``get radio`` answered four rows that none of them heard about.
+    """
+    repeater_admin.learn_from_cli(tui_ctx, NODE, "get tx", "> 20")
+    repeater_admin.learn_from_cli(tui_ctx, NODE, "get radio", "> 869.525,250,10,6")
+    repeater_admin.learn_from_cli(tui_ctx, NODE, "set txdelay 1.5", "OK")
+    cache = tui_ctx.remote_store.settings(NODE)
+    assert cache["tx"].value == "20"
+    assert (cache["freq"].value, cache["sf"].value) == ("869.525", "10")
+    assert cache["txdelay"].value == "1.5"
+    assert not any(cached.discovered for cached in cache.values())
+
+
+def test_a_write_stales_the_other_spelling_from_the_command_line_too(tui_ctx) -> None:
+    """``set dutycycle`` at the prompt drops the cached ``af``, as an Apply would."""
+    tui_ctx.remote_store.remember_setting(NODE, "af", "1.00")
+    repeater_admin.learn_from_cli(tui_ctx, NODE, "set dutycycle 40", "OK - 40.0%")
+    cache = tui_ctx.remote_store.settings(NODE)
+    assert cache["dutycycle"].value == "40.0" and "af" not in cache
+
+
+def test_a_discovered_row_survives_a_re_read_and_goes_when_the_key_does(tui_ctx) -> None:
+    """The node's answer is the row's whole claim to exist — including after a board swap.
+
+    A refreshed value keeps the row discovered (or the page would hold a row the catalog
+    cannot draw); a key that stops answering loses it, rather than earning the ``n/a`` that
+    only a catalog key can.
+    """
+    spec = discovered_setting("radio.rxps")
+    tui_ctx.remote_store.remember_discovered(NODE, "radio.rxps", "off")
+
+    repeater_admin.remember_reply(tui_ctx, NODE, [spec], "> balanced")
+    cached = tui_ctx.remote_store.settings(NODE)["radio.rxps"]
+    assert (cached.value, cached.discovered) == ("balanced", True)
+
+    repeater_admin.remember_reply(tui_ctx, NODE, [spec], "??: radio.rxps")
+    assert "radio.rxps" not in tui_ctx.remote_store.settings(NODE)
+
+
+def test_discovered_rows_draw_last_in_their_own_section_and_are_deletable() -> None:
+    """A node's own settings sit under ``Extra`` — and only they answer Del."""
+    from meshterm.ui.tui import Choice
+
+    plain = {"txdelay": CachedValue("0.5", utcnow())}
+    catalog_rows = [
+        item
+        for item in repeater_admin._menu_items(NODE, plain, {})[1]
+        if isinstance(item, Choice) and item.deletable
+    ]
+    assert catalog_rows == [], "no catalog row may be forgotten"
+
+    cache = dict(plain, **{"radio.rxps": CachedValue("balanced", utcnow(), discovered=True)})
+    items = repeater_admin._menu_items(NODE, cache, {})[1]
+    deletable = [i for i in items if isinstance(i, Choice) and i.deletable]
+    assert [i.value for i in deletable] == ["radio.rxps"]
+
+    rows = [i for i in items if isinstance(i, Choice) and isinstance(i.value, str)]
+    settings_rows = [r for r in rows if repeater_admin.get_setting(r.value) or r.deletable]
+    assert settings_rows[-1].value == "radio.rxps", "the node's own settings come last"
+    assert DISCOVERED_HELP in settings_rows[-1].title.plain
+
+
+def test_a_staged_discovered_value_is_written_with_its_own_set() -> None:
+    """A key the catalog hasn't got is still written the one way anything can write it."""
+    writes = write_plan({"radio.rxps": "balanced", "txdelay": "1.5"}, {})
+    assert [w.command for w in writes] == ["set txdelay 1.5", "set radio.rxps balanced"]
+
+
+def test_a_long_discovered_value_cannot_widen_the_whole_page() -> None:
+    """The value lane is one width for every row, so a node's own setting may not set it.
+
+    Some builds answer ``get radio.rxps`` with a whole diagnostic line. Unbounded, that one
+    row would push every catalog setting's description right and off a 72-column screen —
+    reshaping a page the reader opened to read the catalog.
+    """
+    from rich.cells import cell_len
+
+    from meshterm.ui.tui import Choice
+
+    def widest(cache) -> int:
+        items = repeater_admin._menu_items(NODE, cache, {})[1]
+        return max(
+            cell_len(i.title.plain)
+            for i in items
+            if isinstance(i, Choice) and hasattr(i.title, "plain")
+        )
+
+    catalog = {
+        "tx": CachedValue("20", utcnow()),
+        "owner.info": CachedValue("Jean-Pierre, Montreal", utcnow()),
+    }
+    chatty = dict(
+        catalog,
+        **{
+            "radio.rxps": CachedValue(
+                "desired=off effective=off supported=yes level=0 preamble=16 rx=0 sleep=0",
+                utcnow(),
+                discovered=True,
+            )
+        },
+    )
+    assert widest(chatty) == widest(catalog)
+
+    fitted = repeater_admin._extra_value("a value far too long for its lane", 14)
+    assert cell_len(fitted) == 14
+    assert repeater_admin._extra_value("  balanced\n", 14) == "balanced"

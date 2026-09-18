@@ -21,6 +21,16 @@ Beyond the settings, the action rows cover the box itself — advert, clock sync
 admin password, reboot, each behind its own floating confirmation — and the **Command
 line** opens the readline-style remote CLI (:mod:`meshterm.ui.remote_cli`) for anything
 the catalog doesn't spell.
+
+That command line is also where the page *grows*. Third-party builds carry settings the
+catalog has never heard of, and MeshTerm can't know which build a node is running without
+asking it — every question being one paced round trip, and every guessed row a dead ``n/a``
+on everyone else's page. So nothing is probed speculatively: a ``get``/``set`` the reader
+ran here, which *this node* answered, earns a row on *this node's* page under **Extra**
+(:func:`learn_from_cli`). The round trip was one the reader was spending anyway, the catalog
+doesn't grow, and no other node's page changes. A row the node stops answering goes again —
+which is what tidies up after a board swap onto the same identity — and ``Del`` forgets one
+without waiting for a read.
 """
 
 from __future__ import annotations
@@ -36,12 +46,18 @@ from rich.text import Text
 
 from ..core.models import Contact
 from ..core.remote_config import (
+    DISCOVERED_CATEGORY,
+    NEVER_STORED,
     REPEATER_SETTINGS,
     RemoteSetting,
+    composite_members,
     composite_reads,
+    discovered_setting,
     get_setting,
+    learnable_from_get,
     normalize_value,
     parse_reply_value,
+    parse_setting_command,
     range_hint,
     read_plan,
     reply_is_error,
@@ -54,6 +70,7 @@ from .menus import (
     PICK_LOCATION_LABEL,
     confirm_discard,
     exit_rows,
+    fit_cells,
     icon_lane,
     lane_header,
     lane_row,
@@ -63,7 +80,7 @@ from .menus import (
 )
 from .trace_screen import TracingDialog
 from .tui import Choice, Separator
-from .tui.select import SelectScreen, splice_hint
+from .tui.select import DeleteRequest, SelectScreen, splice_hint
 from .tui.spinner import Spinner, spinner_interval
 
 if TYPE_CHECKING:
@@ -87,6 +104,50 @@ _CANCEL = "__cancel__"
 
 #: The footer atom naming the chord that re-reads the highlighted setting.
 READ_ONE_HINT = "^R read"
+
+#: The footer atom naming the key that drops a discovered row (surfaced on those rows only).
+FORGET_HINT = "Del forget"
+
+#: The narrowest the value lane may be squeezed to for a discovered setting — a floor, so a
+#: page whose catalog rows are all ``?`` still shows something of what the node answered.
+_EXTRA_VALUE_MIN = 14
+
+
+def _extra_value(text: str, width: int) -> str:
+    """One discovered value, fitted for the lane: whitespace collapsed, a long reply cut.
+
+    A discovered setting's value is whatever the node said, and a build that answers a whole
+    diagnostic line (``desired=off effective=off supported=yes …``) would otherwise set the
+    value lane's width — one width, for every row on the page — and push each setting's
+    description off the edge. The row is cut here instead of the page being reshaped around
+    it; the command line is where the whole reply is read.
+    """
+    flat = " ".join(text.split())
+    return fit_cells(flat, width) if cell_len(flat) > width else flat
+
+
+def _spec_for(key: str, cache: dict) -> RemoteSetting | None:
+    """The setting ``key`` names on this node: the catalog's, or its own discovered one."""
+    spec = get_setting(key)
+    if spec is not None:
+        return spec
+    cached = cache.get(key)
+    return discovered_setting(key) if cached is not None and cached.discovered else None
+
+
+def _discovered_specs(cache: dict) -> list[RemoteSetting]:
+    """This node's discovered settings, in key order — rows the catalog knows nothing about."""
+    return [discovered_setting(key) for key, cached in sorted(cache.items()) if cached.discovered]
+
+
+def _all_specs(cache: dict) -> list[RemoteSetting]:
+    """Every setting this node's page draws: the catalog, plus what it taught us itself."""
+    return [*REPEATER_SETTINGS, *_discovered_specs(cache)]
+
+
+def _extra_keys(cache: dict) -> frozenset[str]:
+    """The keys on this node's page that came from the node rather than from the catalog."""
+    return frozenset(key for key, cached in cache.items() if cached.discovered)
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,6 +182,9 @@ class AdminMenu(SelectScreen):
 
     floating = False
 
+    #: The keys on this node's page that the catalog hasn't got, refreshed with the rows.
+    extra_keys: frozenset[str] = frozenset()
+
     def __init__(self, title: str, items: list, **kwargs: Any) -> None:
         """Build the page's list, its rows ending at the edge rather than sliding under ←→.
 
@@ -134,13 +198,27 @@ class AdminMenu(SelectScreen):
         kwargs.setdefault("hscroll", False)
         super().__init__(title, items, **kwargs)
 
-    def _readable_key(self) -> str | None:
-        """The highlighted row's setting key, when it is a setting the node can be asked."""
+    def _row_key(self) -> str | None:
+        """The highlighted row's setting key, or ``None`` on an action row."""
         current = self._current_choice()
         if current is None or not isinstance(current.value, str):
             return None
-        spec = get_setting(current.value)
+        return current.value
+
+    def _readable_key(self) -> str | None:
+        """The highlighted row's setting key, when it is a setting the node can be asked."""
+        key = self._row_key()
+        if key is None:
+            return None
+        if key in self.extra_keys:
+            return key  # a discovered row is a string setting, and always re-readable
+        spec = get_setting(key)
         return spec.key if spec is not None and spec.readable else None
+
+    def _forgettable_key(self) -> str | None:
+        """The highlighted row's key, when it is a discovered row Del can drop."""
+        key = self._row_key()
+        return key if key is not None and key in self.extra_keys else None
 
     @property
     def footer_hint(self) -> str:  # type: ignore[override]
@@ -150,16 +228,26 @@ class AdminMenu(SelectScreen):
 
     @property
     def fkey_lane(self):
-        """The list's lane with ``Read`` on F3 — dim on a row there is nothing to read.
+        """The list's lane with ``Read`` on F3 and ``Forget`` behind it — dim where inert.
 
         F1/F2 are this grouped list's section jumps and F4/F5 the pager; F3 is the slot a
-        select list spends on its own verb. Dim rather than empty on an action row: reading
-        is a thing on this screen, just not for the row the cursor is on.
+        select list spends on its own verb. Read and Forget are the same slot's two halves
+        because they are the same subject — *this row* — and they are never both live: a
+        catalog row can be read and not forgotten, and only a discovered row can be dropped.
+        Dim rather than empty on an action row: both are things on this screen, just not for
+        the row the cursor is on.
         """
         from .tui.fkeys import FPair
 
         lane = list(super().fkey_lane)
-        lane[2] = FPair("Read", "retry", enabled=self._readable_key() is not None)
+        lane[2] = FPair(
+            "Read",
+            "retry",
+            opp_label="Forget",
+            opp_action="delete",
+            enabled=self._readable_key() is not None,
+            opp_enabled=self._forgettable_key() is not None,
+        )
         return lane
 
     def handle(self, action: str, data: str = "") -> None:
@@ -292,7 +380,9 @@ async def _admin_session(ctx: AppContext, device: Device, node: Contact) -> dict
         title,
         items,
         footer_hint="↑↓ move · type to filter · Enter select · Esc back",
+        delete_hint=FORGET_HINT,
     )
+    menu.extra_keys = _extra_keys(cache)
     async with session.stay(menu) as visit:
         while True:
             choice = await visit.result()
@@ -304,13 +394,17 @@ async def _admin_session(ctx: AppContext, device: Device, node: Contact) -> dict
                     continue
                 return {"node": node.name, "applied": applied}
             if isinstance(choice, ReadOne):
-                spec = get_setting(choice.key)
+                spec = _spec_for(choice.key, cache)
                 if spec is not None:
                     await read_settings(ctx, device, node, [spec])
+            elif isinstance(choice, DeleteRequest):
+                await _forget_discovered(ctx, node, str(choice.value), pending)
             elif choice == _APPLY:
                 applied += await _apply(ctx, device, node, pending)
             elif choice == _READ:
-                await read_settings(ctx, device, node, REPEATER_SETTINGS)
+                # This node's page, not the catalog: a discovered row is refreshed by the
+                # same sweep as everything else, and drops off it if the node stops answering.
+                await read_settings(ctx, device, node, _all_specs(cache))
             elif choice == _LOCATION:
                 await _stage_location(ctx, cache, pending)
             elif choice == _CLI:
@@ -349,7 +443,7 @@ async def _admin_session(ctx: AppContext, device: Device, node: Contact) -> dict
                     danger=True,
                 )
             else:  # a setting key
-                spec = get_setting(str(choice))
+                spec = _spec_for(str(choice), cache)
                 if spec is not None and not spec.writable:
                     # A read-only fact has nothing to stage; asking again is all Enter can do.
                     await read_settings(ctx, device, node, [spec])
@@ -359,6 +453,7 @@ async def _admin_session(ctx: AppContext, device: Device, node: Contact) -> dict
             # the values are the ones the action just produced.
             cache = ctx.remote_store.settings(node)
             title, items = _menu_items(node, cache, pending)
+            menu.extra_keys = _extra_keys(cache)
             menu.replace_items(items, title=title)
 
 
@@ -383,6 +478,25 @@ def _menu_items(node: Contact, cache: dict, pending: dict[str, str]) -> tuple[st
             rows.append((spec.label, _value_text(spec, cache, pending), spec.help, spec.key))
         sections.append((category, rows))
 
+    # What this node taught us itself, last and in its own section — absent entirely on a
+    # node that has taught us nothing, which is every node until someone asks it something.
+    # Its values are fitted to the lane the catalog's rows already need: the value lane is
+    # one width for the whole page, so an unbounded reply here would push every setting's
+    # description right, off the edge of a 72-column screen, and reshape a page the reader
+    # opened to read the catalog.
+    extra = _discovered_specs(cache)
+    if extra:
+        budget = max(
+            _EXTRA_VALUE_MIN,
+            max((cell_len(value.plain) for _, rows in sections for _, value, _, _ in rows)),
+        )
+        sections.append(
+            (
+                DISCOVERED_CATEGORY,
+                [(s.label, _value_text(s, cache, pending, budget), s.help, s.key) for s in extra],
+            )
+        )
+
     label_w = max(cell_len(label) for _, rows in sections for label, _, _, _ in rows)
     value_w = max(cell_len(value.plain) for _, rows in sections for _, value, _, _ in rows)
 
@@ -394,7 +508,13 @@ def _menu_items(node: Contact, cache: dict, pending: dict[str, str]) -> tuple[st
         items.append(section_heading(category))
         for label, value, help_text, key in rows:
             items.append(
-                Choice(title=lane_row(label, value, help_text, label_w, value_w), value=key)
+                Choice(
+                    title=lane_row(label, value, help_text, label_w, value_w),
+                    value=key,
+                    # Only a discovered row can be dropped: a catalog row that goes away
+                    # would come straight back on the next paint, the catalog still naming it.
+                    deletable=category == DISCOVERED_CATEGORY,
+                )
             )
 
     # ↻ and ⌨ are one cell where 📡 🕒 🔐 🔄 are two, so the column is measured once and
@@ -424,7 +544,9 @@ def _menu_items(node: Contact, cache: dict, pending: dict[str, str]) -> tuple[st
     return title, items
 
 
-def _value_text(spec: RemoteSetting, cache: dict, pending: dict[str, str]) -> Text:
+def _value_text(
+    spec: RemoteSetting, cache: dict, pending: dict[str, str], width: int = _EXTRA_VALUE_MIN
+) -> Text:
     """One setting's VALUE lane: what the node last said, and any staged arrow.
 
     Four states, each its own word: the value; ``empty`` for a string the node holds blank;
@@ -441,10 +563,14 @@ def _value_text(spec: RemoteSetting, cache: dict, pending: dict[str, str]) -> Te
         value = Text("n/a", style="muted")
     elif cached.value == "":
         value = Text("empty", style="muted")
+    elif spec.discovered:
+        value = Text(_extra_value(cached.value, width))
     else:
         value = Text(spec.display(cached.value))
     if spec.key in pending:
-        value.append(f" → {spec.display(pending[spec.key])}", style="warn")
+        staged = pending[spec.key]
+        shown = _extra_value(staged, width) if spec.discovered else spec.display(staged)
+        value.append(f" → {shown}", style="warn")
     return value
 
 
@@ -453,7 +579,7 @@ def _value_text(spec: RemoteSetting, cache: dict, pending: dict[str, str]) -> Te
 
 async def _stage_setting(ctx: AppContext, key: str, cache: dict, pending: dict[str, str]) -> None:
     """Prompt for one setting's new value and stage it (nothing is sent yet)."""
-    spec = get_setting(key)
+    spec = _spec_for(key, cache)
     if spec is None or not spec.writable:  # pragma: no cover - menu offers only real keys
         return
     cached = cache.get(key)
@@ -506,6 +632,33 @@ async def _stage_setting(ctx: AppContext, key: str, cache: dict, pending: dict[s
         pending.pop(key, None)  # back to what the node last said — nothing to send
     else:
         pending[key] = value
+
+
+async def _forget_discovered(
+    ctx: AppContext, node: Contact, key: str, pending: dict[str, str]
+) -> None:
+    """Drop one discovered row from this node's page, behind a confirm.
+
+    The row usually cleans itself up — a node that stops answering the key loses it on the
+    next read — but that costs a round trip and a node in reach, and neither is a given
+    after the board it was learned from has been replaced. So Del asks, and forgets. It is
+    a red confirm like any other single-record delete, though nothing on the node changes:
+    what goes is what MeshTerm remembers, and asking the key again brings the row back.
+    """
+    from .tui import CANCEL
+
+    choice = await ctx.ui.dialog(
+        f"Stop showing {key} on {node.name}? Nothing on the node changes — "
+        "ask it for the setting again and the row comes back.",
+        [("Cancel", CANCEL), ("Forget", "forget")],
+        title="Forget setting",
+        default=1,
+        destructive=True,
+    )
+    if choice != "forget":
+        return
+    pending.pop(key, None)
+    ctx.remote_store.forget_setting(node, key)
 
 
 async def _stage_location(ctx: AppContext, cache: dict, pending: dict[str, str]) -> None:
@@ -598,8 +751,11 @@ async def _apply(ctx: AppContext, device: Device, node: Contact, pending: dict[s
                 remember_reply(ctx, node, fills, reply)
 
         writes = write_plan(pending, _known_values(ctx, node))
+        # The catalog plus this node's own discovered rows: a staged key that only this node
+        # has is still a row with a label to name in the outcome, and a write to count.
+        specs = _all_specs(ctx.remote_store.settings(node))
         for i, write in enumerate(writes, start=1):
-            staged = [s for s in REPEATER_SETTINGS if s.key in write.values and s.key in pending]
+            staged = [s for s in specs if s.key in write.values and s.key in pending]
             names = ", ".join(f"{s.label} = {s.display(write.values[s.key])}" for s in staged)
             if write.missing:
                 unread = ", ".join(s.label for s in map(get_setting, write.missing) if s)
@@ -668,11 +824,83 @@ def remember_reply(ctx: AppContext, node: Contact, fills: list[RemoteSetting], r
     for spec in fills:
         value = parse_reply_value(spec, reply)  # None for an error reply, too
         if value is None:
-            ctx.remote_store.remember_unsupported(node, spec.key)
+            if spec.discovered:
+                # A discovered row's whole claim to exist is that this node answered the
+                # key. When it stops, the claim is gone and so is the row — ``n/a`` is for
+                # a key the *catalog* says might be there, and nothing says that here. This
+                # is what cleans the page up after a board swap onto the same identity.
+                ctx.remote_store.forget_setting(node, spec.key)
+            else:
+                ctx.remote_store.remember_unsupported(node, spec.key)
         else:
             ctx.remote_store.remember_setting(node, spec.key, value)
             got += 1
     return got
+
+
+def learn_from_cli(ctx: AppContext, node: Contact, command: str, reply: str) -> None:
+    """Fold what one command-line exchange proved about ``node`` into its page.
+
+    The command line is the only place a setting outside the catalog can be reached, so it
+    is also the only place one can be *found*: a ``get``/``set`` this node answered is proof
+    the key is there, and the row it earns costs no round trip nobody asked for. The catalog
+    doesn't grow — a key learned here belongs to this node alone (see
+    :func:`~meshterm.core.remote_config.discovered_setting`), and every other node's page is
+    what it always was.
+
+    Three cases, in the order they are tested:
+
+    * A **composite's own key** (``get radio``) fills all four of its fields, exactly as a
+      read of any one of them does.
+    * A **catalog key** folds into the cache the way the sweep or an Apply would — which is
+      also how ``get tx`` at the command line stopped leaving the TX power row stale.
+    * Anything else is **discovered**, and the two verbs are not equally good evidence.
+      ``handleSetCmd`` matches a key with its trailing space and refuses an unknown one
+      outright, so an accepted write is proof. ``handleGetCmd`` matches on a bare prefix and
+      will answer a key it hasn't got out of a shorter key's branch, so a read is proof only
+      when the reply cannot be that shorter key's
+      (:func:`~meshterm.core.remote_config.learnable_from_get`).
+
+    ``prv.key`` is never stored, whichever way it was asked
+    (:data:`~meshterm.core.remote_config.NEVER_STORED`).
+    """
+    parsed = parse_setting_command(command)
+    if parsed is None or parsed.key in NEVER_STORED:
+        return
+    members = composite_members(parsed.key)
+    spec = _spec_for(parsed.key, ctx.remote_store.settings(node))
+
+    if parsed.verb == "get":
+        if members:
+            remember_reply(ctx, node, members, reply)
+        elif spec is not None:
+            remember_reply(ctx, node, [spec], reply)
+        elif not reply_is_error(reply) and learnable_from_get(
+            parsed.key, reply, _known_values(ctx, node)
+        ):
+            found = discovered_setting(parsed.key)
+            value = parse_reply_value(found, reply)
+            if value is not None:
+                ctx.remote_store.remember_discovered(node, found.key, value)
+        return
+
+    if reply_is_error(reply):
+        return  # a refused write says nothing about the key, and nothing about its value
+    if members:
+        for member in members:
+            value = parse_reply_value(member, parsed.value)
+            if value is not None:
+                ctx.remote_store.remember_setting(node, member.key, value)
+        return
+    if spec is not None and not spec.discovered:
+        value = parse_reply_value(spec, parsed.value)
+        if value is None:
+            return  # sent in words the catalog can't read back; leave the row as it was
+        ctx.remote_store.remember_setting(node, spec.key, value)
+        for other in spec.overlaps:
+            ctx.remote_store.forget_setting(node, other)
+        return
+    ctx.remote_store.remember_discovered(node, parsed.key, parsed.value)
 
 
 async def read_settings(
@@ -870,6 +1098,7 @@ async def _command_line(ctx: AppContext, device: Device, node: Contact) -> None:
         if reply is None:
             screen.failed(f"no reply within {_REPLY_TIMEOUT_S:.0f} s")
         else:
+            learn_from_cli(ctx, node, command, reply)
             screen.reply(reply)
 
     screen = RemoteCliScreen(
@@ -877,6 +1106,7 @@ async def _command_line(ctx: AppContext, device: Device, node: Contact) -> None:
         history=ctx.remote_store.history(node),
         send=send,
         session=session,
+        extra_keys=_extra_keys(ctx.remote_store.settings(node)),
     )
 
     async def animate() -> None:

@@ -28,6 +28,13 @@ three of its shapes only make sense against that source:
   ``af`` both read and write ``airtime_factor``, so writing one stales the other
   (:attr:`RemoteSetting.overlaps`).
 
+The catalog is not the whole page, though: it is what *any* MeshCore build might expose,
+and a node can have settings beyond it (a third-party firmware's own knobs). Those are never
+listed here and never probed — they are learned one node at a time from commands the reader
+actually ran (:func:`parse_setting_command`, :func:`discovered_setting`), which is why
+:attr:`RemoteSetting.discovered` exists and why :func:`learnable_from_get` has to care that
+``get`` matches keys by prefix and ``set`` does not.
+
 Replies are parsed *loosely* on purpose: repeater firmware answers tersely and has changed
 its phrasing across versions (``"> 20"``, ``"tx: 20"``, ``"OK - repeat is now ON"``), so
 values are extracted rather than pattern-matched. Firmware without a given key answers
@@ -118,6 +125,9 @@ class RemoteSetting:
         part: This setting's position within its composite's comma-joined value.
         overlaps: Keys that are another spelling of the same firmware value, whose cached
             reading a write to this one makes stale.
+        discovered: Whether this setting is not in the catalog at all, but was learned from
+            a command the reader ran on *one node's* command line (see
+            :func:`discovered_setting`). Never true of a catalog entry.
     """
 
     key: str
@@ -139,6 +149,7 @@ class RemoteSetting:
     composite: str = ""
     part: int = 0
     overlaps: tuple[str, ...] = ()
+    discovered: bool = False
 
     @property
     def get_command(self) -> str:
@@ -671,6 +682,134 @@ def composite_members(composite: str) -> list[RemoteSetting]:
     return sorted((s for s in REPEATER_SETTINGS if s.composite == composite), key=lambda s: s.part)
 
 
+#: The category a discovered setting sorts under, and the heading its section takes.
+DISCOVERED_CATEGORY = "Extra"
+
+#: The description lane's text for a discovered setting. The catalog has no explanation to
+#: give — all it knows is that this node answered the key — so the row says exactly that, and
+#: says it short: the lane is shared with descriptions written to fit a 72-column screen.
+DISCOVERED_HELP = "Found on this node"
+
+#: Keys whose value is never written to disk, however it was asked for. ``prv.key`` is the
+#: node's own identity: the firmware answers it on the serial console only (``sender_timestamp
+#: == 0`` in ``handleGetCmd``), it is a fact rather than a setting, and a reply that reached
+#: us anyway must not be the first place a repeater's private key lands in a file. The
+#: command line still runs the command and still prints the answer; only the remembering
+#: stops here.
+NEVER_STORED = frozenset({"prv.key"})
+
+
+@dataclass(frozen=True, slots=True)
+class SettingCommand:
+    """A remote-CLI command recognised as a read or a write of one named setting.
+
+    Attributes:
+        verb: ``"get"`` or ``"set"``.
+        key: The setting's key, as the reader spelled it.
+        value: What a ``set`` writes; ``""`` for a ``get``.
+    """
+
+    verb: str
+    key: str
+    value: str = ""
+
+
+def parse_setting_command(command: str) -> SettingCommand | None:
+    """Read one typed CLI command as a setting read/write, or ``None`` if it is neither.
+
+    The grammar is the filter, and deliberately so: ``get <key>`` and ``set <key> <value>``
+    are the firmware's own way of saying *this is a setting*, so recognising them costs no
+    list of what to exclude. Every top-level verb — ``reboot``, ``advert``, ``clock sync``,
+    ``start ota``, ``powersaving``, ``setperm`` — simply isn't this shape and falls out.
+    A key is held to the spelling the firmware's own keys use, so a mistyped line can't
+    invent one.
+    """
+    parts = command.strip().split()
+    if len(parts) < 2 or parts[0] not in ("get", "set"):
+        return None
+    key = parts[1]
+    if not re.fullmatch(r"[A-Za-z][A-Za-z0-9._]*", key):
+        return None
+    if parts[0] == "get":
+        return SettingCommand("get", key) if len(parts) == 2 else None
+    value = command.strip()[len("set") :].strip()[len(key) :].strip()
+    return SettingCommand("set", key, value) if value else None
+
+
+def get_match_keys() -> list[str]:
+    """Every spelling a firmware ``get`` matches on, longest first.
+
+    A composite's members share their composite's key (``get radio``); verb-shaped settings
+    aren't ``get`` keys at all.
+    """
+    keys = {s.composite or s.key for s in REPEATER_SETTINGS if s.readable and not s.verb}
+    return sorted(keys, key=len, reverse=True)
+
+
+def shadowing_key(key: str) -> str | None:
+    """The catalog ``get`` key that would answer a ``get key`` on firmware lacking ``key``.
+
+    ``handleGetCmd`` compares with ``memcmp(config, "radio", 5)`` — no trailing space — so a
+    key it doesn't know falls into the branch of any *shorter* key that prefixes it, and
+    answers with that one's value. ``get radio.rxps`` on stock firmware comes back
+    ``> 910.525,62.5,7,5``: not an error, and not a value of the key that was asked for.
+    ``handleSetCmd`` matches ``"radio "`` *with* the space, so a write has no such shadow.
+    """
+    return next((k for k in get_match_keys() if key != k and key.startswith(k)), None)
+
+
+def learnable_from_get(key: str, reply: str, known: Mapping[str, str]) -> bool:
+    """Whether a ``get key`` reply really came from ``key`` and not from a shorter sibling.
+
+    Only asked of a key the catalog doesn't have, where there is no typing to reject a
+    wrong-shaped answer with. The reply is trusted when nothing shadows the key
+    (:func:`shadowing_key`), or when it cannot be the shadow's answer — it doesn't parse as
+    the shadow's type, or it parses to something other than what the shadow last said. A
+    shadow whose own value was never read leaves the question unanswerable, and an
+    unanswerable question is not a discovery.
+
+    Args:
+        key: The key the reader asked for.
+        reply: What the node answered.
+        known: The node's last-read values, keyed as the cache keys them.
+    """
+    shadow = shadowing_key(key)
+    if shadow is None:
+        return True
+    members = composite_members(shadow)
+    if not members:
+        spec = get_setting(shadow)
+        members = [spec] if spec is not None else []
+    if not members:  # pragma: no cover - every get key is a catalog key
+        return True
+    parsed = {m.key: parse_reply_value(m, reply) for m in members}
+    if any(value is None for value in parsed.values()):
+        return True  # the reply isn't even shaped like the shadow's answer
+    if any(known.get(k) is None for k in parsed):
+        return False  # it could be the shadow's answer, and there is nothing to compare
+    return any(known[k] != value for k, value in parsed.items())
+
+
+def discovered_setting(key: str) -> RemoteSetting:
+    """A catalog entry for a key the catalog hasn't got, which one node said it has.
+
+    Everything downstream of the catalog — the read plan, the reply parser, the editor's
+    lanes, staging, :func:`write_plan` — speaks :class:`RemoteSetting`, so a discovered key
+    becomes one rather than growing a second path beside it. What it carries is only what
+    was actually learned: the key as the node spells it, and a string value. No range, no
+    words, no options — the firmware never said, and guessing is how a row would start
+    lying about a node whose build we have never seen.
+    """
+    return RemoteSetting(
+        key=key,
+        label=key,
+        help=DISCOVERED_HELP,
+        category=DISCOVERED_CATEGORY,
+        kind="str",
+        discovered=True,
+    )
+
+
 def reply_is_error(reply: str) -> bool:
     """Whether a reply text reads as the firmware refusing the command.
 
@@ -884,6 +1023,11 @@ def write_plan(pending: Mapping[str, str], known: Mapping[str, str]) -> list[Wri
         else:
             joined = ",".join(str(values[m.key]) for m in members)
             writes.append(Write(f"set {spec.composite} {joined}", dict(values)))  # type: ignore[arg-type]
+    # A staged key the catalog hasn't got is a discovered one (nothing else can stage a
+    # row), and it is written the only way anything knows how: its own plain `set`.
+    for key, value in pending.items():
+        if get_setting(key) is None:
+            writes.append(Write(f"set {key} {value}", {key: value}))
     return writes
 
 
