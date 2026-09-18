@@ -36,9 +36,9 @@ class CachedValue:
             has no such setting (a board without a front-end module, a build without a
             bridge). Kept apart from *never read*, which is no entry at all.
         discovered: ``True`` for a setting the catalog hasn't got, learned from a command
-            the reader ran on *this node's* command line. It is the row's whole claim to
-            exist, so a node that stops answering the key loses the row rather than
-            earning an ``n/a`` — the catalog is what says a key *might* be there.
+            the reader ran on *this node's* command line. Such a row reads ``n/a`` like any
+            other when the node stops answering it, and is removed only by hand: its key is
+            recorded nowhere else, so a misread reply must not be able to delete it.
     """
 
     value: str

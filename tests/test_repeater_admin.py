@@ -895,12 +895,13 @@ def test_a_write_stales_the_other_spelling_from_the_command_line_too(tui_ctx) ->
     assert cache["dutycycle"].value == "40.0" and "af" not in cache
 
 
-def test_a_discovered_row_survives_a_re_read_and_goes_when_the_key_does(tui_ctx) -> None:
-    """The node's answer is the row's whole claim to exist — including after a board swap.
+def test_no_reply_can_remove_a_discovered_row(tui_ctx) -> None:
+    """A read may only ever take a discovered row to ``n/a``; removing it is a decision.
 
-    A refreshed value keeps the row discovered (or the page would hold a row the catalog
-    cannot draw); a key that stops answering loses it, rather than earning the ``n/a`` that
-    only a catalog key can.
+    Its key is recorded nowhere but here, so a reply that misreads — a truncated line, a
+    node answering mid-reboot, a frame correlated to the wrong command — must not be able
+    to delete the row. A catalog row costs nothing when that happens, the catalog still
+    naming the key; this one would cost the reader something only they can restore.
     """
     spec = discovered_setting("radio.rxps")
     tui_ctx.remote_store.remember_discovered(NODE, "radio.rxps", "off")
@@ -910,7 +911,10 @@ def test_a_discovered_row_survives_a_re_read_and_goes_when_the_key_does(tui_ctx)
     assert (cached.value, cached.discovered) == ("balanced", True)
 
     repeater_admin.remember_reply(tui_ctx, NODE, [spec], "??: radio.rxps")
-    assert "radio.rxps" not in tui_ctx.remote_store.settings(NODE)
+    cache = tui_ctx.remote_store.settings(NODE)
+    assert cache["radio.rxps"].discovered and not cache["radio.rxps"].supported
+    assert repeater_admin._value_text(spec, cache, {}).plain == "n/a"
+    assert "radio.rxps" in repeater_admin._extra_keys(cache), "still the reader's to forget"
 
 
 def test_discovered_rows_draw_last_in_their_own_section_and_are_deletable() -> None:

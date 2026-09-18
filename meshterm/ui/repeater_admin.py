@@ -28,9 +28,9 @@ asking it — every question being one paced round trip, and every guessed row a
 on everyone else's page. So nothing is probed speculatively: a ``get``/``set`` the reader
 ran here, which *this node* answered, earns a row on *this node's* page under **Extra**
 (:func:`learn_from_cli`). The round trip was one the reader was spending anyway, the catalog
-doesn't grow, and no other node's page changes. A row the node stops answering goes again —
-which is what tidies up after a board swap onto the same identity — and ``Del`` forgets one
-without waiting for a read.
+doesn't grow, and no other node's page changes. A row is only ever removed by hand
+(``Del``): a key that stops answering reads ``n/a`` like any other, because a misread reply
+would otherwise delete the one thing about this node nobody else can restore.
 """
 
 from __future__ import annotations
@@ -403,7 +403,7 @@ async def _admin_session(ctx: AppContext, device: Device, node: Contact) -> dict
                 applied += await _apply(ctx, device, node, pending)
             elif choice == _READ:
                 # This node's page, not the catalog: a discovered row is refreshed by the
-                # same sweep as everything else, and drops off it if the node stops answering.
+                # same sweep as everything else, and reads n/a if it stops answering.
                 await read_settings(ctx, device, node, _all_specs(cache))
             elif choice == _LOCATION:
                 await _stage_location(ctx, cache, pending)
@@ -639,11 +639,16 @@ async def _forget_discovered(
 ) -> None:
     """Drop one discovered row from this node's page, behind a confirm.
 
-    The row usually cleans itself up — a node that stops answering the key loses it on the
-    next read — but that costs a round trip and a node in reach, and neither is a given
-    after the board it was learned from has been replaced. So Del asks, and forgets. It is
-    a red confirm like any other single-record delete, though nothing on the node changes:
-    what goes is what MeshTerm remembers, and asking the key again brings the row back.
+    This is the *only* way a discovered row is removed. Letting a read drop one — a key the
+    node no longer answers is real enough, after a board swap onto a reused identity — would
+    mean a single misread reply silently deleting the row: a truncated line, a node answering
+    mid-reboot, a stray frame correlated to the wrong command. A catalog row costs an ``n/a``
+    when that happens and nothing is lost, because the catalog still names the key; a
+    discovered row's key is known only here, and the reader may not remember what it was. So
+    the same ``n/a`` is all a read may do, and removing is a decision.
+
+    It is a red confirm like any other single-record delete, though nothing on the node
+    changes: what goes is what MeshTerm remembers, and asking the key again brings it back.
     """
     from .tui import CANCEL
 
@@ -824,14 +829,7 @@ def remember_reply(ctx: AppContext, node: Contact, fills: list[RemoteSetting], r
     for spec in fills:
         value = parse_reply_value(spec, reply)  # None for an error reply, too
         if value is None:
-            if spec.discovered:
-                # A discovered row's whole claim to exist is that this node answered the
-                # key. When it stops, the claim is gone and so is the row — ``n/a`` is for
-                # a key the *catalog* says might be there, and nothing says that here. This
-                # is what cleans the page up after a board swap onto the same identity.
-                ctx.remote_store.forget_setting(node, spec.key)
-            else:
-                ctx.remote_store.remember_unsupported(node, spec.key)
+            ctx.remote_store.remember_unsupported(node, spec.key)
         else:
             ctx.remote_store.remember_setting(node, spec.key, value)
             got += 1
