@@ -504,6 +504,44 @@ def test_every_mark_is_as_wide_as_its_name_says() -> None:
         assert logo_width(_rows(name)) == declared, f"{name} is not {declared} cells wide"
 
 
+def test_the_mark_says_bright_as_a_colour_not_as_bold() -> None:
+    """No span of the wordmark depends on the terminal reading bold as brightness.
+
+    An art editor spells brightness the DOS way, ``1m`` lifting the foreground into the
+    bright bank. That is true of the PicoCalc console and of a DOS one -- and false on
+    macOS Terminal, where bold asks for a heavier face and leaves the colour alone. There
+    ``1;30`` is not dark grey but plain black, and the wide mark carries seventy-nine such
+    spans, much of it on a black ground: the mark drew muted, and the dithers that fade one
+    colour into another faded toward the wrong end. So the loader emits the bright bank as
+    the colour it means (``9N``), which cannot be mistaken for a font weight.
+    """
+    import re
+
+    from meshterm.ui.logo import _NAMED_WIDTH, _rows, _variants, logo_width
+
+    sgr = re.compile(chr(27) + r"\[([0-9;]*)m")
+    for name in _variants():
+        rows = _rows(name)
+        codes = [m.group(1) for row in rows for m in sgr.finditer(row)]
+        assert codes, f"{name} carries no colour at all"
+
+        params = [p for code in codes for p in code.split(";")]
+        # Nothing asks for bold: brightness travels as 90-97 instead.
+        assert "1" not in params, f"{name} still leans on bold for brightness"
+        assert any(p.isdigit() and 90 <= int(p) <= 97 for p in params), (
+            f"{name} lost its bright spans entirely"
+        )
+        # A foreground on the dim bank still says so outright, so it cannot inherit a bank
+        # from whatever the row above left set (each row reaches Rich on its own).
+        for code in codes:
+            parts = code.split(";")
+            if any(re.fullmatch(r"3[0-7]", p) for p in parts):
+                assert "22" in parts, f"{name} has a dim foreground that never says so: {code}"
+
+        # And the spelling change moves no cells: the art measures exactly as it did.
+        assert logo_width(rows) == int(_NAMED_WIDTH.search(name).group(1))
+
+
 def test_the_mark_the_console_picks_stays_inside_its_font() -> None:
     """The wordmark obeys the glyph contract every other screen does.
 

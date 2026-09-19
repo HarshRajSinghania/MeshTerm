@@ -158,13 +158,25 @@ def _rewrap(line: str, width: int) -> list[str]:
 
 
 def _state_intensity(row: str) -> str:
-    """Rewrite the row's colour changes so every one says whether it is bright.
+    """Rewrite the row's colour changes so brightness is stated as a colour, not as bold.
 
-    An art editor spells brightness the DOS way — ``1m`` lifts the bank and each span after
-    it inherits that — which reads correctly only while the escapes stay one unbroken
-    stream. They don't here: a row is handed to Rich on its own, and the console draws bold
-    *as* the bright bank, so a span that never mentions intensity is read against whatever
-    happened to be set. Saying it outright changes no colour; it just stops one drifting.
+    An art editor spells brightness the DOS way — ``1m`` lifts the foreground into the
+    bright bank, and each span after it inherits that. Two things then have to be settled
+    before the row can be drawn anywhere else.
+
+    The first is that the inheritance does not survive: a row is handed to Rich on its own,
+    so a span that never mentions intensity is read against whatever the *previous row* left
+    set. That is resolved by working the state out here and saying it outright.
+
+    The second is that **bold is not brightness everywhere**. It is on the PicoCalc console
+    and on a DOS one; it is not on macOS Terminal, where bold asks for a heavier face and
+    leaves the colour alone. There ``1;30`` is not dark grey but plain black — and this art
+    leans on it, seventy-nine spans of the wide mark being bold-black, much of that on a
+    black ground. The mark came out muted, and the ``░▒▓`` dithers that fade one colour into
+    another faded toward the wrong end. So brightness is emitted as the colour it means:
+    ``9N`` (the aixterm bright bank), which needs no bold and is also how the PicoCalc's own
+    console spells bright. Nothing about *which* colour is being asked for changes; only the
+    spelling, from one a terminal may read as a font weight to one that can only be a colour.
     """
     out: list[str] = []
     bright = False
@@ -177,16 +189,32 @@ def _state_intensity(row: str) -> str:
             continue
         params = found.group()[2:-1]
         parts = params.split(";") if params else [""]
-        for part in parts:  # what this sequence leaves the intensity set to
-            if part in ("", "0", "22"):
-                bright = False
-            elif part == "1":
-                bright = True
-        dim = any(_DIM_FG.fullmatch(p) for p in parts)
-        if dim and not any(p in _SAYS_INTENSITY for p in parts):
-            out.append("\x1b[" + ";".join(["1" if bright else "22"] + parts) + "m")
+        # What this sequence leaves the intensity set to, for the spans that follow it.
+        says = [p for p in parts if p in ("", "0", "1", "22")]
+        for part in says:
+            bright = part == "1"
+        # Whether *this* sequence's own foreground is bright: what it says, else what stands.
+        here = bright
+        fg = next((p for p in parts if _DIM_FG.fullmatch(p)), None)
+        if fg is None:
+            # No foreground to restate. A bare "1" has nothing left to do once brightness
+            # travels as a colour, and dropping it keeps bold off glyphs a terminal may
+            # redraw at another weight; a reset still has to go through.
+            kept = [p for p in parts if p != "1"]
+            if kept:
+                out.append("\x1b[" + ";".join(kept) + "m")
         else:
-            out.append(found.group())
+            rewritten = []
+            for part in parts:
+                if part == "1":
+                    continue  # brightness is in the colour now
+                if part == fg:
+                    rewritten.append(str(int(fg) + 60) if here else fg)
+                else:
+                    rewritten.append(part)
+            if not here and "22" not in rewritten:
+                rewritten.insert(0, "22")  # say dim outright; never inherit a bank
+            out.append("\x1b[" + ";".join(rewritten) + "m")
         at = found.end()
     return "".join(out)
 
