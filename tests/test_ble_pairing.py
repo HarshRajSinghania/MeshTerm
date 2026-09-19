@@ -23,6 +23,7 @@ no radio, no real address, and no real pairing code is involved.
 from __future__ import annotations
 
 import asyncio
+import sys
 
 import pytest
 
@@ -200,8 +201,12 @@ def test_a_good_connect_hands_the_client_over_still_open() -> None:
     assert client.cx.link_open is True
 
 
-def test_the_connection_is_built_from_this_device_s_own_endpoint() -> None:
+def test_the_connection_is_built_from_this_device_s_own_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Address, discovered ``BLEDevice`` and PIN all reach the connection we construct."""
+    # Pinned off macOS, where the PIN is deliberately withheld (see the test below).
+    monkeypatch.setattr(sys, "platform", "win32")
     _FakeMeshCore.reset("ok")
     sentinel = object()
     dev = MeshCoreDevice(
@@ -219,6 +224,24 @@ def test_the_connection_is_built_from_this_device_s_own_endpoint() -> None:
     client = _FakeMeshCore.built[0]
     # auto_reconnect stays off: MeshTerm drives reconnection itself.
     assert (client.default_timeout, client.auto_reconnect) == (7.5, False)
+
+
+def test_the_pin_is_withheld_on_macos(monkeypatch: pytest.MonkeyPatch) -> None:
+    """macOS gets no PIN: handing one over is what *breaks* the connection there.
+
+    ``BLEConnection.connect`` responds to a PIN by calling bleak's ``pair()``, and
+    CoreBluetooth has no pairing API — the macOS backend raises outright, whereupon the
+    library disconnects and re-raises. Pairing there is the OS's to run, prompted by the
+    unbonded subscribe, so saying nothing is what lets a protected companion bond at all.
+    """
+    monkeypatch.setattr(sys, "platform", "darwin")
+    _FakeMeshCore.reset("ok")
+    dev = MeshCoreDevice(transport="ble", address=_ADDR, pin="000000")
+
+    asyncio.run(dev._connect_owned_ble(_FakeMeshCore))
+
+    assert _FakeTransport.last.pin is None
+    assert dev._pin == "000000"  # still remembered — it is the platform that can't use it
 
 
 def test_a_cancelled_handshake_still_closes_the_link() -> None:

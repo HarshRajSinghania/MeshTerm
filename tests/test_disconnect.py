@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -194,6 +195,10 @@ def _fake_ble_stack(monkeypatch: pytest.MonkeyPatch, *outcomes):
 
 async def test_create_ble_translates_auth_error_to_pin_guidance(monkeypatch) -> None:
     """A raw GATT auth rejection becomes a DeviceAuthenticationError that names the PIN fix."""
+    # Pinned off macOS: there the same rejection starts an OS-run pairing and is retried
+    # rather than reported, and the advice is the system dialog rather than --ble-pin.
+    # Without this the test would assert Windows/Linux wording on the macOS CI runner.
+    monkeypatch.setattr(sys, "platform", "win32")
     # No PIN supplied -> tell the user to pass one. The subclass lets the interactive picker
     # catch "needs a PIN" specifically, while the CLI still catches it as DeviceCommandError.
     fake = _fake_ble_stack(monkeypatch, BleakGATTProtocolError("Insufficient Authentication"))
@@ -302,12 +307,61 @@ async def test_create_ble_gives_up_after_the_retry(monkeypatch) -> None:
 
 async def test_create_ble_never_retries_an_auth_rejection(monkeypatch) -> None:
     """A PIN/bond rejection is translated on the first attempt — never looped by the retry."""
+    # Off macOS, where a rejection is the *start* of an OS-run pairing and is waited on.
+    monkeypatch.setattr(sys, "platform", "win32")
     fake = _fake_ble_stack(monkeypatch, BleakGATTProtocolError("Insufficient Authentication"))
     dev = connection.MeshCoreDevice(transport="ble", address=_BONDED_ADDR)
     await _disable_windows_pairing(dev)
     with pytest.raises(connection.DeviceAuthenticationError):
         await dev._create_ble(fake)
     assert len(fake.built) == 1
+
+
+async def test_create_ble_waits_for_macos_to_finish_pairing(monkeypatch) -> None:
+    """On macOS the first auth rejection is the pairing *starting*, so the connect waits.
+
+    Touching the companion's authenticated characteristic is the only way to make
+    CoreBluetooth pair at all, so the rejection and the Passkey dialog are the same event.
+    Giving up there reported an error for a pairing that was succeeding, and the device
+    connected only when the user selected it a second time.
+    """
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(connection, "_BLE_MACOS_PAIRING_DELAY_S", 0)
+    # Refused twice while the dialog is up, then the bond lands and the subscribe works.
+    fake = _fake_ble_stack(
+        monkeypatch,
+        BleakGATTProtocolError("Insufficient Authentication"),
+        BleakGATTProtocolError("Insufficient Authentication"),
+        "handshake-ok",
+    )
+    dev = connection.MeshCoreDevice(transport="ble", address=_BONDED_ADDR)
+    await _disable_windows_pairing(dev)
+
+    result = await dev._create_ble(fake)
+    assert result is fake.built[2]  # the attempt made after the bond is what the caller gets
+    assert len(fake.built) == 3
+    assert fake.built[0].disconnect_calls == 1  # each refused link was released, not stranded
+    assert fake.built[1].disconnect_calls == 1
+    assert fake.built[2].disconnect_calls == 0  # the live one is handed over open
+
+
+async def test_create_ble_gives_up_when_macos_pairing_is_dismissed(monkeypatch) -> None:
+    """A dialog nobody answers still fails in the end, and says where the code is asked for."""
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(connection, "_BLE_MACOS_PAIRING_DELAY_S", 0)
+    refusals = [BleakGATTProtocolError("Insufficient Authentication")] * (
+        connection._BLE_MACOS_PAIRING_ATTEMPTS + 1
+    )
+    fake = _fake_ble_stack(monkeypatch, *refusals)
+    dev = connection.MeshCoreDevice(transport="ble", address=_BONDED_ADDR)
+    await _disable_windows_pairing(dev)
+
+    with pytest.raises(connection.DeviceAuthenticationError) as excinfo:
+        await dev._create_ble(fake)
+    assert len(fake.built) == connection._BLE_MACOS_PAIRING_ATTEMPTS + 1  # bounded, not endless
+    # --ble-pin cannot help on macOS: the OS collects the code, so don't send the reader there.
+    assert "--ble-pin" not in str(excinfo.value)
+    assert "System Settings" in str(excinfo.value)
 
 
 async def test_connect_reports_an_unanswered_handshake_and_closes_it(monkeypatch) -> None:

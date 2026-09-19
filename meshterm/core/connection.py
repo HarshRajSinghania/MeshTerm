@@ -145,6 +145,16 @@ _BLE_CONNECT_ATTEMPTS = 2
 #: Pause between BLE link-open attempts (seconds), giving the OS radio a beat to settle.
 _BLE_CONNECT_RETRY_DELAY_S = 1.0
 
+#: Attempts, and the wait between them, while macOS finishes a pairing it has just begun.
+#: An unbonded subscribe to the companion's authenticated characteristic is what *triggers*
+#: Passkey Entry there, so the very failure we catch is the signal that the OS has raised
+#: its dialog — and the person now has to read a 6-digit code off the device and type it.
+#: Giving up at once meant a correct PIN produced an error and only the *second* attempt
+#: worked, the first having quietly done the bonding. Sized to cover a human typing a code
+#: rather than a radio settling, and bounded so a cancelled dialog still fails in the end.
+_BLE_MACOS_PAIRING_ATTEMPTS = 5
+_BLE_MACOS_PAIRING_DELAY_S = 6.0
+
 TX_POWER_MIN = 1
 TX_POWER_MAX = 22
 
@@ -1224,7 +1234,54 @@ class MeshCoreDevice(Device):
             # Clear it, pair with the PIN, and retry the connect exactly once before giving up.
             if allow_repair and await self._pair_ble_windows(force=True):
                 return await self._open_ble(mesh_core, allow_repair=False)
+            # On macOS the same rejection means the opposite thing: it is not the end of a
+            # pairing attempt but the *start* of one, because touching the authenticated
+            # characteristic is the only way to make CoreBluetooth pair at all. The OS is
+            # putting its Passkey dialog up as we unwind. Wait for the person to answer it.
+            if allow_repair and sys.platform == "darwin":
+                return await self._open_ble_after_macos_pairing(mesh_core, exc)
             raise DeviceAuthenticationError(self._ble_auth_message()) from exc
+
+    async def _open_ble_after_macos_pairing(self, mesh_core, cause: BaseException):  # type: ignore[no-untyped-def]
+        """Re-open the link while macOS is running the Passkey dialog it just raised.
+
+        CoreBluetooth exposes no pairing API — Apple's model is that a peripheral pairs
+        *implicitly* when something touches a characteristic that requires encryption. The
+        companion firmware puts its UART characteristic at ENC+MITM precisely so that
+        happens (``SECMODE_ENC_WITH_MITM`` on nRF52, ``ESP_GATT_PERM_*_ENC_MITM`` on
+        ESP32), so the subscribe fails with "Insufficient Authentication" *and* that
+        failure is what makes macOS ask for the code. The GATT operation is already dead by
+        then; the bond it started arrives seconds later, once a human has typed six digits.
+
+        Failing there reported an error for a pairing that was in fact succeeding, and the
+        device connected on the next attempt — the first having silently done the work. So
+        retry rather than give up, for long enough to cover the typing.
+
+        Args:
+            mesh_core: The imported ``meshcore.MeshCore`` class.
+            cause: The authentication failure that opened the dialog, chained onto the
+                final error if the pairing never completes.
+
+        Returns:
+            The connected ``MeshCore`` client, or ``None`` if a later attempt opened the
+            transport but the peripheral never answered the identity handshake.
+
+        Raises:
+            DeviceAuthenticationError: If every attempt was still refused — the dialog was
+                dismissed, or the code entered was wrong.
+        """
+        for attempt in range(_BLE_MACOS_PAIRING_ATTEMPTS):
+            await asyncio.sleep(_BLE_MACOS_PAIRING_DELAY_S)
+            try:
+                return await self._open_ble(mesh_core, allow_repair=False)
+            except DeviceAuthenticationError:
+                _log.debug(
+                    "BLE bond with %s not established yet (attempt %d/%d)",
+                    self._address,
+                    attempt + 1,
+                    _BLE_MACOS_PAIRING_ATTEMPTS,
+                )
+        raise DeviceAuthenticationError(self._ble_auth_message()) from cause
 
     async def _create_ble_with_retry(self, mesh_core):  # type: ignore[no-untyped-def]
         """Open the owned BLE client, retrying the transport-level failures that are transient.
@@ -1645,6 +1702,16 @@ class MeshCoreDevice(Device):
         before an authenticated characteristic can be subscribed.
         """
         where = self._address or "the selected Bluetooth device"
+        if sys.platform == "darwin":
+            # macOS collects the code itself, in its own dialog, so --ble-pin is not the
+            # remedy here and naming it would send the reader somewhere that cannot help.
+            return (
+                f"{where} was not paired. macOS asks for the pairing code in its own dialog "
+                "rather than through MeshTerm — enter the 6-digit code shown on the device "
+                "(or in the MeshCore app) when it appears, and the bond is remembered for "
+                "next time. If no dialog appeared, check that Bluetooth is allowed for this "
+                "terminal in System Settings > Privacy & Security > Bluetooth."
+            )
         if self._pin:
             return (
                 f"{where} rejected the Bluetooth PIN — it needs pairing and the PIN provided "
