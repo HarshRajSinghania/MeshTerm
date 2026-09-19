@@ -17,6 +17,28 @@ allowed to change behaviour, not just add to it.
 
 ## [Unreleased]
 
+### Added
+
+- **Every release page now opens with the commands to install that release.** They are
+  written from the tag, so the URLs in them are the files attached to the page they are
+  printed on — there is no example version to mistype and nothing to go stale. The
+  changelog follows underneath.
+
+- **A version-less copy of every binary rides along with the stamped one.**
+  `meshterm-macos-arm64` and its four siblings are the same builds under a name that never
+  moves, which is what makes `releases/latest/download/…` a link that always fetches the
+  newest release. The version-stamped files are still there for anyone keeping more than
+  one build around.
+
+### Changed
+
+- **The install instructions lead with `curl` on macOS.** Downloading MeshTerm in a browser
+  is the one route that doesn't work on a Mac — the browser flags the file and macOS then
+  refuses to open it, and since Sequoia right-click → Open won't get you past it either.
+  That was true before and said so in a note below the commands, which is no use to
+  somebody who followed the commands. Now it is the macOS instruction, and it is three
+  lines that name no version.
+
 ## [0.3.7] — 2026-09-19
 
 ### Added

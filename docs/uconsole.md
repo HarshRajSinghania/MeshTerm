@@ -92,8 +92,17 @@ The bridge supports both and prefers the newer one when it finds both installed.
 
 **MeshTerm itself** — either:
 
-- the Linux ARM64 one-file release from
-  [the latest release page](https://github.com/jpmartineau/MeshTerm/releases/latest), or
+- the Linux ARM64 one-file release — three lines, no Python at all:
+
+  ```bash
+  curl -fL -o meshterm https://github.com/jpmartineau/MeshTerm/releases/latest/download/meshterm-linux-arm64
+  chmod +x meshterm
+  ./meshterm
+  ```
+
+  (That URL always fetches whichever release is newest; the
+  [release page](https://github.com/jpmartineau/MeshTerm/releases/latest) has the
+  version-stamped files and their checksums.) Or:
 - an install from the repository with `pipx` (Python 3.10 or newer). Plain `pip install`
   into the system Python is refused on bookworm and trixie; `pipx` (`sudo apt install pipx`)
   gives MeshTerm a virtual environment of its own.

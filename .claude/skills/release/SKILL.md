@@ -96,23 +96,22 @@ version is written**. `[project] version` in `pyproject.toml` is `dynamic` and h
 reads the attribute, so the number in a built wheel cannot drift from the number in the
 source. Do not add a second one.
 
-### Then re-point the README's download commands
+### The README needs nothing — deliberately
 
-`installers.yml` names each asset `meshterm-${version}-<label><ext>`, so **the file a reader
-downloads is named after the release** — and the README tells them what to type at it. Those
-lines are prose, not code, so nothing rewrites them for you:
+It used to. `installers.yml` names each asset `meshterm-${version}-<label><ext>`, so every
+download command in the README named a version, and every release meant grepping the old
+number out of five of them. That step failed quietly when it was missed: a README naming
+last release's file still reads perfectly well, and only breaks for the one person who
+types it.
 
-```
-grep -n '<the previous version>' README.md
-```
+`github-release.yml` now attaches a **version-less copy of every binary** beside the
+stamped one, so `releases/latest/download/meshterm-macos-arm64` is a URL that never moves —
+which is what the README and `docs/uconsole.md` use. Nothing in either names a version.
+Leave them alone, and if you find yourself adding a version to an install command, add an
+alias to the gather step instead.
 
-Every hit is a download or run command (`.\meshterm-X.Y.Z-windows-x64.exe`,
-`chmod +x meshterm-X.Y.Z-*`, the `xattr` quarantine note, the `MESHTERM_HOME` trial runs).
-Replace the old number with the one just bumped to, and re-read each line: they must name
-the file the workflow is about to publish, or the first thing a new user does fails.
-
-Also check `docs/cli.md` for a sample document carrying a `"version"` field, which is the
-live `{version}` placeholder and must show the new number too.
+What *does* still carry the number: `docs/cli.md` has a sample document with a `"version"`
+field, which is the live `{version}` placeholder and must show the new one.
 
 ## 5. Commit, tag, push
 
@@ -143,16 +142,26 @@ Five platform builds, the release job, and `website` — which rebuilds meshterm
 tag so the site shows the new version — so it takes a few minutes. If only `website` fails,
 the release itself is fine (it runs after publishing); the usual cause is the
 `SITE_DEPLOY_KEY` secret, and once that is fixed `gh run rerun <run-id> --failed` finishes
-it. **Check the notes
-actually came out of the changelog** — a green run is not proof, because the fallback is a
-successful step:
+it.
+
+The notes open with an install block the workflow writes from the tag — the same commands
+as the README, but pinned to *this* release's own assets — and the changelog follows under
+`## What changed`. **Check that second half actually came out of the changelog**, because a
+green run is not proof: the fallback is a successful step.
 
 ```
-gh release view vX.Y.Z --json body --jq .body | head -3
+gh release view vX.Y.Z --json body --jq .body | sed -n '/## What changed/,$p' | head -5
 ```
 
 If that reads "No changelog entry for X.Y.Z.", the extraction failed rather than the
-changelog being empty. Fix the workflow, then repair the published notes in place with
+changelog being empty.
+
+Fourteen assets is the right count — five version-stamped binaries, five version-less
+copies of them, `SHA256SUMS`, and the three licence files:
+
+```
+gh release view vX.Y.Z --json assets --jq '.assets | length'
+``` Fix the workflow, then repair the published notes in place with
 `gh release edit vX.Y.Z --notes-file` — the binaries are fine and the tag does not move.
 
 If a *build* fails, the tag is already public: fix forward with a new patch version rather

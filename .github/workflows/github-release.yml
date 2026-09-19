@@ -66,14 +66,45 @@ jobs:
         id: gather
         shell: bash
         run: |
+          tag="${{ inputs.tag || github.ref_name }}"
+          version="${tag#v}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
           mkdir -p release
           find artifacts -type f -exec mv {} release/ \;
           ls -lh release/
-          # One combined checksum file is easier to verify against than five loose ones.
-          (cd release && cat *.sha256 > SHA256SUMS && rm -f *.sha256)
-          tag="${{ inputs.tag || github.ref_name }}"
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+          cd release
+
+          # A second, version-less copy of every binary. GitHub's evergreen download URL,
+          # `releases/latest/download/<name>`, resolves against an exact asset name and
+          # nothing else — so a link that always fetches the newest build needs a name
+          # that never moves. That is what lets the README, the website and anyone's
+          # install script say `meshterm-macos-arm64` once instead of naming a version
+          # that goes stale the moment the next release lands. The version-stamped file
+          # stays beside it: it is the one you want on disk when you keep several builds
+          # around, and it is what the release-notes install block points at, since that
+          # page is about this release rather than the latest one.
+          made=0
+          for versioned in "meshterm-$version"-*; do
+            case "$versioned" in *.sha256) continue ;; esac
+            [ -e "$versioned" ] || continue
+            stable="meshterm-${versioned#meshterm-$version-}"
+            cp "$versioned" "$stable"
+            sha256sum "$stable" > "$stable.sha256"
+            made=$((made + 1))
+          done
+          # Nothing matched means the tag and `meshterm.__version__` disagree, which is a
+          # broken release either way: the notes below are about to name files by version
+          # that the build did not produce. Fail here, where it is one line to read.
+          if [ "$made" -eq 0 ]; then
+            echo "::error::No binary named meshterm-$version-*; $tag and meshterm.__version__ disagree."
+            exit 1
+          fi
+          echo "$made version-less aliases made"
+
+          # One combined checksum file is easier to verify against than ten loose ones.
+          cat *.sha256 > SHA256SUMS && rm -f *.sha256
 
       - name: Take the release notes from the changelog
         id: notes
@@ -103,6 +134,72 @@ jobs:
           fi
           echo "--- notes ---"; cat notes.md
 
+      # Most people who open a release page came to install the thing, so the commands go
+      # above the changelog rather than in a link to a README that names some other
+      # version. Written here rather than kept as prose anywhere means they can only ever
+      # name *this* release: the tag interpolates, so the URLs are the assets attached to
+      # the very page they are printed on, and there is no example version to go stale.
+      #
+      # The heredoc is quoted, so the markdown's own backticks stay backticks instead of
+      # becoming command substitution, and the two placeholders are filled by `sed`
+      # afterwards. Neither a tag nor a version can contain a slash, so the substitution
+      # needs no escaping.
+      - name: Open the notes with this release's install commands
+        shell: bash
+        env:
+          TAG: ${{ steps.gather.outputs.tag }}
+          VERSION: ${{ steps.gather.outputs.version }}
+        run: |
+          cat > install.md.in <<'INSTALL_MD'
+          ## Install
+
+          One file, no Python needed.
+
+          **macOS** — paste these into Terminal. Use `curl`, **not your browser**: a browser
+          flags the download and macOS then refuses to open it at all, and on Sequoia and
+          later right-click → Open no longer gets you past it. `curl` flags nothing, so it
+          simply runs.
+
+          ```bash
+          curl -fL -o meshterm https://github.com/jpmartineau/MeshTerm/releases/download/@TAG@/meshterm-@VERSION@-macos-arm64
+          chmod +x meshterm
+          ./meshterm
+          ```
+
+          That is the Apple silicon build — every Mac since 2020. On an Intel Mac, swap
+          `arm64` for `x64`.
+
+          **Linux** — the same three lines with `linux-x64`, or `linux-arm64` on a uConsole
+          or another 64-bit ARM handheld.
+
+          ```bash
+          curl -fL -o meshterm https://github.com/jpmartineau/MeshTerm/releases/download/@TAG@/meshterm-@VERSION@-linux-x64
+          chmod +x meshterm
+          ./meshterm
+          ```
+
+          **Windows** — download [meshterm-@VERSION@-windows-x64.exe](https://github.com/jpmartineau/MeshTerm/releases/download/@TAG@/meshterm-@VERSION@-windows-x64.exe), then run it from Windows
+          Terminal or PowerShell rather than by double-clicking, so you can read anything it
+          says on the way up.
+
+          ```powershell
+          .\meshterm-@VERSION@-windows-x64.exe
+          ```
+
+          Every file below is listed in `SHA256SUMS`. The version-less copies —
+          `meshterm-macos-arm64` and its four siblings — are the same binaries under a name
+          that never changes, for anything that wants whichever release is newest without
+          being told its number. [Installing with pip or pipx, and the rest of the
+          detail](https://github.com/jpmartineau/MeshTerm#install).
+
+          ---
+
+          ## What changed
+          INSTALL_MD
+          sed -e "s/@TAG@/$TAG/g" -e "s/@VERSION@/$VERSION/g" install.md.in > install.md
+          cat install.md notes.md > body.md
+          echo "--- body ---"; cat body.md
+
       - name: Create it
         env:
           GH_TOKEN: ${{ github.token }}
@@ -111,7 +208,7 @@ jobs:
         run: |
           gh release create "$TAG" release/* \
             --title "MeshTerm ${TAG#v}" \
-            --notes-file notes.md \
+            --notes-file body.md \
             --verify-tag \
             $PRERELEASE
           echo "https://github.com/${{ github.repository }}/releases/tag/$TAG"

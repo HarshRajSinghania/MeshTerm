@@ -64,29 +64,64 @@ your mesh's history is worth.
 
 ### Download a build
 
-**[⬇ Latest release](https://github.com/jpmartineau/MeshTerm/releases/latest)** — one file,
-no Python needed. Windows, macOS (Intel and Apple silicon), and Linux (x64 and ARM64, so
-the uConsole is covered).
+One file, no Python needed — Windows, macOS (Intel and Apple silicon), and Linux (x64 and
+ARM64, so the uConsole is covered). Every command below fetches the
+**[⬇ latest release](https://github.com/jpmartineau/MeshTerm/releases/latest)**, whichever
+one that is, so none of them goes stale.
 
 MeshTerm is a terminal program, so **open a terminal and run it from there.** You can
 double-click it and it will work, but you'll get whatever console your system picks, and
 if anything goes wrong at startup the window closes before you can read why.
 
-**Windows** — open Windows Terminal or PowerShell, `cd` to your downloads, then:
+#### macOS — download it with `curl`
 
-```powershell
-.\meshterm-0.3.7-windows-x64.exe
-```
-
-**macOS and Linux** — open Terminal, `cd` to your downloads, then:
+**Don't use your browser.** A browser flags the file as downloaded, and macOS then refuses
+to open it at all — on Sequoia and later, right-click → Open no longer gets you past that
+either. `curl` flags nothing, so what it hands you simply runs. Open Terminal and paste:
 
 ```bash
-chmod +x meshterm-0.3.7-*
-./meshterm-0.3.7-*
+curl -fL -o meshterm https://github.com/jpmartineau/MeshTerm/releases/latest/download/meshterm-macos-arm64
+chmod +x meshterm
+./meshterm
 ```
 
-On macOS, downloading it with `curl` instead of a browser saves you a fight with Gatekeeper
-— the note below has the line.
+That's the Apple silicon build — every Mac since 2020. On an **Intel** Mac, swap `arm64`
+for `x64`. And if you already downloaded it with a browser, you don't have to start over:
+`xattr -d com.apple.quarantine meshterm` clears the flag.
+
+#### Linux — the same three lines
+
+`linux-x64` on a PC, `linux-arm64` on a uConsole or another 64-bit ARM handheld.
+
+```bash
+curl -fL -o meshterm https://github.com/jpmartineau/MeshTerm/releases/latest/download/meshterm-linux-x64
+chmod +x meshterm
+./meshterm
+```
+
+#### Windows
+
+Download
+**[meshterm-windows-x64.exe](https://github.com/jpmartineau/MeshTerm/releases/latest/download/meshterm-windows-x64.exe)**,
+then open Windows Terminal or PowerShell, `cd` to your downloads, and run it:
+
+```powershell
+.\meshterm-windows-x64.exe
+```
+
+Windows says *"Windows protected your PC"* the first time. Click **More info → Run anyway**.
+
+Whichever you took, you now have a file called `meshterm` — put it somewhere on your
+`PATH` and it's just `meshterm` from anywhere.
+
+> **These builds aren't code-signed**, which is why macOS and Windows both push back the
+> first time; signing costs real money on both platforms and this is a free side project.
+> Every release ships a `SHA256SUMS` file if you'd rather check what you got, and
+> [installing with pip or pipx](#or-install-with-pip) sidesteps the whole business, since
+> nothing arrives as a downloaded binary.
+>
+> Each release page also carries these commands written out for **that exact version**,
+> next to its own downloads.
 
 ### A word about terminals, on Windows
 
@@ -115,39 +150,15 @@ it simply switches to it.
 
 Preferences → Display → Console setup turns all of this off if you'd rather stay put.
 
-Rename it to something you don't mind typing and put it somewhere on your `PATH`, and it
-becomes just `meshterm` from anywhere.
-
-> **Your system will complain the first time, and it's right to.** These builds aren't
-> code-signed — signing costs real money on both platforms and this is a free side
-> project.
->
-> - **macOS**: *"cannot be opened because the developer cannot be verified"* — or, on Sequoia
->   and later, *"Apple could not verify…"*, and right-click → Open no longer gets past it.
->   The flag that causes it is set by your **browser**, not by macOS, so the easiest answer
->   is to not use one:
->
->   ```bash
->   curl -L -O https://github.com/jpmartineau/MeshTerm/releases/download/v0.3.7/meshterm-0.3.7-macos-arm64
->   chmod +x meshterm-0.3.7-macos-arm64 && ./meshterm-0.3.7-macos-arm64
->   ```
->
->   `curl` marks nothing, so it simply runs — on an Intel Mac, swap `arm64` for `x64`. If it's
->   already downloaded, clear the flag instead: `xattr -d com.apple.quarantine meshterm-0.3.7-*`.
->   Installing with pipx (below) avoids all of this too, since nothing is downloaded as a binary.
-> - **Windows**: *"Windows protected your PC"*. Click **More info → Run anyway**.
->
-> Every release ships a `SHA256SUMS` file if you'd rather check the download first.
-
 > **Trying a build without touching your real data.** MeshTerm keeps everything in
 > `~/.meshterm` — your history database, contacts, channel keys — and *every* copy of
 > MeshTerm uses that same folder. Set `MESHTERM_HOME` to try one in isolation:
 >
 > ```bash
-> MESHTERM_HOME=~/meshterm-test ./meshterm-0.3.7-*      # macOS, Linux
+> MESHTERM_HOME=~/meshterm-test ./meshterm              # macOS, Linux
 > ```
 > ```powershell
-> $env:MESHTERM_HOME = "$HOME\meshterm-test"; .\meshterm-0.3.7-windows-x64.exe
+> $env:MESHTERM_HOME = "$HOME\meshterm-test"; .\meshterm-windows-x64.exe
 > ```
 >
 > Same variable if you run two radios and want them kept apart.
