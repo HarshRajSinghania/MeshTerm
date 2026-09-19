@@ -167,7 +167,7 @@ def _fit_target(text: str, width: int) -> str:
     Args:
         text: The target to fit.
         width: The cells available. Text already inside it is returned unchanged, so the
-            platforms that never reach :data:`_ADDRESS_MAX` are untouched.
+            platforms whose targets already fit the lane are untouched.
 
     Returns:
         The target, or its tail behind a leading ``…``, measuring at most ``width`` cells.
@@ -700,43 +700,66 @@ async def _remove_network_device(
 #: Below this a model string says nothing at all, and the lane is better spent on the name.
 _HARDWARE_MIN = 10
 
-#: The widest the PORT / ADDRESS lane may grow before it ellipsizes (see :func:`_fit_target`).
-#: A MAC is 17 cells and ``/dev/ttyUSB0`` is 12, so Windows and Linux never reach this and
-#: are untouched by it. macOS is why it exists: CoreBluetooth reports no MAC at all but a
-#: per-machine 36-cell UUID, and even its serial ports run long
-#: (``/dev/cu.Bluetooth-Incoming-Port`` is 31). Uncapped, one of those ate the row —
-#: :func:`_name_width` sizes DEVICE from what this lane leaves, so a 36-cell address
-#: squeezed the name down to the width of its own heading and the interesting columns with it.
-_ADDRESS_MAX = 20
+#: The narrowest the PORT / ADDRESS lane is worth shrinking to before DEVICE has to give.
+#: This is the lane that adapts: a target is how you tell two similar rows apart, and ten
+#: cells still does that (the tail of a UUID, the end of a port path), while a *name* is
+#: what the reader actually came to read. macOS is why any of this is needed —
+#: CoreBluetooth reports no MAC at all but a per-machine 36-cell UUID, and even its ports
+#: run long (every Mac carries a 31-cell ``/dev/cu.Bluetooth-Incoming-Port``) — where a MAC
+#: is 17 and ``/dev/ttyUSB0`` is 12, so no other platform ever presses on the row at all.
+_ADDRESS_MIN = 10
 
 
-def _name_width(
-    devices: list[DiscoveredDevice], registry: dict[str, RememberedDevice], other_lanes: int
-) -> int:
-    """The DEVICE lane's width: the longest name, capped so HARDWARE keeps a readable column.
+def _lane_widths(
+    devices: list[DiscoveredDevice], registry: dict[str, RememberedDevice]
+) -> tuple[int, int]:
+    """The DEVICE and PORT / ADDRESS widths: the name in full, the address taking the rest.
 
-    A USB adapter's own product string runs to forty-odd characters ("CP2102 USB to UART
-    Bridge Controller"), and the lane used to size itself to whichever of those was longest.
-    On a 53-column console that pushed every other lane off the right-hand edge — the row
-    ended mid-port, and the HARDWARE column that says what the thing *is* was not on screen
-    at all, nor reachable by scrolling, because the pinned head was already wider than the
-    box. So the name is the lane that gives: it ellipsizes, and the columns after it survive.
+    The row has a fixed budget, and something has to give when the two lanes together
+    outrun it. **The address gives first.** A name is what the reader came to read and what
+    they recognise their own radio by; an address is a disambiguator, and a disambiguator
+    does its whole job from its last ten cells (:func:`_fit_target` keeps the tail for
+    exactly this reason). So DEVICE is sized to the longest name it has, and ADDRESS takes
+    whatever is left over, down to :data:`_ADDRESS_MIN`.
+
+    Only once the address is down to that floor does the name start ellipsizing, and it
+    still must: a USB adapter's own product string runs to forty-odd characters ("CP2102
+    USB to UART Bridge Controller"), and a lane sized to *that* pushed everything after it
+    off the right-hand edge — the row ended mid-port and the HARDWARE column that says what
+    the thing actually *is* was not on screen, nor reachable by scrolling, because the
+    pinned head was already wider than the box. HARDWARE keeps :data:`_HARDWARE_MIN` out of
+    the budget so it always has a readable stub; it is the row's scrolling tail, so beyond
+    that stub it is free to run long.
 
     Args:
         devices: The devices being listed.
         registry: Confirmed companions, for their remembered names.
-        other_lanes: Cells the PORT and TYPE lanes take between them.
 
     Returns:
-        The name lane's width in cells.
+        ``(name_w, port_w)`` in cells.
     """
     platform = get_platform()
     # What the splash's box gives a row: the terminal, less the gutter it floats over, less
     # its own border and padding, less the pointer and star columns the row leads with.
     content = platform.readable_cols - platform.dialog_margin - 4 - 4
-    fixed = other_lanes + 6  # the three two-cell gaps between the four lanes
-    longest = max(cell_len(_display_name(d, registry)) for d in devices)
-    return max(len("DEVICE"), min(longest, content - fixed - _HARDWARE_MIN))
+    # ...less the three two-cell gaps, the TYPE badge, and HARDWARE's readable stub.
+    budget = content - 6 - len("TYPE") - _HARDWARE_MIN
+
+    name_natural = max(cell_len(_display_name(d, registry)) for d in devices)
+    port_natural = max(cell_len(_where(d)) for d in devices)
+    # Never reserve more room for the address than it actually wants: a lone "COM3" should
+    # hand its slack to the name rather than sit in a ten-cell lane holding four cells.
+    floor = min(port_natural, _ADDRESS_MIN)
+
+    name_w = max(len("DEVICE"), min(name_natural, budget - floor))
+    port_w = max(floor, min(port_natural, budget - name_w))
+
+    if name_w < name_natural and port_w < port_natural:
+        # The name is being ellipsized whatever happens, so spending two more of its cells
+        # to keep the address whole trades one cut for none rather than adding a second.
+        port_w = min(port_natural, budget - len("DEVICE"))
+        name_w = max(len("DEVICE"), budget - port_w)
+    return name_w, port_w
 
 
 def _order(
@@ -804,12 +827,13 @@ def _build_items(
     port_label = (
         "PORT / ADDRESS" if has_serial and has_address else "ADDRESS" if has_address else "PORT"
     )
-    port_w = min(max(cell_len(_where(d)) for d in devices), _ADDRESS_MAX)
-    port_w = max(port_w, len(port_label))
     # The TYPE column holds a small transport badge (at most 3 cells); its heading is wider,
     # so the four-cell "TYPE" label sets the column width and every badge pads out to it.
     type_w = len("TYPE")
-    name_w = _name_width(devices, registry, port_w + type_w)
+    # DEVICE in full, ADDRESS taking what is left (see _lane_widths). The heading does not
+    # set a floor here the way it used to: the lane may end up narrower than "PORT / ADDRESS"
+    # spells, and column_header already carries the short form to fall back on.
+    name_w, port_w = _lane_widths(devices, registry)
     hardware_w = max(cell_len(_hardware_label(d, registry)) for d in devices)
     hardware_w = max(hardware_w, len("HARDWARE"))
 

@@ -1323,42 +1323,61 @@ def test_device_picker_builds_aligned_columns(tmp_path) -> None:
     assert device_rows[0].index("COM5") == device_rows[1].index("/dev/ttyUSB0")
 
 
-def test_device_picker_address_lane_gives_way_to_the_interesting_columns() -> None:
-    """A long target ellipsizes from the left instead of eating the DEVICE lane.
+def test_device_picker_address_lane_is_the_one_that_adapts() -> None:
+    """DEVICE shows its name in full; PORT / ADDRESS takes whatever is left.
 
-    macOS is why: CoreBluetooth reports no MAC but a per-machine 36-cell UUID, and even
-    its serial ports run long. Uncapped, one address sized the lane and ``_name_width``
-    sized DEVICE from what was left — so the name shrank to the width of its own heading
-    and took HARDWARE down with it. Cutting the *front* is what keeps the lane useful:
-    what tells two targets apart is their tail.
+    A name is what the reader came to read and recognises their own radio by; an address
+    is a disambiguator, and does that job from its last ten cells. macOS is what forced
+    the question — CoreBluetooth reports no MAC but a per-machine 36-cell UUID, and even
+    its ports run long — which sized the lane to 36 and left DEVICE the width of its own
+    heading.
     """
     from rich.cells import cell_len
 
     from meshterm.core.discovery import DiscoveredDevice
-    from meshterm.ui.device_picker import _ADDRESS_MAX, _fit_target, _name_width
+    from meshterm.ui.device_picker import _ADDRESS_MIN, _fit_target, _lane_widths
 
-    # Short targets are returned untouched, so Windows and Linux never notice the cap.
-    for short in ("COM3", "/dev/ttyUSB0", "C6:B6:26:BC:7F:09", "/dev/cu.usbmodem1101"):
-        assert _fit_target(short, _ADDRESS_MAX) == short
-
-    # A long one is cut at the head and fits the lane it was given.
+    name = "MeshCore-Johnputer Wardriver"
     uuid = "12345678-1234-1234-1234-123456789ABC"
-    fitted = _fit_target(uuid, _ADDRESS_MAX)
-    assert cell_len(fitted) <= _ADDRESS_MAX
-    assert fitted.startswith("…") and fitted.endswith("123456789ABC")
-
-    # THE property the cut direction exists for: sibling ports stay tellable apart.
-    assert _fit_target("/dev/cu.usbmodem1101", 14) != _fit_target("/dev/cu.usbmodem1102", 14)
-
-    # And the lane the address was stealing comes back.
-    devices = [
-        DiscoveredDevice(transport="ble", address=uuid, name="MeshCore-Johnputer Wardriver"),
+    mac_devices = [
+        DiscoveredDevice(transport="ble", address="C6:B6:26:BC:7F:09", name=name, product=name),
+        DiscoveredDevice("COM3", product="Some Adapter", vid=0x1234),
+    ]
+    uuid_devices = [
+        DiscoveredDevice(transport="ble", address=uuid, name=name, product=name),
         DiscoveredDevice("/dev/cu.Bluetooth-Incoming-Port"),
     ]
-    uncapped = max(cell_len(d.target) for d in devices)
-    assert _name_width(devices, {}, min(uncapped, _ADDRESS_MAX) + 4) > _name_width(
-        devices, {}, uncapped + 4
-    )
+
+    # The name is shown whole on both, and a 36-cell address does not shrink it: the lane
+    # that gives is the address, and it never drops below the floor that keeps it useful.
+    for devices in (mac_devices, uuid_devices):
+        name_w, port_w = _lane_widths(devices, {})
+        assert name_w == cell_len(name)
+        assert port_w >= _ADDRESS_MIN
+    assert _lane_widths(mac_devices, {})[0] == _lane_widths(uuid_devices, {})[0]
+
+    # A target that fits is untouched, and a long one keeps its tail -- which is what tells
+    # two of them apart, and the whole reason the cut takes the front.
+    _, port_w = _lane_widths(uuid_devices, {})
+    assert _fit_target("COM3", port_w) == "COM3"
+    assert _fit_target(uuid, port_w).endswith("9ABC")
+    assert cell_len(_fit_target(uuid, port_w)) <= port_w
+    assert _fit_target("/dev/cu.usbmodem1101", 14) != _fit_target("/dev/cu.usbmodem1102", 14)
+
+    # Nothing is hoarded: a lone short port hands its slack back to the name.
+    short = [DiscoveredDevice("COM5", product="Wio SX1262", vid=0x2886)]
+    assert _lane_widths(short, {})[1] == cell_len("COM5")
+
+    # And where the name cannot fit whatever happens, the address is left whole rather
+    # than ellipsized alongside it -- one cut in the row instead of two.
+    sprawling = [
+        DiscoveredDevice(
+            "/dev/ttyUSB0", product="CP2102 USB to UART Bridge Controller", vid=0x10C4
+        )
+    ]
+    name_w, port_w = _lane_widths(sprawling, {})
+    assert port_w == cell_len("/dev/ttyUSB0")
+    assert name_w < cell_len("CP2102 USB to UART Bridge Controller")
 
 
 def test_device_picker_names_and_sorts_known_devices(tmp_path) -> None:
