@@ -17,6 +17,76 @@ allowed to change behaviour, not just add to it.
 
 ## [Unreleased]
 
+## [0.3.7] — 2026-09-19
+
+### Added
+
+- **A setting you use on a node's command line becomes a row on that node's page.**
+  Third-party builds carry knobs the catalog has never heard of, and MeshTerm cannot know
+  which firmware a repeater runs without asking — and every question is a paced round trip,
+  so probing for a fork's keys would spend a sweep on every node to benefit a few. Nothing
+  is probed speculatively and the catalog does not grow. Instead a `get` or `set` you ran,
+  which that node answered, earns a row under **Extra** on that node's page: the round trip
+  was one you were spending anyway, and no other node's page changes. Only the reader
+  removes a discovered row — a later read that comes back empty takes it to `n/a` rather
+  than deleting the evidence that it exists.
+
+- **The Windows binary is signed** by SignPath Foundation, who issue certificates free to
+  open-source projects, so it no longer arrives as an unknown publisher.
+
+### Fixed
+
+- **MeshTerm finds your companion on a Mac.** Every Mac permanently presents two virtual
+  serial ports — `/dev/cu.Bluetooth-Incoming-Port` and `/dev/cu.debug-console` — that carry
+  no USB vendor id, and they were counted as candidates. A Mac with exactly one real board
+  attached therefore saw three devices and refused to choose, so automatic detection could
+  never fire there and every Mac user met *"Multiple companion devices detected"* on a first
+  run, naming two ports that are not companions as the ones to pick between. Which device is
+  plausible was already known, and already printed in that listing; it now decides with it. A
+  lone unrecognised adapter still connects, and several implausible ports no longer claim to
+  be companions.
+
+- **A PIN-protected Bluetooth companion connects on the first attempt on macOS**, instead of
+  reporting an error and working when you selected it again. CoreBluetooth has no pairing
+  API: a peripheral pairs *implicitly* when something touches a characteristic that requires
+  encryption, which is exactly what the companion's firmware demands — so the refusal
+  MeshTerm was treating as a verdict is in fact macOS *starting* to pair, and its Passkey
+  dialog goes up as the attempt unwinds. The connection now waits for that dialog to be
+  answered, bounded so a dismissed one still fails. Elsewhere a rejection keeps meaning what
+  it always did.
+
+- **The map draws its ground again on the macOS and Linux downloads.** A standalone build can
+  have no certificate store to consult — the default one names a path baked into the
+  interpreter's own build, which need not exist on a machine that never installed that
+  Python — so every tile fetch failed TLS verification. Because a refused fetch is
+  indistinguishable from empty terrain, the map drew nodes over blank ground and said nothing
+  about why; Windows hid it for so long because it reads the operating system's certificate
+  store. The fetch now falls back to the CA bundle the OS ships. Verification is never
+  weakened: with no bundle to be found it still verifies, and still fails.
+
+- **The splash wordmark draws in its own colours on macOS.** The art spells brightness the
+  way DOS did, with bold lifting a colour into the bright bank — true on a DOS console and on
+  the PicoCalc, false on macOS Terminal, where bold asks for a heavier typeface and leaves
+  the colour alone. The mark came out muted and its dithered gradients faded toward the wrong
+  end. Brightness is now emitted as the colour it means, which cannot be mistaken for a font
+  weight. Nothing about the art changed, and no cell moved.
+
+- **The device list shows the device.** The startup splash sized its PORT / ADDRESS column to
+  the longest target and gave the name whatever was left, which held while a Bluetooth
+  address was a 17-character MAC. macOS reports no MAC at all but a 36-character per-machine
+  UUID, and that squeezed the DEVICE column down to the width of its own heading. The name is
+  now sized first and shown in full; the address takes what is left and ellipsizes from the
+  front, keeping the end that tells two targets apart.
+
+### Changed
+
+- **The macOS download note leads with `curl`.** The flag that makes Gatekeeper refuse an
+  unsigned binary is set by the *browser* that downloaded it, not by macOS, so fetching it
+  with `curl` sidesteps the dialog entirely — and for a program whose users are already at a
+  terminal, that is the normal way to install it. The old advice was also going stale:
+  Sequoia removed the right-click → Open bypass, and since Catalina a quarantined binary
+  started from Terminal gets the same block rather than escaping it.
+
 ## [0.3.6] — 2026-09-17
 
 ### Added
@@ -840,7 +910,8 @@ deliberately not reconstructed here.
 - Two `TYPE_CHECKING` imports the test suite referenced but never imported, on paths that
   happened never to run.
 
-[Unreleased]: https://github.com/jpmartineau/MeshTerm/compare/v0.3.6...HEAD
+[Unreleased]: https://github.com/jpmartineau/MeshTerm/compare/v0.3.7...HEAD
+[0.3.7]: https://github.com/jpmartineau/MeshTerm/releases/tag/v0.3.7
 [0.3.6]: https://github.com/jpmartineau/MeshTerm/releases/tag/v0.3.6
 [0.3.5]: https://github.com/jpmartineau/MeshTerm/releases/tag/v0.3.5
 [0.3.4]: https://github.com/jpmartineau/MeshTerm/releases/tag/v0.3.4

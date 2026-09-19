@@ -75,14 +75,14 @@ if anything goes wrong at startup the window closes before you can read why.
 **Windows** — open Windows Terminal or PowerShell, `cd` to your downloads, then:
 
 ```powershell
-.\meshterm-0.3.6-windows-x64.exe
+.\meshterm-0.3.7-windows-x64.exe
 ```
 
 **macOS and Linux** — open Terminal, `cd` to your downloads, then:
 
 ```bash
-chmod +x meshterm-0.3.6-*
-./meshterm-0.3.6-*
+chmod +x meshterm-0.3.7-*
+./meshterm-0.3.7-*
 ```
 
 On macOS, downloading it with `curl` instead of a browser saves you a fight with Gatekeeper
@@ -128,12 +128,12 @@ becomes just `meshterm` from anywhere.
 >   is to not use one:
 >
 >   ```bash
->   curl -L -O https://github.com/jpmartineau/MeshTerm/releases/download/v0.3.6/meshterm-0.3.6-macos-arm64
->   chmod +x meshterm-0.3.6-macos-arm64 && ./meshterm-0.3.6-macos-arm64
+>   curl -L -O https://github.com/jpmartineau/MeshTerm/releases/download/v0.3.7/meshterm-0.3.7-macos-arm64
+>   chmod +x meshterm-0.3.7-macos-arm64 && ./meshterm-0.3.7-macos-arm64
 >   ```
 >
 >   `curl` marks nothing, so it simply runs — on an Intel Mac, swap `arm64` for `x64`. If it's
->   already downloaded, clear the flag instead: `xattr -d com.apple.quarantine meshterm-0.3.6-*`.
+>   already downloaded, clear the flag instead: `xattr -d com.apple.quarantine meshterm-0.3.7-*`.
 >   Installing with pipx (below) avoids all of this too, since nothing is downloaded as a binary.
 > - **Windows**: *"Windows protected your PC"*. Click **More info → Run anyway**.
 >
@@ -144,10 +144,10 @@ becomes just `meshterm` from anywhere.
 > MeshTerm uses that same folder. Set `MESHTERM_HOME` to try one in isolation:
 >
 > ```bash
-> MESHTERM_HOME=~/meshterm-test ./meshterm-0.3.6-*      # macOS, Linux
+> MESHTERM_HOME=~/meshterm-test ./meshterm-0.3.7-*      # macOS, Linux
 > ```
 > ```powershell
-> $env:MESHTERM_HOME = "$HOME\meshterm-test"; .\meshterm-0.3.6-windows-x64.exe
+> $env:MESHTERM_HOME = "$HOME\meshterm-test"; .\meshterm-0.3.7-windows-x64.exe
 > ```
 >
 > Same variable if you run two radios and want them kept apart.
