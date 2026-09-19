@@ -61,6 +61,34 @@ class OutputFormat(str, Enum):
     JSON = "json"
 
 
+def facts_pairs(block: Facts) -> list[tuple[str, str]]:
+    """Project a :class:`Facts` block into its ``(key, value)`` text rows.
+
+    The plain face's half of a facts block, lifted out of :class:`PlainRenderer` because
+    one surface in the menu wants the same rows laid out differently: the Diagnostics page
+    hangs a long value under its key rather than cropping it, since a cropped path in a
+    bug report is worse than a wrapped one. Sharing the projection is what keeps the two
+    from drifting — a field added to a report appears on both without anyone remembering.
+
+    Laying the rows out is the caller's business; turning a typed value into text is not,
+    and that stays here, in the declared :class:`~meshterm.ui.report.Lane`.
+
+    Args:
+        block: The facts block to project.
+
+    Returns:
+        One ``(header, cell)`` pair per lane, in the order the block declares them.
+    """
+    rows: list[tuple[str, str]] = []
+    for column in block.fields:
+        value = block.values.get(column.key)
+        if block.omit_absent and (value is None or value == ""):
+            continue
+        for lane in column.lanes:
+            rows.append((lane.header, lane.render(value)))
+    return rows
+
+
 class Renderer:
     """Turns a report into bytes. One subclass per format."""
 
@@ -157,14 +185,7 @@ class PlainRenderer(Renderer):
             # As a Text, not a markup string: this is a private key, a share URL or a
             # remote node's own reply, and Rich would read a bracket in one as a style tag.
             return Text(column.lanes[0].render(value))
-        rows: list[tuple[str, str]] = []
-        for column in block.fields:
-            value = block.values.get(column.key)
-            if block.omit_absent and (value is None or value == ""):
-                continue
-            for lane in column.lanes:
-                rows.append((lane.header, lane.render(value)))
-        return script.pairs(rows)
+        return script.pairs(facts_pairs(block))
 
     @contextmanager
     def stream(self, listing: Listing) -> Iterator[Any]:

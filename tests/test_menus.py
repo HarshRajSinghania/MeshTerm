@@ -184,8 +184,8 @@ def test_main_menu_sections_answer_the_menus_own_question() -> None:
     someone else's over the mesh, or MeshTerm itself.
 
     This app is the last of the three scopes and the reason it sorts last: it holds the
-    preferences that change the program and the pages that describe it, neither of which
-    is a thing to do *on the mesh*.
+    preferences that change the program, the diagnostics that state what it currently is,
+    and the pages that describe it — none of which is a thing to do *on the mesh*.
     """
     from meshterm.tools import load_all_tools
     from meshterm.tools.base import _CATEGORY_ORDER, all_tools
@@ -203,11 +203,22 @@ def test_main_menu_sections_answer_the_menus_own_question() -> None:
         "Explore": ["map", "walk", "trace", "trace-path", "records"],
         "This node": ["info", "config", "advert"],
         "Other nodes": ["repeater-admin", "tx-optimize"],
-        "This app": ["preferences", "about", "about-author", "discord", "support"],
+        "This app": [
+            "preferences",
+            "diagnostics",
+            "about",
+            "about-author",
+            "discord",
+            "support",
+        ],
     }
     # No section is so big it stops being a grouping (the old Mesh bucket held seven of
-    # nineteen rows), and none is a bucket of one.
-    assert all(2 <= len(names) <= 5 for names in sections.values())
+    # nineteen rows), and none is a bucket of one. This app is the one at six: it runs
+    # mutable, then live, then fixed — the row that *changes* MeshTerm, the row that states
+    # what MeshTerm is *right now* on this machine, then the four pages that say what
+    # MeshTerm is in general. Six of twenty-four rows is still a grouping; seven of
+    # nineteen was not.
+    assert all(2 <= len(names) <= 6 for names in sections.values())
 
 
 #: Two lexicon icons the terminal genuinely draws in different widths — the whole reason

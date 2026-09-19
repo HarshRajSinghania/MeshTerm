@@ -695,6 +695,7 @@ _GLYPH_MAP: dict[str, str] = {
     "📶": "≥",   # TX power sweep — the power ramp
     "🔧": "⚙",   # config (parameter concept)
     "📋": "i",   # info
+    "🩺": "?",   # diagnostics — the question a diagnosis answers (🎭 shares the mark)
     "📰": "…",   # live feed — a stream of items
     "🎧": "≈",   # monitor — listening to the waveform
     "🗼": "▲",   # repeater admin — the repeater mark itself

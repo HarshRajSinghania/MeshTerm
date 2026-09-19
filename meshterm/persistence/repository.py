@@ -1068,6 +1068,69 @@ class Repository:
         row = self._conn.execute("SELECT COUNT(*) AS n FROM observations").fetchone()
         return int(row["n"]) if row else 0
 
+    def table_counts(self) -> dict[str, int]:
+        """Return a row count for every table in the database, by name.
+
+        Read off ``sqlite_master`` rather than a list written out here, which is the whole
+        point: a table added to the schema starts being reported the day it lands, and a
+        table removed stops, with nothing to keep in step. The one thing this must never
+        become is a curated set of the counts somebody thought were interesting — the
+        shape of a database is the aggregate, and the interesting one is always the table
+        nobody expected to be full.
+
+        Every value is a *count*. Nothing here reads a row, so the result says how much
+        history a report's author has without saying a word about who they talk to.
+
+        Returns:
+            Table name to row count, alphabetically, SQLite's own internal tables
+            excluded (they describe the file format, not this app's data).
+        """
+        names = [
+            str(row["name"])
+            for row in self._conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' "
+                "AND name NOT LIKE 'sqlite_%' ORDER BY name"
+            ).fetchall()
+        ]
+        counts: dict[str, int] = {}
+        for name in names:
+            # The names come from sqlite_master, so they are this database's own tables
+            # and not caller input; quoted anyway, because an identifier cannot be bound.
+            row = self._conn.execute(f'SELECT COUNT(*) AS n FROM "{name}"').fetchone()
+            counts[name] = int(row["n"]) if row else 0
+        return counts
+
+    def failed_run_count(self) -> int:
+        """Return how many recorded tool runs ended in an error.
+
+        The single most useful number a reporter can hand over: it says whether this
+        install has been failing quietly for weeks or broke for the first time today,
+        and it costs one query rather than an interview.
+
+        Returns:
+            The number of ``runs`` rows whose status is ``error``.
+        """
+        row = self._conn.execute("SELECT COUNT(*) AS n FROM runs WHERE status = 'error'").fetchone()
+        return int(row["n"]) if row else 0
+
+    def observation_span(self) -> tuple[datetime | None, datetime | None]:
+        """Return the first and last times anything was overheard.
+
+        How much mesh this database has actually seen. A report whose span is an hour and
+        a report whose span is a year describe different installs, and the difference
+        explains a class of "it works here" before anyone else has to ask for it.
+
+        Returns:
+            ``(first, last)`` as aware UTC times, or ``(None, None)`` when nothing has
+            ever been heard.
+        """
+        row = self._conn.execute(
+            "SELECT MIN(observed_at) AS first, MAX(observed_at) AS last FROM observations"
+        ).fetchone()
+        if row is None or row["first"] is None:
+            return None, None
+        return _as_when(row["first"]), _as_when(row["last"])
+
     def recent_observations(self, *, since: datetime, limit: int = 4000) -> list[Observation]:
         """Return raw stored observations in a recent window, oldest first.
 

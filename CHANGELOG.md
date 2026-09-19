@@ -2,951 +2,114 @@
 
 Notable changes to MeshTerm, newest first.
 
-The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version
-numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) — with the caveat
-SemVer itself makes for a leading zero: while the major version is `0`, a **minor** bump is
-allowed to change behaviour, not just add to it.
-
-<!--
-  At 0.9.0 — the first public release — everything below collapses into a single entry
-  reading "first public release", with the headline features under it. Nobody arriving at
-  a project on its launch day wants a changelog of the fortnight before it: the versions
-  under 0.9.0 were never released anywhere, and their entries are notes to ourselves about
-  getting ready. Keep the dates and the tags; replace the prose.
--->
+The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the
+version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) — with
+one caveat SemVer makes for a leading zero: while the major version is still `0`, a
+**minor** bump is allowed to change how things behave, not just add to them.
 
 ## [Unreleased]
 
 ### Added
 
-- **Every release page now opens with the commands to install that release.** They are
-  written from the tag, so the URLs in them are the files attached to the page they are
-  printed on — there is no example version to mistype and nothing to go stale. The
-  changelog follows underneath.
+- **Diagnostics — everything a bug report opens with, in one block.** A new page under
+  *This app*, and a new `meshterm diagnostics` command. It states which MeshTerm this is
+  and how it was installed, the OS and its build, the terminal and its size, every verdict
+  resolved once at boot and shown on no screen (icons, powerline, the platform flavour and
+  why), the radio and what its link is set to, and how much stored history there is. Those
+  are the questions an issue thread otherwise asks one at a time, and the person who hit the
+  bug is the one least able to answer them.
 
-- **A version-less copy of every binary rides along with the stamped one.**
-  `meshterm-macos-arm64` and its four siblings are the same builds under a name that never
-  moves, which is what makes `releases/latest/download/…` a link that always fetches the
-  newest release. The version-stamped files are still there for anyone keeping more than
-  one build around.
+  - **The page is a bare frame** — no border, no header, no footer, no key hints. Not a
+    style choice: a terminal is selected by dragging, so every one of those is a character
+    the clipboard carries into the issue. A long value hangs under its own block rather than
+    being cropped, which is the one place the page and the command line lay the same facts
+    out differently.
 
-### Changed
+  - **Nothing in it is private.** No pairing PIN, no admin password, no channel secret, no
+    private key, no position, and no contact's name or key. The mesh is described in
+    **aggregate** — a row count per table and the span the observations cover — which is the
+    half that explains a bug without naming anyone the reporter talks to. It is a property
+    of the feature rather than a habit: `tests/test_diagnostics.py` plants real secrets in
+    the stores that hold them and fails if any of them, or a field merely *named* like one,
+    reaches either face.
 
-- **The install instructions lead with `curl` on macOS.** Downloading MeshTerm in a browser
-  is the one route that doesn't work on a Mac — the browser flags the file and macOS then
-  refuses to open it, and since Sequoia right-click → Open won't get you past it either.
-  That was true before and said so in a note below the commands, which is no use to
-  somebody who followed the commands. Now it is the macOS instruction, and it is three
-  lines that name no version.
+  - **The radio is asked but never required.** A report about a companion that will not
+    connect is exactly the report most worth filing, so a failure to reach it becomes
+    `connected no` with the radio's own words in `error`, and every other fact still
+    arrives.
 
-## [0.3.7] — 2026-09-19
-
-### Added
-
-- **A setting you use on a node's command line becomes a row on that node's page.**
-  Third-party builds carry knobs the catalog has never heard of, and MeshTerm cannot know
-  which firmware a repeater runs without asking — and every question is a paced round trip,
-  so probing for a fork's keys would spend a sweep on every node to benefit a few. Nothing
-  is probed speculatively and the catalog does not grow. Instead a `get` or `set` you ran,
-  which that node answered, earns a row under **Extra** on that node's page: the round trip
-  was one you were spending anyway, and no other node's page changes. Only the reader
-  removes a discovered row — a later read that comes back empty takes it to `n/a` rather
-  than deleting the evidence that it exists.
-
-- **The Windows binary is signed** by SignPath Foundation, who issue certificates free to
-  open-source projects, so it no longer arrives as an unknown publisher.
-
-### Fixed
-
-- **MeshTerm finds your companion on a Mac.** Every Mac permanently presents two virtual
-  serial ports — `/dev/cu.Bluetooth-Incoming-Port` and `/dev/cu.debug-console` — that carry
-  no USB vendor id, and they were counted as candidates. A Mac with exactly one real board
-  attached therefore saw three devices and refused to choose, so automatic detection could
-  never fire there and every Mac user met *"Multiple companion devices detected"* on a first
-  run, naming two ports that are not companions as the ones to pick between. Which device is
-  plausible was already known, and already printed in that listing; it now decides with it. A
-  lone unrecognised adapter still connects, and several implausible ports no longer claim to
-  be companions.
-
-- **A PIN-protected Bluetooth companion connects on the first attempt on macOS**, instead of
-  reporting an error and working when you selected it again. CoreBluetooth has no pairing
-  API: a peripheral pairs *implicitly* when something touches a characteristic that requires
-  encryption, which is exactly what the companion's firmware demands — so the refusal
-  MeshTerm was treating as a verdict is in fact macOS *starting* to pair, and its Passkey
-  dialog goes up as the attempt unwinds. The connection now waits for that dialog to be
-  answered, bounded so a dismissed one still fails. Elsewhere a rejection keeps meaning what
-  it always did.
-
-- **The map draws its ground again on the macOS and Linux downloads.** A standalone build can
-  have no certificate store to consult — the default one names a path baked into the
-  interpreter's own build, which need not exist on a machine that never installed that
-  Python — so every tile fetch failed TLS verification. Because a refused fetch is
-  indistinguishable from empty terrain, the map drew nodes over blank ground and said nothing
-  about why; Windows hid it for so long because it reads the operating system's certificate
-  store. The fetch now falls back to the CA bundle the OS ships. Verification is never
-  weakened: with no bundle to be found it still verifies, and still fails.
-
-- **The splash wordmark draws in its own colours on macOS.** The art spells brightness the
-  way DOS did, with bold lifting a colour into the bright bank — true on a DOS console and on
-  the PicoCalc, false on macOS Terminal, where bold asks for a heavier typeface and leaves
-  the colour alone. The mark came out muted and its dithered gradients faded toward the wrong
-  end. Brightness is now emitted as the colour it means, which cannot be mistaken for a font
-  weight. Nothing about the art changed, and no cell moved.
-
-- **The device list shows the device.** The startup splash sized its PORT / ADDRESS column to
-  the longest target and gave the name whatever was left, which held while a Bluetooth
-  address was a 17-character MAC. macOS reports no MAC at all but a 36-character per-machine
-  UUID, and that squeezed the DEVICE column down to the width of its own heading. The name is
-  now sized first and shown in full; the address takes what is left and ellipsizes from the
-  front, keeping the end that tells two targets apart.
+  - **The table counts are discovered from the schema**, not from a list written down
+    somewhere, so a table added later starts being reported the day it lands — and the
+    interesting count is always the table nobody expected to be full.
 
 ### Changed
 
-- **The macOS download note leads with `curl`.** The flag that makes Gatekeeper refuse an
-  unsigned binary is set by the *browser* that downloaded it, not by macOS, so fetching it
-  with `curl` sidesteps the dialog entirely — and for a program whose users are already at a
-  terminal, that is the normal way to install it. The old advice was also going stale:
-  Sequoia removed the right-click → Open bypass, and since Catalina a quarantined binary
-  started from Terminal gets the same block rather than escaping it.
-
-## [0.3.6] — 2026-09-17
-
-### Added
-
-- **A contact can be locked.** Lock contact on a contact's page keeps it from ever being
-  archived: the archive sweep counts it protected, and the page hides Archive until you
-  unlock it. Locked contacts show a padlock ahead of their node type icon in the Contacts
-  list — 🔒, or the console font's own padlock on the PicoCalc. The lock is kept by
-  MeshTerm, not the radio, and reading the device never clears it.
-
-- **Set clock on connect.** A new preference in the Device group sets the radio's clock from
-  this computer's every time MeshTerm connects to it — at launch, when you connect later,
-  and after a reconnect, since a dropped link is exactly when a board with no real-time
-  clock may have rebooted and lost the time. It is off by default, runs in the background,
-  and records the drift it corrected only in the log. Scripted commands never write the
-  clock.
-
-- **Two installation manuals, one per handheld.** [`docs/picocalc.md`](docs/picocalc.md)
-  takes a stock ClockworkPi PicoCalc from a shopping list to a Linux handheld running
-  MeshTerm with a LoRa radio soldered inside — the Lyra swap, writing Calculinux, the setup
-  script, building and flashing the XIAO firmware (the patch it still needs, explained
-  hunk by hunk), the wiring, and the Lyra setup. [`docs/uconsole.md`](docs/uconsole.md)
-  installs the SPI bridge on a uConsole with the AIO LoRa board and connects MeshTerm to
-  it. Both are step-by-step in plain language and self-contained, each ending on its own
-  list of what has only been proven on one bench; [`docs/hardware.md`](docs/hardware.md)
-  shrinks to the page that says which manual is yours, and the README's new
-  **Documentation** table points at all of it.
-
-- **A basemap doctor for a map that stays blank.** Every failure on the map's one network
-  path is logged below the default log level, so tiles that never arrive leave a blank
-  ground and no explanation. [`scripts/basemap-doctor.py`](scripts/README.md), run on the
-  machine with the problem, reports the Python MeshTerm runs under, its certificate store,
-  the tile source, and the terminal's colour depth, then fetches a real tile and names the
-  cause with its fix: a Python with an empty certificate store (a python.org install on
-  macOS, until `Install Certificates.command` is run), the network in between, or a
-  terminal at 256 colours, where the basemap's greens and blues collide.
-
-### Changed
-
-- **Purge contacts is Archive contacts**, because archiving is what it does: every contact
-  it takes off the device stays in MeshTerm and can be restored. The row, its screens, its
-  confirm button, and its progress bar all say Archive, and the row wears the 💾 that
-  archiving one contact already wore, not the red 🗑 a deletion gets.
-
-- **The archive preview shows the evidence, one kind to a column.** Its rows led on a
-  percentile and followed it with the reasons a contact ranked low, three columns under one
-  header, so a message count, an age, and a hop count traded places from row to row. Each
-  column now holds one measurement all the way down: `HEARD` and `PKTS` first, drawn as the
-  Contacts list draws them, then the `MSGS` and `HOPS` the sweep adds. The percentile is
-  gone, since the list's order already is the ranking. Every contact leads with its node
-  type icon, as in the Contacts list, and ←→ scrolls the columns under a name that stays
-  put. Archiving a single contact from its page names it the same way in the confirm.
-
-- **`scripts/` is sorted by handheld.** The PicoCalc's Calculinux bring-up, its two
-  console-font builds, the GPL-2.0 text that belongs beside the 6×8 one, and the
-  `xiao-radio/` firmware kit all live under `scripts/picocalc/`; the SPI bridge is
-  `scripts/uconsole/meshterm-spi-bridge`. The index of what every file does and which
-  machine runs it is a section of [`docs/hardware.md`](docs/hardware.md) now, beside the
-  table that says which manual is yours, and the folder's own README keeps only a pointer
-  to each handheld's folder and the basemap doctor. Every path in the manuals, the notices,
-  the tests, and the scripts' own headers follows.
-
-- **The 6×12 console-font script carries its size in its name**,
-  `calculinux-console-font-6x12.sh`, like its 6×8 sibling always did. Same script, every
-  reference updated.
-
-- A tool that fails says so in an amber ⚠ popup, which wraps a long explanation instead of
-  opening the full-screen result window for it.
-
-- The About page opens on a new description of what MeshTerm is and what it plugs into.
-
-### Fixed
-
-- **Reading a big contact table no longer times out.** The library under MeshTerm gave a
-  whole contacts read one five-second deadline, so a companion holding a few hundred
-  contacts failed every read with "no event received", however healthy the radio. The wait
-  is now for the gap between records — each record restarts it, and the read takes as long
-  as the table does — so a timeout means the companion really stopped answering. An error
-  reply meant for some other command no longer ends the read either.
-
-- **An emoji no longer knocks a row out of line.** Terminals disagree about how wide they
-  draw an emoji, and a contact's name arrives off the air carrying whatever its owner typed,
-  so one emoji in a name could shift every column after it, and the screen's right border,
-  by a cell. Every glyph that may be drawn as an emoji now gets two cells, and each is drawn
-  at the column MeshTerm measured for it — in lists, in dialogs, and on the screens behind
-  them — so one drawn narrow leaves a blank beside it rather than moving anything else, and
-  a repaint no longer leaves a stale letter standing next to it. A name cut to fit its
-  column is cut between glyphs, never through one, and a newline or an escape in a name no
-  longer ends its row early. `MESHTERM_COLUMN_SNAP=0` turns the placement off.
-
-- **Hops in near-identical colours stay separate chips.** Where a path is drawn as coloured
-  chips, two neighbours of the same colour cut a wedge of bare background out of the route,
-  and two of nearly the same colour were joined by a chevron nobody could see. Both are now
-  divided by a thin chevron in a shade of the first chip's own colour, so the route runs on
-  unbroken and the join still shows. "Nearly the same" is measured the way the eye sees
-  colour, in OKLab, rather than as a hue gap, which judged the greens and the cyans very
-  differently.
-
-- Walking back up a scrolled list no longer lets the highlight ride off the top of its box.
-
-## [0.3.5] — 2026-09-14
-
-### Added
-
-- A release now rebuilds [meshterm.net](https://meshterm.net) from the tag, so the site
-  carries the version it links to.
-
-### Changed
-
-- **The purge preview counts in columns.** The target ladder used to describe each rung in a
-  phrase — "keeps 45 · archives 12" — so comparing two rungs meant finding the numbers inside
-  two sentences. Keeps and archives are right-aligned columns now under a pinned
-  `TARGET / KEEPS / ARCHIVES` header, one lane measured across both sections so the numbers
-  run straight down the ladder; a rung that archives nothing shows a muted 0. The reasons a
-  contact ranks low sit in three lanes of their own under one header, instead of running on
-  from wherever the previous reason ended.
-
-- The PayPal link on the Support page, and in the repository's funding file, is PayPal's own
-  donate address rather than a shortener redirect, so a reader can see where it goes.
-
-### Fixed
-
-- **A name with a skin tone or a cut-off joiner no longer pulls its row out of line.** Two
-  real contact names showed it: one carries a skin-tone modifier, which one width table
-  counted as two cells and the terminal draws as none, so the row reserved four cells for a
-  two-cell glyph; the other is a flag sequence cut at the name's byte limit just past its
-  joiner, which swallowed the padding space after it and left the name a cell short. A
-  modifier now measures zero, and a joiner joins only a pictograph. The purge preview, the
-  Contacts list and the chat picker all pad names through that one measurement.
-
-## [0.3.4] — 2026-09-13
-
-### Fixed
-
-- **The macOS installers build again.** 0.3.3's release never published: both macOS legs
-  stopped at the new third-party notices step, which refuses to bundle a dependency whose
-  wheel carries no licence text — and on macOS bleak's Bluetooth backend pulls in two such
-  wheels, `pyobjc-core` and `pyobjc-framework-libdispatch`. Their MIT text is vendored
-  beside pyserial's and pywinrt's now, verified against the wheels themselves, and a test
-  checks every vendored path on every platform so a gap that only one runner can hit is
-  caught here first. The 0.3.3 tag stands with no release behind it; this is the same
-  code with its installers.
-
-## [0.3.3] — 2026-09-13
-
-### Added
-
-- **`meshterm --version` answers**, and under `--mock` the `devices` command lists the
-  simulator as the one device and scans nothing — it used to walk the serial ports and
-  switch the Bluetooth radio on, on the first command a stranger without a radio would try.
-
-- **[`docs/hardware.md`](docs/hardware.md)** is the one manual for putting MeshTerm on a
-  PicoCalc or a uConsole: the Calculinux bring-up, the console font, the XIAO UART radio from
-  parts to a verified link, the SPI bridge, and a closing list of what has only ever been
-  proven on one bench. The two script READMEs are short indexes pointing at it.
-
-- **The standalone installers carry their own licences now.** Each one-file build
-  bundles `LICENSE`, `NOTICE` and a generated `THIRD-PARTY-NOTICES.txt` — every
-  MIT/BSD/PSF dependency's own licence text, gathered at build time from what that
-  build actually installed — at the root of the archive, and the same three files ride
-  beside the downloads on the GitHub release page.
-
-- **The map credits OpenStreetMap in its own bottom-right corner.** The full-screen map is
-  arrived at with `© OpenMapTiles · Data from OpenStreetMap` there — the corner a paper map
-  puts it in — and the first pan, zoom, reframe or find keystroke collapses it to
-  `© OpenStreetMap`, which is a complete credit in its own right, so nothing is ever taken
-  back. It costs no chrome at all: no title atom, no footer character, no body row. On a
-  desktop terminal it is set into the panel's bottom border rule, right-justified, the way
-  a title sits in the top one, so the drawing keeps every cell it had; on the PicoCalc,
-  whose frame has no bottom rule to set anything into, it rides the right end of the map's
-  own last row, where a pan can move the ground out from under it. The node page's location
-  preview carries the short form throughout, being a picture rather than a place. The
-  licence and its URL live where they can be read — the About page, which also now names
-  **OpenMapTiles**, as OpenFreeMap asks and neither the page nor the README did.
-
-- **Every Python file names its licence with an SPDX identifier** on its first line (second, after a shebang), and `tests/test_spdx.py` keeps a new file from landing without one. Apache-2.0 does not require per-file headers, but a file lifted out of the tree carried no marking at all.
-
-- **The XIAO firmware patch carries MeshCore's MIT notice beside it** as `scripts/xiao-radio/LICENSE.MeshCore`, and the console-font scripts state that the shared generator block is offered under GPL-2.0-only as well as Apache-2.0, which is what lets the GPL-2.0-only 6×8 script run it.
-
-- **The SPI radio bridge runs on `openhop_core`.** The library the uConsole's software
-  node runs on was renamed from `pymc_core` in 2026, and the current `meshcore-uconsole`
-  package depends on the new name. `meshterm-spi-bridge` now drives either runtime,
-  preferring the newer, and two of its three compatibility shims stand down under it —
-  openhop_core accepts long ACK payloads and pushes completed trace replies itself; only
-  the raw RX-log push is still the bridge's. On a bookworm uConsole, where the trixie
-  package cannot run, the bridge takes a venv of its own with `openhop-core[hardware]`
-  and still uses the GUI's identity, so it stays the same node. Verified on the device:
-  radio up, 159 contacts restored, `info` and `contacts` answered over TCP.
-
-- **The PicoCalc picks its console font, and MeshTerm hands the console back.** A *Console
-  font* row under Display on the Preferences page offers `6x12 (53x26)` — the font the
-  device boots in — and `6x8 (53x40)`, fourteen more rows of the same glyph inventory in a
-  shorter cell. Picking one is the preview: the console loads it there and then, and the
-  page repaints at the new height (the kernel raises SIGWINCH on a font change), so the
-  choice is looked at before it is kept. Apply keeps it; leaving and discarding puts the
-  saved font back. The 6×8 base has no Cyrillic, so a node named in Cyrillic draws as
-  boxes on it.
-
-  A virtual terminal has one font for the whole console, so switching MeshTerm's switches
-  the shell's. It saves whatever font was loaded before the first paint and reloads it on
-  the way out — from the session's teardown and from an `atexit` hook, so quitting, an
-  unwind and a crash all leave the console as they found it. Off the handheld, off a real
-  VT, or with no `setfont`, none of it happens and the log says which. The row is drawn on
-  the PicoCalc only, while the value round-trips through `preferences.toml` everywhere.
-
-  The 6×8 font's build moved into `scripts/calculinux-console-font-6x8.sh`, on its own
-  because its base bitmap is the Linux kernel's `font_6x8` and therefore GPL-2.0 — marked
-  as such, with the licence beside it, and reading the donor, alias and keeper tables out
-  of the 6×12 script rather than keeping a second copy of them. Running the 6×12 script
-  still builds both.
-
-### Changed
-
-- **Preferences are kept in `preferences.toml`.** The same file as before — only what you
-  have changed, grouped and commented the way the Preferences page reads — in the format
-  `config.toml` and the device-config backups already use, so every file you edit by hand
-  speaks one syntax and MeshTerm no longer needs PyYAML. A `preferences.yaml` from an
-  earlier build is not read: set those preferences again, or copy the lines across as
-  `key = value` with text in quotes. A line TOML refuses costs only that line, and a word
-  left unquoted (`log_level = DEBUG`) is still understood.
-
-- **A trophy case record is a page, not a card floating over the list.** It fills the frame
-  like the browser under it and takes the node page's shape: a header line that reads as a
-  sentence — the discipline's mark, its standing and its score — over three tabs. *Info* is
-  the record's stats, identity first, with the page's actions at its foot; *Route* is the walk
-  two ways, the route graph and the route line, where Enter traces the path on show; *Area*
-  is the ground the walk covered, drawn across the whole stage with every pin labelled by its
-  hash byte so a pin and the graph node under it match by eye. Tab and Shift+Tab switch, F3 on
-  the PicoCalc. The trophy case itself fills the frame whichever way it is opened, from the
-  menu or from a trace.
-
-- **A QR code is white on black, and when it is the answer it is the whole screen.** A camera
-  reads contrast, and light-on-dark is what a scanner expects of a screen, so every code
-  MeshTerm draws is pure white on pure black on both themes. A channel's share link and a
-  contact card are no longer a titled popup with an instruction over the code: they are a
-  bare frame with nothing on it but the code and the URL it encodes, and Esc leaves.
-
-- **A question is a popup, and it is gone before the page it asked for opens.** The trace
-  target, the repeater admin's node and the TX optimize link used to stay pushed as full
-  screens under the page they led to, so Esc out of a trace or an admin page landed back on
-  the list it was picked from — two places where there is one. Each now floats over the main
-  menu, is popped before its page opens, and Esc from the page lands on the menu. The TX
-  optimize link is one box that turns its page (`… · step 1 of 2`): Esc on the second step
-  turns back with the picked node still highlighted. A refused admin login re-asks with the
-  same node highlighted.
-
-- The three delay settings — TX delay, direct TX delay and RX delay — show, stage and send at
-  one decimal on both the repeater admin and Device config pages; Device config's RX delay
-  had no rounding at all.
-
-- The source distribution ships the package, its tests and the manual, not
-  the repository: the Claude skills, the GitHub config, the PyInstaller spec and the device
-  scripts are out of it.
-
-### Fixed
-
-- **A share code's bottom-left finder was one cell skewed**, so a camera could not lock on.
-  Rich's centre justify strips a row's trailing spaces before padding it, so a code row whose
-  right edge was light modules landed a column off its neighbours. A code is now moved across
-  a line one way only, the same indent in front of every row.
-
-## [0.3.2] — 2026-09-11
-
-### Added
-
-- **Device config holds every setting the companion firmware has, and the device actions
-  with them.** Clock sync, backup and restore, the identity key, reboot and factory reset
-  were a menu entry of their own; they are an Actions section on the Device config page
-  now, and the page takes the repeater admin page's shape — full-screen, titled with the
-  node's name and a staged count, with Apply sending in place one value at a time and
-  leaving a value the device refused staged beside its reason.
-
-  The settings were checked against the firmware itself rather than the library that
-  talks to it. New are client repeat, the auto-add hop limit and a row for each custom
-  variable the device reports, and the firmware's own bounds apply: a PIN of 0 or six
-  digits, path-hash modes 0–2, 150–2500 MHz, 7–500 kHz, TX power from −9 dBm.
-
-- **Both editor pages pick a location on the map.** A "Pick location on map…" row sits
-  above separate latitude and longitude rows, opens the map on the position as staged — or
-  as the device last reported it — and stages both coordinates at once. Device config's
-  single Location row and its Pick / Type / Clear dialog are gone.
-
-### Changed
-
-- **Repeater admin speaks the firmware's own CLI, every setting of it.** The catalog had
-  been written from convention, and the firmware disagreed: the delays are floats (0.5
-  showed as 0, and typing it back was refused), bandwidth, spreading factor and coding rate
-  are one `radio` setting rather than three keys, the guest password is readable, and
-  `path.hash.mode` and twenty-odd others were missing. It is transcribed from the firmware
-  source now. Read settings leaves every row answered — a value, `empty`, or `n/a` where
-  the node's firmware lacks the setting — and `^R` (F3 on the PicoCalc) re-reads the
-  highlighted row alone.
-
-- Repeater admin fills the frame like Device config, instead of floating over the node
-  picker it was opened from.
-
-- **A packet's relay chain is drawn as the middle of a route.** The `via` field names the
-  repeaters that forwarded a frame and neither the node that sent it nor the one that
-  heard it, yet its ribbon opened and closed square — the mark for *the route began and
-  ended here*. Both ends wear the chevron now, as the TX sweep's composed relays do, and
-  arrow mode says the same with a leading and a trailing `→`. Under the chain, the note
-  about which node the reception described gives way to the hop count.
-
-### Fixed
-
-- **Retuning a companion's radio switched off its relaying.** The firmware reads the radio
-  command's trailing client-repeat byte as *off* when it is missing, and nothing sent it.
-  Every radio edit restates it now.
-
-- The location picker opens at once. It waited on the radio for the contact list first,
-  and a busy companion held it shut for twenty-odd seconds only to open with no contacts
-  anyway; it opens on what is cached now and adds the rest when the radio answers.
-
-- A repeater setting its firmware lacks reads `n/a`, rather than the `?` that says it was
-  never asked.
-
-- Every icon-led list starts its labels in the same cell. Some icons draw one cell wide and
-  most emoji two, so a row led by `↻`, `⌨` or `🗑` started its words a column early; each
-  list pads its icons out to the widest one now.
-
-- Neither editor page slides its rows sideways any more — a long row ends at the edge.
-
-## [0.3.1] — 2026-09-09
-
-### Added
-
-- **Devices you never want to connect to can be hidden from the splash.** A machine with a
-  debug probe, a programmer and a USB adapter soldered into it listed all three on every
-  start, in front of the one radio you came for. `h` drops the highlighted device and
-  remembers it, `⇧H` brings every hidden one back, and both keys are named in the footer
-  only where they would act.
-
-  Hiding is a listing choice and nothing else — a hidden device is still remembered, still
-  resolvable by `--port`, and shows itself again the moment it is connected to. The
-  highlight stays where the row was rather than jumping back to the remembered default, so
-  a run of adapters clears with a run of presses.
-
-### Changed
-
-- **The chat picker's conversation lane is measured against the names the list actually
-  holds**, instead of a flat 22 cells. Every cell past the longest name was padding in
-  front of a short one, taken straight out of the last-message preview — the only run on
-  the row with something to say, and on the PicoCalc's 53 columns it left the message 12
-  cells. The preview keeps what it saves: 31 cells to 37 on a 72-column terminal, 12 to 18
-  on the console. What the cap costs is the tail of a long name, so `←→` now slides the
-  message under the pinned columns to read one past its own edge.
-
-- **Channels shows the wait instead of announcing the result.** Every action banked a
-  "created X" note that surfaced only once the manager closed — by which time the refreshed
-  list had already shown the result — and the notes accumulated: at three changes in one
-  visit the outcome outgrew the acknowledgement popup and came back as the full-frame
-  result window instead, so the same visit reported itself two different ways depending on
-  how much had been done in it. Every device action now reports while it runs, under a
-  modal busy card, and the count stays in the run log.
-
-- Renaming a channel no longer closes the page it renamed. The channel is still there and
-  that is still its page, so the new name and key are read back into the title and the
-  rows, and the reader stays put. Only clearing it closes it, which is the one case where
-  what the page was about is gone.
-
-- `Esc` on the device splash says **bye** rather than quit — the splash is the door, and
-  nothing has been started there to quit out of.
-
-### Fixed
-
-- **macOS and Linux were drawing the whole app in 256 colours.** prompt_toolkit picks the
-  colour depth per output class, and its two classes disagree: the Windows one returns
-  truecolor outright, the VT100 one returns 8-bit for every `TERM` but `linux`. Nothing
-  ever passed a depth, so the same build drawing the same theme was 24-bit on Windows and
-  quantized to the 216-colour cube everywhere else — silently, which is why it went
-  unnoticed. The app looked fine, just flatter.
-
-  It costs exactly what this palette is made of. The seven heat steps and the per-node hue
-  wheel are close pastels chosen to be told apart; snapped to the cube, neighbours collide
-  and an identity stops being distinguishable by hue. `COLORTERM` is not consulted by
-  prompt_toolkit at all, so a terminal announcing truecolor the conventional way was still
-  handed 256.
-
-  The resolver only ever raises the verdict. A terminal that cannot be shown to do better
-  keeps precisely the depth it had, because guessing 24-bit at a terminal without it costs
-  not a duller palette but the colour entirely. A 16-slot console is never promoted — the
-  theme addresses its palette by index, and RGB has nowhere to land there.
-
-- **Adding a channel could write straight over one that was already there.** The free-slot
-  probe stops for two very different reasons and returned the same short list either way:
-  off the end of the configured slots it is the truth, but a read that simply failed left
-  whatever it had — and that was cached for the session, an empty one reading exactly like
-  a device with no channels, a truncated one making the next free slot look free with a
-  channel sitting in it. The probe now says whether it finished, an unfinished one is
-  answered but not kept, and every add confirms the slot is empty before anything is
-  written to it.
-
-- Keys tapped during a slow channel write were landing in the filter of the list
-  underneath, which then came back showing nothing. The busy card is modal, so the press
-  dies on the card instead.
-
-- **Channels at 53 columns.** The column header was a hand-built string with no idea of the
-  render width: it ran to 54 cells and wrapped, costing a content row out of twenty-six and
-  drawing the pinned landmark twice. The command rows hand-padded their icons, so the
-  one-cell marks started their labels a column left of the two-cell ones. The empty-message
-  count was `·`, which in that same row is also the status separator and what the console
-  folds 🔕 to — a muted channel with no messages drew it twice, two cells apart, meaning
-  different things; it is `○` now, the app's empty mark. And the detail title was a 42-cell
-  parenthesised blob that filled the PicoCalc's whole title bar, leaving nowhere to say Esc
-  leaves.
-
-- Every channel edit paid up to 64 device round-trips before the screen could redraw. The
-  chat service's slot map was walking the radio itself, unbounded, skipping empty slots all
-  the way to the 64-slot cap on firmware that never rejects an index — on top of the
-  manager's own re-read. It builds from the probe that was being made anyway.
-
-- A channel write that landed and then raised never invalidated what it had made stale, so
-  a slot list and a chat slot map outlived a layout that had already moved. A reorder that
-  drops partway now says so at once, since the reader is about to be looking straight at
-  the half-applied layout, and the standard Public channel can no longer be added twice by
-  a second press already on its way.
-
-- Two of the Trophy case's seven discipline marks started their titles a column left of
-  their siblings: 🛣 and 🕸 sit outside Emoji_Presentation, so Rich and wcwidth both measure
-  them at one cell where the other five measure two. The marks now pad out to the widest of
-  the seven, measured against what the platform will actually draw rather than written
-  down.
-
-- A route that has finished no longer ends on the chevron that means "the path runs on past
-  the edge" — it ends square, and the cell that frees up goes back to the route.
-
-- **A fully charged pack redrew the activity sparkline twice a minute.** The charger cuts
-  out at full, the pack settles back to 99, the charger restarts, and the companion reports
-  that flip every poll for as long as the thing is plugged in. The gauge is pinned to the
-  header's right edge and the pulse takes whatever is left, so the fourth cell `100%`
-  needed came off the sparkline and redrew the whole activity history at a new scale, on a
-  device sitting still. A full pack reads `100` now, with no sign: three cells, exactly as
-  the `99%` it keeps flipping back to, and the one reading whose `%` can be inferred.
-
-- On the PicoCalc every channel row in the chat picker sat a cell to the left of every
-  direct row, with the header over neither — the marker lane padded to a two-cell channel
-  glyph that the console font draws in one.
-
-- The device splash's own header wrapped at 53 columns, and its DEVICE lane sized itself to
-  the longest name — which for a USB adapter is a forty-character product string, pushing
-  HARDWARE off the edge entirely. The name lane yields now, and `←→` reads the rest of a
-  long model string with the lanes in front of it pinned.
-
-## [0.3.0] — 2026-09-08
-
-The command line was rebuilt around the fact that it has **two readers**, and that trying
-to serve both with one stream had been making it worse at each.
-
-### Added
-
-- **`--json`, on every command.** It used to be honoured by two of twenty and silently
-  ignored by the rest, so `meshterm --json contacts | jq` failed while MeshTerm reported
-  success. It now covers all 49 subcommands: an array for a listing, an object for a set of
-  facts, one compact line per document, and no envelope — `contacts --json | jq '.[].node.name'`
-  reads the way it looks.
-
-  Values are typed (`20`, not `"20"`), absent is `null` and never an omitted key,
-  timestamps are UTC RFC 3339 to the second so string comparison is time comparison, and a
-  numeric field carries its unit in its key (`snr_db`, `uptime_s`, `rtt_ms`). A key is never
-  truncated — a short id is a `hash`, because a truncated key cannot go back into `--to`.
-  `monitor` and `chat listen` emit one document per record as they arrive, all the same
-  shape.
-
-  `--json` changes the rendering and never the report: the same exit status, the same
-  records. An empty result prints its empty document **and still exits `5`**.
-
-- **A documented exit status per outcome**, listed under every `--help`: `0` success, `1`
-  failure, `2` usage error, `3` no device, `4` the device was reached but the operation
-  failed, `5` nothing to report.
-
-  `5` is the one worth knowing about. A command that ran fine and found nothing — an empty
-  contact list, a trace that never came home — returns it, so a script can tell "found
-  nothing" from "worked" without counting lines.
-
-- **`--absolute`**, restoring ISO-8601 timestamps for a run, over a new `cli_time_format`
-  preference. JSON is always absolute UTC regardless: a local offset is a fact about the
-  machine that ran the command, not about the event.
-
-- **A global option may be typed anywhere.** `meshterm contacts --json` and
-  `meshterm --json contacts` are the same run. The first is what everyone types and it used
-  to fail with a bare usage error.
-
-- **`contacts` gains `HASH` and `LOCATION`.** The hash is the token `--path` takes; you used
-  to slice it out of `KEY` by hand. `preferences show` gains `DESCRIPTION` back, and `info`
-  glosses its second-valued readings (`uptime_s  93784  (1d 2h)`).
-
-- **[`docs/cli.md`](docs/cli.md)**, a manual for the whole thing: both faces of every
-  command, where MeshTerm keeps its state, what each failure looks like, and recipes. Every
-  sample in it is captured from a real run rather than written.
-
-### Changed
-
-- **The plain face is for a person now, and says so.** It had grown the menu's manners —
-  colour, boxes, section headings, glyph columns, a closing ✓ — and then briefly overcorrected
-  into something only `awk` could love. Machine-readability is `--json`'s job, so the plain
-  face is free to be read: no colour and no frames, still, but **alignment is the delimiter**
-  and names are bare rather than `"quoted"`.
-
-- **A time is an age** — `now`, `5m`, `3h`, `never` — because "recently?" is the question you
-  typed the command to ask. An absolute instant survives where the instant *is* the fact: the
-  device clock, an appointment, a live capture's own `TIME`.
-
-- **A route is drawn and a path is typed.** A route reads
-  `Yagi-Repeater (a1) → Alice (d4) → MockCompanion (00)`; a `--path` spec stays the
-  comma-joined hex it has to be, because it is the one line that round-trips. Our own node is
-  a hop like any other — the menu's `★` says "you already know who this is", which is true of
-  the reader and false of whoever opens the file later.
-
-- **A value read out of `show` can be typed back into `set`.** The settings dump printed an
-  enum as `0 (off)` and an unset string as `(not set)`, neither of which `config set` would
-  take back.
-
-- **`ui.ack` and a tool's closing message go to stderr** rather than being dropped. stderr
-  keeps the promise the dropping was made to keep — a redirect catches only the answer —
-  while giving the person at the prompt back their ✓ and their count.
-
-- **`--help` is Click's own plain help**, with no boxed panels and no markup to strip out of
-  a pipe.
-
-### Fixed
-
-- **A node name could not be printed safely.** A node broadcasts its own name, and Rich read
-  `[...]` in one as console markup: a node called `[bold]Loud` printed as `Loud` — silently
-  no longer the string that identifies it — and one called `[/]Bob` raised `MarkupError` and
-  took the command down, then took the error handler down with it while reporting the crash.
-
-- **A control character in a name reached stdout.** Escaping covered the newline, the tab and
-  the return and let **ESC** through, which put a live colour run into the caller's file — the
-  one thing "no escape sequences" exists to prevent. BEL was dropped in silence, so the
-  printed name was not the advertised one, and U+2028 ended the record like a newline. It is
-  now every C0 and C1 control plus the Unicode separators.
-
-- **Numeric columns never right-aligned.** Rich's `Text.wrap` returns early on
-  `overflow="ignore"`, above the justify step, so asking for one threw the other away — while
-  the standard, the code's own docstring and the manual all promised alignment.
-
-- **`config show` printed an empty string as `""`**, which `config set` read as those two
-  characters. Feeding a dump back replaced every empty setting with a pair of quote marks, and
-  the next dump looked identical, so nothing ever said so. It also masked an **unreported**
-  PIN behind bullets, telling the reader the radio was PIN-locked when it was not.
-
-- **`meshterm about` drew the rule above its colophon at console width** — one 48KB line in a
-  4KB page.
-
-- **`config export-key > key.hex`** wrote a file with `[muted]` tags around the key that was
-  supposed to be its whole content.
-
-- **Failures were classified wrong in six places.** Nothing transmitted is not a device
-  failure: an unopenable `--port` is `3` rather than `4` with a message about a connection
-  there had never been, and a missing `--yes`, an unknown `--sort`/`--category`/`--profile`,
-  a missing admin password, an unknown contact and a bad `--at` are all usage errors. A
-  `--category` typo used to come back as `5` — indistinguishable from a real empty result —
-  and an unknown `--profile` fell through to whichever radio was attached, which is the one
-  wrong answer that puts a packet on the air.
-
-- **Errors go to stderr**, in the `meshterm: what went wrong` shape, and stop folding at 80
-  columns — a sentence broken across three lines is a sentence `grep` cannot find. Progress
-  bars moved there too and draw nothing off a terminal.
-
-- **An expected failure no longer dumps a traceback.** A lost serial link, or an argument a
-  command rejected on its own, reads as one line and the right exit status.
-
-### Removed
-
-- **`meshterm map`.** A map is a picture — braille cells whose meaning is their position, and
-  whose nodes are told apart by colour. Stripped of colour it would be unreadable; left
-  coloured it was the one command whose output could not be piped anywhere useful. The map
-  stays in the menu, and the located nodes are scriptable through `contacts`, which now
-  carries their coordinates.
-
-- **The QR codes** from `channels share`, `config share` and the About pages' scripted face.
-  A QR is a second rendering of a link the output already prints, drawn for a phone pointed at
-  a screen; redirected into a file it was a block of block characters wrapped around the one
-  thing that was actually the answer. The menu still draws them.
-
-## [0.2.8] — 2026-09-07
-
-### Fixed
-
-- **The window MeshTerm opened for itself was too small, and it showed.** The startup
-  wordmark is 71 columns wide; below that the splash quietly swaps to the narrow one drawn
-  for the PicoCalc — so a desktop session came up wearing the handheld's mark, with every
-  menu description truncated onto the pager underneath it.
-
-  MeshTerm was opening a *tab* in whatever Windows Terminal window happened to be around,
-  inheriting its size (64 columns on the machine this was found on). It now asks for a
-  window of its own, sized from the platform's own minimum plus a margin. Windows Terminal
-  clamps that to what the display can show, so a small screen degrades exactly as before.
-
-- The tab it opens is titled **MeshTerm**, not the executable's full path — which on a
-  downloaded build was a line of Downloads folder.
-
-## [0.2.7] — 2026-09-07
-
-### Changed
-
-- **MeshTerm moves to Windows Terminal rather than asking to.** It still says so, and
-  still tells you how to stop it, but it doesn't put the question. The classic console
-  can't draw a single icon whatever font it's given, so there was only one sensible
-  answer — and it was being asked of someone who hadn't seen the app yet and had nothing
-  to judge it by.
-
-  Installing a **font** still asks, because that writes a file to your machine. Moving
-  window doesn't. Preferences → Display → Console setup stops both.
-
-## [0.2.6] — 2026-09-07
-
-### Fixed
-
-- **Accepting "reopen in Windows Terminal" killed the session** in the downloadable
-  builds. A new window opened, printed `Security validation failure: parent process has
-  different executable!`, and exited — while the window that made the offer had already
-  closed. Worse than never offering.
-
-  A one-file build unpacks itself and re-runs itself, the two halves coordinating through
-  private environment variables. Those were being handed to the new copy, which concluded
-  it was the second half of a launch it never made, checked that its parent was the same
-  program, found Windows Terminal instead, and stopped. They are stripped now.
-
-  It worked perfectly when run from source, which is the whole lesson: the packaged build
-  is its own platform.
-
-## [0.2.5] — 2026-09-07
-
-### Fixed
-
-- **Every icon was a box in the classic Windows console.** That console — which is what a
-  double-clicked build still gets — draws no emoji at all, whatever font it is set to, so
-  the menu came up as rows of replacement characters.
-
-  MeshTerm now works out which console it is running in and, on that one, draws its icons
-  through the compact single-character table it already keeps for the PicoCalc: `☼` for an
-  advert, `¶` for a message, `★` for the trophy case. Nothing else about the desktop
-  layout changes — same width, same colours, same accented names. Running in Windows
-  Terminal or VS Code's terminal keeps the emoji, and `MESHTERM_EMOJI=1` or `=0` forces
-  the matter either way. `meshterm platform` reports which it chose and why.
-
-### Added
-
-- **MeshTerm offers to reopen itself in Windows Terminal.** The classic Windows console —
-  what you get from a double-click — can't show the emoji icons at all, whatever font it
-  is given: the only two Windows fonts with emoji in them are proportional, and a console
-  won't take one. A terminal is the only thing that fixes it, so MeshTerm now offers to
-  move there. One keypress, nothing installed, nothing changed — and you get the app as
-  it was drawn: icons, charts, path chips and all.
-
-- **MeshTerm can install a font its charts will actually draw in** — for anyone who stays
-  in the classic console. That console does no font fallback at all, and none of the fonts
-  it offers can draw braille, which every timeline and activity graph in MeshTerm is made
-  of. Neither can Hack Nerd Font, JetBrains Mono, Fira Code, Source Code Pro, or even
-  DejaVu Sans Mono; the usual advice works only because most terminals quietly fall back
-  to a proportional font.
-
-  So MeshTerm now ships Cascadia Mono PL — Microsoft's console font, SIL OFL — and on
-  that console offers to use it. If you already have Cascadia (every Windows 11 machine,
-  and anyone with Windows Terminal) it just switches to it. If not, it offers to install
-  it for you: no administrator rights, nothing downloaded, 723 KB. Saying no explains
-  what saying no looks like and asks once more; a second no is remembered and never
-  raised again. Preferences → Display → Console setup changes your mind about either
-  offer.
-
-## [0.2.4] — 2026-09-07
-
-### Fixed
-
-- **MeshTerm crashed on startup on Windows.** Building the screen raised
-  `ctypes.ArgumentError: expected LP__CSBI instance instead of pointer to
-  CONSOLE_SCREEN_BUFFER_INFO`, and on a double-clicked build the traceback and the window
-  it was printed in were destroyed together.
-
-  `ctypes.windll.kernel32` is a cache: every caller in a process gets the same object, and
-  each function on it is a shared attribute. The emoji-width probe declared
-  `GetConsoleScreenBufferInfo` as taking a pointer to *its* copy of the screen-buffer
-  struct — which rewrote the signature for prompt_toolkit, which then called that same
-  function with a pointer to *its* copy. Same layout, different class; ctypes refused.
-
-  Nothing in MeshTerm reaches for `ctypes.windll` any more. Five call sites now take
-  private handles from `core/win32dll.py`, so a signature declared for one purpose is
-  invisible to everything else in the process.
-
-### Changed
-
-- The log-detail preference offers the plain level names — Error, Warning, Info, Debug —
-  rather than descriptions of them. Someone being talked through a problem is told "set it
-  to debug", not "set it to everything".
-
-## [0.2.3] — 2026-09-07
-
-### Changed
-
-- The log is a plain text file, `~/.meshterm/meshterm.log`, one readable line per record
-  with the traceback under the line that raised it. It was JSON Lines on the theory that
-  something would replay it; nothing ever did, and the job it actually has is being opened
-  by a person who has hit a problem.
-- It rotates, at 2 MB across three files. It used to grow without limit — a real one
-  reached 11 MB in ten weeks, which is a lot of disk on a handheld and an unreasonable
-  thing to attach to an issue.
-- **How much it keeps is a preference** — `log_level`, under a new Diagnostics group,
-  defaulting to `WARNING`. The file now holds the problems rather than a narration of a
-  working session: of the last twenty thousand records in a real log, twelve were a
-  warning or an error.
-
-### Added
-
-- One interactive MeshTerm per data directory. A second one is turned away with the way
-  out in the message, rather than quietly overwriting the first one's contacts and
-  settings. The lock is held by the operating system, so a crash releases it — a process
-  id in a file would leave a lock nobody could explain.
-- Failures are written down. Every unhandled error reaches the log with its traceback and
-  the terminal says where to find it; expected errors go in as warnings, because a log
-  that only holds crashes cannot answer "what happened just before". The bug report form
-  asks for the file.
-- The window stays open after a crash when MeshTerm owns it. Double-clicking the
-  executable on Windows gives the process its own console, which is destroyed the instant
-  the process ends — so an error was drawn and erased together and all anyone saw was a
-  flash. It now waits for a keypress, but only on that path: a run from a shell leaves its
-  output on screen already, and a successful run should not make anyone press a key.
-- A readable answer when there is no Windows console. Git Bash, MSYS and Cygwin are not
-  Windows consoles, and prompt_toolkit's own error says so in the language of its
-  internals, arriving as a traceback that reads like a broken app rather than the
-  instruction it is.
-
-### Fixed
-
-- All ten stores write through one helper, and the file each writes to first is named
-  for the process writing it. They shared a fixed `.tmp` name, so two copies of MeshTerm
-  saving at the same moment took turns inside one scratch file and then each renamed
-  whatever was in it over the real one. The rename was always atomic; what was being
-  renamed was not.
-
-## [0.2.2] — 2026-09-07
-
-### Fixed
-
-- **The downloadable builds were missing every tool.** They started, printed help and drew
-  the specimen card, and had a menu with nothing in it but Quit — no contacts, no map, no
-  trace, no chat. Tools are found at runtime with `pkgutil.iter_modules`, which finds
-  nothing inside a frozen bundle, so none of them registered. The packaging now collects
-  them, and the smoke tests run a tool-provided subcommand instead of only `--help`, which
-  a gutted build passes perfectly well.
-
-### Added
-
-- `MESHTERM_HOME` points config and data somewhere other than `~/.meshterm`. Every copy of
-  MeshTerm shared one directory, so trying a downloaded build meant letting it open the
-  same history database as the one you use — the valuable half of an install, with no way
-  to keep a second copy away from it. Also useful for a portable install, or two radios
-  kept apart.
-
-## [0.2.1] — 2026-09-07
-
-### Fixed
-
-- The formatter is pinned. `ruff>=0.4` meant CI installed a newer ruff than a laptop had,
-  and the two disagreed about whether the tree was clean — 0.16 formats Python blocks
-  inside Markdown and 0.15 doesn't, so the first CI run went red on a file that was fine
-  locally. An unpinned formatter isn't a gate.
-- `docs/` is out of ruff's reach. The survey documents quote code as it looked on a past
-  date, in fragments that were never whole programs; a formatter rewriting a quotation
-  edits the record.
-- The installer builds only run for `main`. Every Dependabot branch that bumped an action
-  touched the workflow file, matched its path filter, and started a five-platform build.
-
-### Changed
-
-- The distribution is named `mesh-term`. PyPI prohibits `meshterm` (pypi/support#12162),
-  and the name you install is the only thing that changes: the import package and the
-  command are both still `meshterm`.
-- `pyproject.toml` carries the metadata a stranger sees on a package page — project URLs,
-  trove classifiers, and the licence as a PEP 639 expression.
-
-### Added
-
-- Continuous integration. Lint once, tests across seven OS and Python combinations, and a
-  packaging job that installs the built wheel into a clean environment and runs the command
-  from outside the source tree.
-- A release workflow with no automatic trigger, which publishes nothing until a human runs
-  it on purpose and types the version.
-- A security policy, a code of conduct, issue and pull request templates, weekly
-  dependency updates, and the funding links the app's own support page already offers.
-- A Releases page. Pushing a version tag builds the binaries and attaches them, with a
-  combined `SHA256SUMS` and release notes taken from this file. It stays inside GitHub
-  and is not the PyPI publish, which remains a separate and deliberate act.
-- Standalone builds. A PyInstaller spec and a workflow that builds a single runnable
-  file for Windows, macOS (Intel and Apple silicon) and Linux (x64 and ARM64), checks
-  each one runs from outside the source tree, and writes a checksum beside it. Nothing
-  is published; the files are workflow artifacts until someone attaches them to a
-  release.
-
-## [0.2.0] — 2026-09-07
-
-The first version to carry a changelog. Everything before it is in the commit log and is
-deliberately not reconstructed here.
-
-### Added
-
-- This file.
-
-### Changed
-
-- The project description now says what MeshTerm is, how it reaches a radio, and which
-  systems it runs on, instead of naming a category. It is the PyPI summary and the package
-  docstring, which no longer disagree.
-- The version is written in exactly one place, `meshterm/__init__.py`. The distribution
-  metadata reads it from there rather than repeating it, so the number on the splash screen
-  and the number in a built wheel cannot drift apart.
-- The basemap user agent identifies the real repository and reports the running version.
-  It previously sent a bare `https://github.com/` and a hardcoded `0.1` to OpenFreeMap,
-  which is the only handle a tile operator has on a client.
-- `macOS` and `Bluetooth` are spelled one way across the project. `BLE` stays where it is
-  an identifier — the transport name, the config keys, the CLI.
-- `meshterm --help` opens with the same description as the package summary and the
-  PyPI page, instead of a fourth wording of its own.
-
-### Fixed
-
-- The three commands `CONTRIBUTING.md` asks contributors to run all pass:
-  `python -m pytest -q`, `ruff check .`, and `ruff format --check .`. The lint gate had been
-  reporting 2222 errors and the format gate 154 files, so a first contributor could not tell
-  their own diff from the background.
-- Two `TYPE_CHECKING` imports the test suite referenced but never imported, on paths that
-  happened never to run.
-
-[Unreleased]: https://github.com/jpmartineau/MeshTerm/compare/v0.3.7...HEAD
-[0.3.7]: https://github.com/jpmartineau/MeshTerm/releases/tag/v0.3.7
-[0.3.6]: https://github.com/jpmartineau/MeshTerm/releases/tag/v0.3.6
-[0.3.5]: https://github.com/jpmartineau/MeshTerm/releases/tag/v0.3.5
-[0.3.4]: https://github.com/jpmartineau/MeshTerm/releases/tag/v0.3.4
-[0.3.3]: https://github.com/jpmartineau/MeshTerm/releases/tag/v0.3.3
-[0.3.2]: https://github.com/jpmartineau/MeshTerm/releases/tag/v0.3.2
-[0.3.1]: https://github.com/jpmartineau/MeshTerm/releases/tag/v0.3.1
-[0.3.0]: https://github.com/jpmartineau/MeshTerm/releases/tag/v0.3.0
-[0.2.8]: https://github.com/jpmartineau/MeshTerm/releases/tag/v0.2.8
-[0.2.7]: https://github.com/jpmartineau/MeshTerm/releases/tag/v0.2.7
-[0.2.6]: https://github.com/jpmartineau/MeshTerm/releases/tag/v0.2.6
-[0.2.5]: https://github.com/jpmartineau/MeshTerm/releases/tag/v0.2.5
-[0.2.4]: https://github.com/jpmartineau/MeshTerm/releases/tag/v0.2.4
-[0.2.3]: https://github.com/jpmartineau/MeshTerm/releases/tag/v0.2.3
-[0.2.2]: https://github.com/jpmartineau/MeshTerm/releases/tag/v0.2.2
-[0.2.1]: https://github.com/jpmartineau/MeshTerm/releases/tag/v0.2.1
-[0.2.0]: https://github.com/jpmartineau/MeshTerm/tree/v0.2.0
+- `--json` and the plain face grew a shared projection for a set of facts
+  (`ui/renderers.facts_pairs`), so the Diagnostics page cannot drift from what
+  `meshterm diagnostics` prints: a field added to the report reaches both without anyone
+  remembering to. A path also gained the lane constructor it never had
+  (`ui/fields.path`) — the machine face had always spelled one correctly and the plain
+  face could not render one at all.
+
+## [0.9.0] — 2026-09-22
+
+**The first public release.** Everything in MeshTerm is new today, so instead of a list of
+changes, here is what it does.
+
+MeshTerm is a program you run in a terminal to work with a **MeshCore** radio — one of the
+small LoRa boards people use to build long-range mesh networks. A mesh like that needs no
+internet, no phone signal, and nobody in the middle: the radios pass messages along to each
+other until they arrive. You plug one into your computer, start MeshTerm, and it shows you
+what the mesh is doing.
+
+### What you can do with it
+
+- **Run it two ways, and it behaves the same either way.** Type `meshterm` on its own and
+  you get a full-screen menu you drive with the arrow keys. Type a command instead —
+  `meshterm contacts`, `meshterm map` — and it prints an answer and exits, which is what you
+  want in a script. Add `--json` to any command and the answer comes back as data for
+  another program to read.
+
+- **It listens all the time, and writes down what it hears.** Radios on a mesh announce
+  themselves. From the moment yours is connected, MeshTerm notes down every announcement it
+  overhears: which radio it was, how strong the signal was, and where it said it was. All of
+  it is saved on your own computer. That is why the lists and charts can show you not only
+  what is happening now, but what was happening last Tuesday.
+
+- **You can see where everyone is.** There is a street map, drawn in the terminal, with the
+  radios on it. You can pan it, zoom it, and search it. There is also a Time Machine that
+  winds the map back so you can watch the mesh change over days.
+
+- **You can talk to people.** Group channels and one-to-one messages, both live. If someone
+  is out of range right now, the courier holds your message and delivers it when they come
+  back. Channels can be shared as a QR code someone else scans, or as a link.
+
+- **You can measure the mesh, not just guess at it.** Trace a message's route and see which
+  hop is the weak one. Sweep your transmit power from coarse to fine to find the lowest
+  setting that still gets through. Walk a map of how the whole mesh actually hangs together,
+  which is often not how you thought it did.
+
+- **It talks to your radio however your radio talks.** USB cable, Bluetooth, or over the
+  network. It finds the ones it can find on its own and asks you to pick. If a connection
+  drops it reconnects by itself. No radio yet? `meshterm --mock` runs the whole program
+  against a simulated mesh.
+
+- **It runs on the small machines too.** There is a second layout built for handheld
+  consoles — the PicoCalc's 53-column screen and the uConsole — with its own fonts, colours
+  and on-screen key labels, not just the desktop screen squeezed.
+
+- **It works with no internet.** Map tiles are kept on disk once fetched, and when there is
+  no network at all the map falls back to a plain grid. Nothing about MeshTerm needs to
+  phone home.
+
+### Getting it
+
+One file to download, with nothing else to install, for Windows, macOS (both Intel and
+Apple silicon) and Linux (including 64-bit ARM, so handhelds are covered). If you would
+rather use Python, `pipx install` works too. The README has the exact commands.
+
+MeshTerm is free and open source under the Apache 2.0 licence. The name and the logo are
+not — see `NOTICE` — so a fork is welcome, under its own name.
+
+[Unreleased]: https://github.com/jpmartineau/MeshTerm/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/jpmartineau/MeshTerm/releases/tag/v0.9.0

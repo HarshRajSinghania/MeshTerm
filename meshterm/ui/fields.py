@@ -332,6 +332,21 @@ def name(key: str, header: str) -> Column:
     return Column(key=key, lanes=(Lane(header=header, render=script.name),))
 
 
+def path(key: str, header: str) -> Column:
+    """A place on this filesystem: a config directory, a database, a file just written.
+
+    Its own constructor rather than :func:`word` because the *typed* value is a
+    :class:`~pathlib.Path` and nothing else in the lane vocabulary turns one into text —
+    ``word`` hands it straight to Rich, which cannot render it. The machine face was
+    already right: :func:`~meshterm.ui.report.normalise` has always spelled a Path as its
+    string, so this closes the plain half of a shape that was only ever half-declared.
+
+    Printed as the host writes it, separators and all, since the one thing a reader does
+    with a path is paste it back into their own shell.
+    """
+    return Column(key=key, lanes=(Lane(header=header, render=_path_cell),))
+
+
 def free(key: str, header: str) -> Column:
     """Free text a stranger filled in: escaped so it can never end its own record.
 
@@ -441,6 +456,11 @@ def hidden(key: str) -> Column:
 def _rendered_cell(value: Rendered | None) -> str:
     """One setting's cell: the text its own spec produced, or the absent token."""
     return script.NONE if value is None else value.text
+
+
+def _path_cell(value: Any) -> str:
+    """A path as its own text, or the absent token where there is none."""
+    return script.NONE if value is None else str(value)
 
 
 def _position_cell(where: Position | None) -> str:

@@ -984,6 +984,77 @@ def _join_discord(cols: int, rows: int) -> Screen:
     return AboutPage("Join Discord", join_discord())
 
 
+def _diagnostics(cols: int, rows: int) -> Screen:
+    """The Diagnostics page, carrying the widest values a real one can.
+
+    A deep Windows config directory and a connection error in the radio's own words are
+    the two fields with no natural bound, and both are here on purpose: this page folds
+    where the scripted face crops, so the fold is what has to survive 53 columns.
+    """
+    from meshterm.ui.diagnostics import DiagnosticsPage
+
+    return DiagnosticsPage(_diagnostics_report())
+
+
+def _diagnostics_report():
+    """A representative diagnostics report, shaped exactly as the tool states one."""
+    from meshterm.ui import fields
+    from meshterm.ui.report import Column, Facts, Lane, Listing
+
+    return (
+        Facts(
+            key="meshterm",
+            fields=(fields.word("meshterm", "meshterm"), fields.word("install", "install")),
+            values={"meshterm": "0.3.7", "install": "frozen"},
+        ),
+        Facts(
+            key="host",
+            fields=(
+                fields.word("os", "os"),
+                fields.word("python", "python"),
+                fields.word("terminal", "terminal"),
+                fields.word("terminal_size", "terminal_size"),
+                fields.flag("over_ssh", "over_ssh"),
+                fields.word("powerline", "powerline"),
+            ),
+            values={
+                "os": "Debian GNU/Linux 12 (bookworm)",
+                "python": "3.11.2",
+                "terminal": "Windows Terminal",
+                "terminal_size": "53x26",
+                "over_ssh": True,
+                "powerline": "none (font:windows-terminal)",
+            },
+        ),
+        Facts(
+            key="device",
+            fields=(
+                fields.flag("connected", "connected"),
+                fields.path("config_dir", "config_dir"),
+                fields.free("error", "error"),
+            ),
+            values={
+                "connected": False,
+                "config_dir": Path("C:/Users/somebody/AppData/Roaming/meshterm/profiles/handheld"),
+                "error": "no companion answered on COM7 within 10s; the port is open elsewhere",
+            },
+        ),
+        Listing(
+            key="tables",
+            columns=(
+                fields.word("table", "TABLE"),
+                Column(key="rows", lanes=(Lane(header="ROWS", render=str, align="right"),)),
+            ),
+            rows=[{"table": "observations", "rows": 418_203}, {"table": "runs", "rows": 91}],
+        ),
+        Listing(
+            key="preferences",
+            columns=(fields.word("preference", "PREFERENCE"), fields.free("value", "VALUE")),
+            rows=[{"preference": "log_level", "value": "DEBUG"}],
+        ),
+    )
+
+
 def _share_qr(cols: int, rows: int) -> Screen:
     """The share screen: a contact card's code and link on a bare frame (the widest QR)."""
     from meshterm.ui.qr import QrScreen
@@ -1032,6 +1103,7 @@ _ENTRIES: list[_Entry] = [
     _Entry("join_discord", _join_discord),
     _Entry("support_project", _support_project),
     _Entry("share_qr", _share_qr),
+    _Entry("diagnostics", _diagnostics),
 ]
 
 #: (platform, cols, rows) combos every entry above renders under. PicoCalc gets both its

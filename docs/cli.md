@@ -1476,9 +1476,98 @@ bothers to draw a QR of. `text` is the page's plain rendering, not a fold of the
 into nested JSON — a structured markdown tree would be a second rendering rather than data,
 and nothing would consume it.
 
+#### `meshterm diagnostics`
+
+Everything a bug report opens with, in one block: which MeshTerm, on which host, in which
+terminal, talking to which radio, over how much stored history. It is the answer to the
+three or four questions that otherwise get asked one at a time in an issue thread, and the
+person who hit the bug is usually the one least able to answer them — half of it is
+resolved at boot and shown on no screen.
+
+```console
+$ meshterm diagnostics
+meshterm  0.3.7
+install   frozen
+
+os             Windows 11
+os_build       10.0.26100
+arch           AMD64
+python         3.13.1
+terminal       Windows Terminal
+term           -
+colorterm      truecolor
+terminal_size  120x30
+over_ssh       no
+platform       regular
+icons          yes
+icons_source   windows-terminal
+font           Cascadia Mono PL (windows-terminal)
+powerline      full (font:windows-terminal)
+
+connected       yes
+transport       ble
+port            -
+device_role     client
+device_model    Heltec V3
+firmware        v1.7.1 1c3f9a2
+radio_freq_mhz  906.8750
+radio_bw_khz    250.00
+radio_sf        10
+radio_cr        5
+tx_power_dbm    20
+error           -
+
+config_dir   C:\Users\jp\.meshterm
+db_size_kb   41280
+log_level    WARNING
+log_size_kb  96
+runs_failed  3
+first_heard  8mo
+last_heard   now
+
+TABLE              ROWS
+observations     418203
+runs                912
+traces               47
+...
+
+PREFERENCE  VALUE
+log_level   DEBUG
+map_style   terrain
+```
+
+**The radio is asked but never required.** A report about a companion that will not connect
+is exactly the report most worth filing, so a failure to reach it becomes `connected no`
+with the radio's own words in `error`, and every other fact still arrives.
+
+**Only overridden preferences are listed.** The defaults are in the source and identical for
+everyone; the two the reporter changed are the two that can explain anything.
+
+**The mesh is described in aggregate and only in aggregate** — a row count per table, and
+the span of time the observations cover. The counts come off the schema rather than a list
+written down somewhere, so a table added later starts being reported the day it lands.
+
+**Nothing in the block is private.** No pairing PIN, no admin password, no channel secret,
+no private key, no position, and no contact's name or key. That is a property of the
+feature and not a habit: the block is designed to be pasted in public by somebody who has
+not read it, and `tests/test_diagnostics.py` plants real secrets in every store that holds
+one and fails if any of them — or a field merely *named* like one — reaches either face.
+
+Under `--json`, the three fact blocks merge into one flat object and the two listings keep
+a key of their own:
+
+```json
+{"meshterm":"0.3.7","install":"frozen","os":"Windows 11","…":"…","tables":[{"table":"observations","rows":418203}],"preferences":[{"preference":"log_level","value":"DEBUG"}]}
+```
+
+In the menu this is the **Diagnostics** page under *This app*, drawn on a bare frame — no
+border, no header, no footer, no key hints — because a terminal is selected by dragging and
+every one of those is a character the clipboard would carry into the issue.
+
 #### `meshterm platform`
 
-A diagnostic for which UI flavour a given invocation resolves to, and why.
+The narrow sibling of `diagnostics`: which UI flavour a given invocation resolves to, and
+why, without asking the radio anything.
 
 ```console
 $ meshterm platform
