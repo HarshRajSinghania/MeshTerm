@@ -227,7 +227,7 @@ def test_the_connection_is_built_from_this_device_s_own_endpoint(
 
 
 def test_the_pin_is_withheld_on_macos(monkeypatch: pytest.MonkeyPatch) -> None:
-    """macOS gets no PIN: handing one over is what *breaks* the connection there.
+    """No PIN is handed to macOS: supplying one is what *breaks* the connection there.
 
     ``BLEConnection.connect`` responds to a PIN by calling bleak's ``pair()``, and
     CoreBluetooth has no pairing API — the macOS backend raises outright, whereupon the

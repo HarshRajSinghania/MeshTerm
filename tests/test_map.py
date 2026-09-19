@@ -823,7 +823,9 @@ def test_basemap_finds_a_ca_bundle_when_the_default_store_is_empty(
         def load_verify_locations(self, cafile=None, capath=None, cadata=None):  # type: ignore[override]
             loaded.append(cafile or "")
 
-    monkeypatch.setattr(ssl, "create_default_context", lambda *a, **k: _EmptyStore(ssl.PROTOCOL_TLS_CLIENT))
+    monkeypatch.setattr(
+        ssl, "create_default_context", lambda *a, **k: _EmptyStore(ssl.PROTOCOL_TLS_CLIENT)
+    )
     monkeypatch.setattr(basemap_mod, "_CA_BUNDLES", (str(tmp_path / "nope.pem"), str(bundle)))
 
     basemap_mod._tls_context.cache_clear()
@@ -846,7 +848,9 @@ def test_basemap_never_disables_verification(monkeypatch: pytest.MonkeyPatch) ->
         def get_ca_certs(self, binary_form: bool = False):  # type: ignore[override]
             return []
 
-    monkeypatch.setattr(ssl, "create_default_context", lambda *a, **k: _EmptyStore(ssl.PROTOCOL_TLS_CLIENT))
+    monkeypatch.setattr(
+        ssl, "create_default_context", lambda *a, **k: _EmptyStore(ssl.PROTOCOL_TLS_CLIENT)
+    )
     monkeypatch.setattr(basemap_mod, "_CA_BUNDLES", ("/nonexistent/ca.pem",))
 
     basemap_mod._tls_context.cache_clear()

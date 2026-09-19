@@ -58,6 +58,58 @@ from typing import NamedTuple
 from .. import __version__
 from ..core.mvt import Layer, decode_tile, dumps_layers, loads_layers
 
+#: OpenFreeMap planet TileJSON — its ``tiles`` array holds the current versioned template.
+DEFAULT_TILEJSON_URL = "https://tiles.openfreemap.org/planet"
+
+#: Sent on every tile request. OpenFreeMap asks for no API key, so the user agent is the
+#: only thing telling one client from another — which is how an operator reaches whoever is
+#: costing them bandwidth, and why a stub URL or a version that has drifted is worse than
+#: none at all. The version is the package's own :data:`~meshterm.__version__` rather than
+#: an ``importlib.metadata`` lookup: MeshTerm is routinely run straight from a checkout
+#: (this repo's venv, the PicoCalc's deploy) with no installed distribution to read, so the
+#: metadata call would be the one that raises, and it would be a second version to keep in
+#: step with the first. Built once at import because it never changes and cannot fail —
+#: the tile path is no place to discover either.
+_USER_AGENT = f"MeshTerm/{__version__} (+https://github.com/jpmartineau/MeshTerm; mesh node map)"
+
+#: How long a tile the source gave no answer about is left alone before it is asked for
+#: again. Long enough that a genuinely offline map isn't retrying every visible tile on a
+#: loop, short enough that a Wi-Fi blip costs a few seconds of missing streets rather than
+#: the rest of the session. It lives here, beside the source that failed to answer, because
+#: both surfaces that draw tiles wait out the same cooldown (see
+#: :meth:`meshterm.ui.map_screen.MapScreen._load` and the minimap's).
+TILE_RETRY_SECONDS = 20.0
+
+#: Fallback max tile zoom if the TileJSON doesn't declare one (OpenFreeMap serves 14).
+_DEFAULT_MAX_ZOOM = 14
+
+#: HTTP statuses that are the source *answering* "there is no such resource". Everything
+#: else — 429, 5xx, and every transport error — is the absence of an answer.
+_ABSENT_STATUSES = frozenset({404, 410})
+
+#: Ceiling on the decoded sidecar cache. Decoded tiles run ~2.4x the size of the bytes
+#: they came from, and unlike those bytes they can be rebuilt from what's already on disk,
+#: so this half of the cache is the half that gets a budget.
+_DEFAULT_MAX_DECODED_BYTES = 64 * 1024 * 1024
+
+#: How much must be written before the sidecar budget is checked again. The check walks
+#: the directory, which is slow on the SD card the PicoCalc runs from.
+_PRUNE_AFTER_BYTES = 8 * 1024 * 1024
+
+#: Decoded tiles held in RAM. A viewport spans at most a handful of tiles, so this covers
+#: the view plus the ring a pan or a zoom step reaches into, and little more — the PicoCalc
+#: has 100 MB of RAM in total and decoded layers are not small.
+_MEMO_TILES = 24
+
+#: How long a failed TileJSON resolve stands before the source will ask again. The PicoCalc
+#: brings its Wi-Fi up some 40 seconds into the boot, well after the app it was started
+#: alongside can reach the menu — so "offline" asked once at open is a verdict on the
+#: *device's boot order*, not on the network, and latching it costs the whole session's
+#: basemap. Long enough that a genuinely offline session isn't retrying into a void.
+_RESOLVE_RETRY_SECONDS = 30.0
+
+_log = logging.getLogger(__name__)
+
 
 #: Where the operating system keeps its CA bundle, most specific first. Only consulted when
 #: the default context came up empty (see :func:`_tls_context`) — macOS and Alpine put it at
@@ -110,58 +162,6 @@ def _tls_context() -> ssl.SSLContext | None:
     except Exception as exc:  # noqa: BLE001 - a broken store must not take the map with it
         _log.debug("could not build a TLS context, using urllib's default: %s", exc)
         return None
-
-#: OpenFreeMap planet TileJSON — its ``tiles`` array holds the current versioned template.
-DEFAULT_TILEJSON_URL = "https://tiles.openfreemap.org/planet"
-
-#: Sent on every tile request. OpenFreeMap asks for no API key, so the user agent is the
-#: only thing telling one client from another — which is how an operator reaches whoever is
-#: costing them bandwidth, and why a stub URL or a version that has drifted is worse than
-#: none at all. The version is the package's own :data:`~meshterm.__version__` rather than
-#: an ``importlib.metadata`` lookup: MeshTerm is routinely run straight from a checkout
-#: (this repo's venv, the PicoCalc's deploy) with no installed distribution to read, so the
-#: metadata call would be the one that raises, and it would be a second version to keep in
-#: step with the first. Built once at import because it never changes and cannot fail —
-#: the tile path is no place to discover either.
-_USER_AGENT = f"MeshTerm/{__version__} (+https://github.com/jpmartineau/MeshTerm; mesh node map)"
-
-#: How long a tile the source gave no answer about is left alone before it is asked for
-#: again. Long enough that a genuinely offline map isn't retrying every visible tile on a
-#: loop, short enough that a Wi-Fi blip costs a few seconds of missing streets rather than
-#: the rest of the session. It lives here, beside the source that failed to answer, because
-#: both surfaces that draw tiles wait out the same cooldown (see
-#: :meth:`meshterm.ui.map_screen.MapScreen._load` and the minimap's).
-TILE_RETRY_SECONDS = 20.0
-
-#: Fallback max tile zoom if the TileJSON doesn't declare one (OpenFreeMap serves 14).
-_DEFAULT_MAX_ZOOM = 14
-
-#: HTTP statuses that are the source *answering* "there is no such resource". Everything
-#: else — 429, 5xx, and every transport error — is the absence of an answer.
-_ABSENT_STATUSES = frozenset({404, 410})
-
-#: Ceiling on the decoded sidecar cache. Decoded tiles run ~2.4x the size of the bytes
-#: they came from, and unlike those bytes they can be rebuilt from what's already on disk,
-#: so this half of the cache is the half that gets a budget.
-_DEFAULT_MAX_DECODED_BYTES = 64 * 1024 * 1024
-
-#: How much must be written before the sidecar budget is checked again. The check walks
-#: the directory, which is slow on the SD card the PicoCalc runs from.
-_PRUNE_AFTER_BYTES = 8 * 1024 * 1024
-
-#: Decoded tiles held in RAM. A viewport spans at most a handful of tiles, so this covers
-#: the view plus the ring a pan or a zoom step reaches into, and little more — the PicoCalc
-#: has 100 MB of RAM in total and decoded layers are not small.
-_MEMO_TILES = 24
-
-#: How long a failed TileJSON resolve stands before the source will ask again. The PicoCalc
-#: brings its Wi-Fi up some 40 seconds into the boot, well after the app it was started
-#: alongside can reach the menu — so "offline" asked once at open is a verdict on the
-#: *device's boot order*, not on the network, and latching it costs the whole session's
-#: basemap. Long enough that a genuinely offline session isn't retrying into a void.
-_RESOLVE_RETRY_SECONDS = 30.0
-
-_log = logging.getLogger(__name__)
 
 
 class _Response(NamedTuple):

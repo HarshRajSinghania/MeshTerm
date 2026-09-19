@@ -78,6 +78,7 @@ def ble_unavailable_reason() -> str | None:
     """
     return _ble_unavailable
 
+
 #: Default seconds to watch for one *known* companion's advertisement while waiting for it to
 #: come back (see :func:`find_ble_device`). Deliberately longer than the startup scan: nothing
 #: is waiting on it, the watch ends the instant the device is heard, and a companion that just

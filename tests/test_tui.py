@@ -1371,9 +1371,7 @@ def test_device_picker_address_lane_is_the_one_that_adapts() -> None:
     # And where the name cannot fit whatever happens, the address is left whole rather
     # than ellipsized alongside it -- one cut in the row instead of two.
     sprawling = [
-        DiscoveredDevice(
-            "/dev/ttyUSB0", product="CP2102 USB to UART Bridge Controller", vid=0x10C4
-        )
+        DiscoveredDevice("/dev/ttyUSB0", product="CP2102 USB to UART Bridge Controller", vid=0x10C4)
     ]
     name_w, port_w = _lane_widths(sprawling, {})
     assert port_w == cell_len("/dev/ttyUSB0")
