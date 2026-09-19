@@ -44,17 +44,72 @@ from __future__ import annotations
 import json
 import logging
 import os
+import ssl
 import threading
 import time
 import urllib.error
 import urllib.request
 from collections import OrderedDict
 from collections.abc import Container
+from functools import lru_cache
 from pathlib import Path
 from typing import NamedTuple
 
 from .. import __version__
 from ..core.mvt import Layer, decode_tile, dumps_layers, loads_layers
+
+
+#: Where the operating system keeps its CA bundle, most specific first. Only consulted when
+#: the default context came up empty (see :func:`_tls_context`) — macOS and Alpine put it at
+#: ``/etc/ssl/cert.pem``, Debian and Ubuntu at ``ca-certificates.crt``, Fedora and RHEL under
+#: ``/etc/pki``, openSUSE at ``ca-bundle.pem``. Files rather than a bundled copy on purpose:
+#: these are the trust decisions the *machine's administrator* has made, kept current by the
+#: OS, and shipping our own would quietly freeze a snapshot of them into every release.
+_CA_BUNDLES = (
+    "/etc/ssl/cert.pem",
+    "/etc/ssl/certs/ca-certificates.crt",
+    "/etc/pki/tls/certs/ca-bundle.crt",
+    "/etc/ssl/ca-bundle.pem",
+)
+
+
+@lru_cache(maxsize=1)
+def _tls_context() -> ssl.SSLContext | None:
+    """The TLS context for tile fetches, with a CA bundle found if the default has none.
+
+    A frozen build can have no trust store to consult. Python's default context asks
+    OpenSSL for one, and on macOS and Linux that is a *filesystem path baked into the
+    interpreter's own build* — which need not exist on a machine that never installed that
+    Python, which is every machine a PyInstaller bundle lands on. Every tile fetch then
+    fails with ``CERTIFICATE_VERIFY_FAILED``; and because a refused fetch is
+    indistinguishable from empty terrain, the map drew no ground under the nodes and said
+    nothing about why. Windows is the exception that hid it for so long: its default
+    context reads the OS certificate store, so the binary there always worked.
+
+    So: keep the default when it actually loaded certificates, and otherwise point it at
+    the bundle the OS ships (:data:`_CA_BUNDLES`). Verification is never weakened — a map
+    tile is not worth teaching the app to skip certificate checks, and an unverified
+    fetcher here would be one import away from being reused somewhere it matters.
+
+    Returns:
+        A context to pass to ``urlopen``, or ``None`` to accept urllib's default — which
+        is right whenever that default already works, and is never worse than the failure
+        it replaces.
+    """
+    try:
+        context = ssl.create_default_context()
+        if context.get_ca_certs():
+            return None  # the platform store answered; leave urllib exactly as it was
+        for path in _CA_BUNDLES:
+            if os.path.isfile(path):
+                context.load_verify_locations(cafile=path)
+                _log.debug("no default CA store; verifying against %s", path)
+                return context
+        _log.debug("no CA bundle found in %s — TLS will likely fail", ", ".join(_CA_BUNDLES))
+        return None
+    except Exception as exc:  # noqa: BLE001 - a broken store must not take the map with it
+        _log.debug("could not build a TLS context, using urllib's default: %s", exc)
+        return None
 
 #: OpenFreeMap planet TileJSON — its ``tiles`` array holds the current versioned template.
 DEFAULT_TILEJSON_URL = "https://tiles.openfreemap.org/planet"
@@ -478,7 +533,7 @@ class BasemapSource:
         """
         req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
         try:
-            with urllib.request.urlopen(req, timeout=self._timeout) as resp:
+            with urllib.request.urlopen(req, timeout=self._timeout, context=_tls_context()) as resp:
                 body = resp.read()
                 declared = (resp.headers.get("Content-Length") or "").strip()
                 # A flaky link can end a read early without raising. A body short of its

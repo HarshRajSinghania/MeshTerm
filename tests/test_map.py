@@ -767,7 +767,7 @@ def test_basemap_sends_its_user_agent_on_every_fetch(tmp_path: Path) -> None:
     src = _offline_source(tmp_path / "cache")
     seen: list[urllib.request.Request] = []
 
-    def _urlopen(req: urllib.request.Request, timeout: float | None = None):
+    def _urlopen(req: urllib.request.Request, timeout: float | None = None, context=None):
         seen.append(req)
         raise urllib.error.URLError("no network in tests")
 
@@ -780,6 +780,80 @@ def test_basemap_sends_its_user_agent_on_every_fetch(tmp_path: Path) -> None:
 
     assert seen, "no request was ever built"
     assert seen[0].get_header("User-agent") == basemap_mod._USER_AGENT
+
+
+def test_basemap_keeps_the_default_tls_context_when_it_works() -> None:
+    """A working platform trust store is left alone — urllib's default is passed through."""
+    from meshterm.services import basemap as basemap_mod
+
+    basemap_mod._tls_context.cache_clear()
+    try:
+        assert basemap_mod._tls_context() is None
+    finally:
+        basemap_mod._tls_context.cache_clear()
+
+
+def test_basemap_finds_a_ca_bundle_when_the_default_store_is_empty(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An empty default store falls back to the OS CA bundle instead of failing every fetch.
+
+    THE macOS bug: a frozen build asks OpenSSL for a trust store at a filesystem path baked
+    into the interpreter's own build, which need not exist on a machine that never
+    installed that Python — which is every machine a PyInstaller bundle lands on. Fetches
+    then failed with ``CERTIFICATE_VERIFY_FAILED``, and because a refused fetch is
+    indistinguishable from empty terrain the map drew no ground under the nodes and said
+    nothing. Windows hid it by reading the OS certificate store in its default context.
+    """
+    import ssl
+
+    from meshterm.services import basemap as basemap_mod
+
+    # The file only has to exist: loading is recorded below rather than really parsed,
+    # so the test pins *which path is chosen* without depending on a PEM being around.
+    bundle = tmp_path / "cert.pem"
+    bundle.write_text("# stand-in for the OS bundle\n", encoding="utf-8")
+
+    loaded: list[str] = []
+
+    class _EmptyStore(ssl.SSLContext):
+        def get_ca_certs(self, binary_form: bool = False):  # type: ignore[override]
+            return []
+
+        def load_verify_locations(self, cafile=None, capath=None, cadata=None):  # type: ignore[override]
+            loaded.append(cafile or "")
+
+    monkeypatch.setattr(ssl, "create_default_context", lambda *a, **k: _EmptyStore(ssl.PROTOCOL_TLS_CLIENT))
+    monkeypatch.setattr(basemap_mod, "_CA_BUNDLES", (str(tmp_path / "nope.pem"), str(bundle)))
+
+    basemap_mod._tls_context.cache_clear()
+    try:
+        ctx = basemap_mod._tls_context()
+        assert ctx is not None, "no context built despite a readable bundle"
+        assert loaded == [str(bundle)]  # skipped the missing path, used the present one
+        assert ctx.verify_mode == ssl.CERT_REQUIRED  # never verified away to make it work
+    finally:
+        basemap_mod._tls_context.cache_clear()
+
+
+def test_basemap_never_disables_verification(monkeypatch: pytest.MonkeyPatch) -> None:
+    """With no bundle anywhere, the fetch still verifies — it fails rather than trusts."""
+    import ssl
+
+    from meshterm.services import basemap as basemap_mod
+
+    class _EmptyStore(ssl.SSLContext):
+        def get_ca_certs(self, binary_form: bool = False):  # type: ignore[override]
+            return []
+
+    monkeypatch.setattr(ssl, "create_default_context", lambda *a, **k: _EmptyStore(ssl.PROTOCOL_TLS_CLIENT))
+    monkeypatch.setattr(basemap_mod, "_CA_BUNDLES", ("/nonexistent/ca.pem",))
+
+    basemap_mod._tls_context.cache_clear()
+    try:
+        assert basemap_mod._tls_context() is None  # urllib's default, still verifying
+    finally:
+        basemap_mod._tls_context.cache_clear()
 
 
 def test_basemap_user_agent_needs_no_installed_distribution() -> None:
@@ -1127,7 +1201,7 @@ def test_basemap_http_get_separates_an_answer_from_silence(tmp_path: Path) -> No
             return False
 
     def _fake(result):
-        def _urlopen(_req, timeout=None):  # noqa: ANN001
+        def _urlopen(_req, timeout=None, context=None):  # noqa: ANN001
             if isinstance(result, Exception):
                 raise result
             return result
