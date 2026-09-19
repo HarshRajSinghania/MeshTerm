@@ -987,42 +987,45 @@ def _join_discord(cols: int, rows: int) -> Screen:
 def _diagnostics(cols: int, rows: int) -> Screen:
     """The Diagnostics page, carrying the widest values a real one can.
 
-    A deep Windows config directory and a connection error in the radio's own words are
-    the two fields with no natural bound, and both are here on purpose: this page folds
-    where the scripted face crops, so the fold is what has to survive 53 columns.
+    A deep Windows config directory and a connection error in the radio's own words are the
+    two fields with no natural bound, and both are here on purpose: a markdown list item
+    hangs its wrapped text under itself at any width, and that is what has to survive 53
+    columns.
     """
     from meshterm.ui.diagnostics import DiagnosticsPage
 
     return DiagnosticsPage(
-        _diagnostics_report(),
-        save_path=Path("C:/Users/somebody/.meshterm/meshterm-diagnostics.txt"),
+        _diagnostics_source(),
+        session=_GallerySession(cols, rows),
+        save_path=Path("C:/Users/somebody/.meshterm/meshterm-diagnostics.md"),
     )
 
 
-def _diagnostics_report():
-    """A representative diagnostics report, shaped exactly as the tool states one."""
+def _diagnostics_source() -> str:
+    """A representative diagnostics document, built the way the tool builds one."""
+    from datetime import datetime
+
+    from meshterm.tools.diagnostics import markdown_source
     from meshterm.ui import fields
     from meshterm.ui.report import Column, Facts, Lane, Listing
 
-    return (
+    report = (
         Facts(
             key="meshterm",
+            caption="Build",
             fields=(fields.word("meshterm", "meshterm"), fields.word("install", "install")),
             values={"meshterm": "0.3.7", "install": "frozen"},
         ),
         Facts(
-            key="host",
+            key="terminal",
+            caption="Terminal",
             fields=(
-                fields.word("os", "os"),
-                fields.word("python", "python"),
                 fields.word("terminal", "terminal"),
                 fields.word("terminal_size", "terminal_size"),
                 fields.flag("over_ssh", "over_ssh"),
                 fields.word("powerline", "powerline"),
             ),
             values={
-                "os": "Debian GNU/Linux 12 (bookworm)",
-                "python": "3.11.2",
                 "terminal": "Windows Terminal",
                 "terminal_size": "53x26",
                 "over_ssh": True,
@@ -1031,6 +1034,7 @@ def _diagnostics_report():
         ),
         Facts(
             key="device",
+            caption="Radio",
             fields=(
                 fields.flag("connected", "connected"),
                 fields.path("config_dir", "config_dir"),
@@ -1044,6 +1048,7 @@ def _diagnostics_report():
         ),
         Listing(
             key="tables",
+            caption="Stored rows",
             columns=(
                 fields.word("table", "TABLE"),
                 Column(key="rows", lanes=(Lane(header="ROWS", render=str, align="right"),)),
@@ -1052,10 +1057,12 @@ def _diagnostics_report():
         ),
         Listing(
             key="preferences",
+            caption="Changed preferences",
             columns=(fields.word("preference", "PREFERENCE"), fields.free("value", "VALUE")),
             rows=[{"preference": "log_level", "value": "DEBUG"}],
         ),
     )
+    return markdown_source(report, when=datetime(2026, 9, 19, 17, 0))
 
 
 def _share_qr(cols: int, rows: int) -> Screen:

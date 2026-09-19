@@ -1489,10 +1489,11 @@ $ meshterm diagnostics
 meshterm  0.3.7
 install   frozen
 
-os             Windows 11
-os_build       10.0.26100
-arch           AMD64
-python         3.13.1
+os        Windows 11
+os_build  10.0.26100
+arch      AMD64
+python    3.13.1
+
 terminal       Windows Terminal
 term           -
 colorterm      truecolor
@@ -1525,16 +1526,20 @@ runs_failed  3
 first_heard  8mo
 last_heard   now
 
-TABLE              ROWS
-observations     418203
-runs                912
-traces               47
-...
+TABLE           ROWS
+observations  418203
+runs             912
+traces            47
 
 PREFERENCE  VALUE
 log_level   DEBUG
 map_style   terrain
 ```
+
+The seven groups are the page's seven sections — build, host, terminal, radio, storage,
+stored rows, changed preferences. The command line shows them as blank-line-separated
+records, because that face is a stream to grep; the page and the saved file show them as
+markdown headings, because that one is a document to read.
 
 **The radio is asked but never required.** A report about a companion that will not connect
 is exactly the report most worth filing, so a failure to reach it becomes `connected no`
@@ -1553,7 +1558,7 @@ feature and not a habit: the block is designed to be pasted in public by somebod
 not read it, and `tests/test_diagnostics.py` plants real secrets in every store that holds
 one and fails if any of them — or a field merely *named* like one — reaches either face.
 
-Under `--json`, the three fact blocks merge into one flat object and the two listings keep
+Under `--json`, the five fact blocks merge into one flat object and the two listings keep
 a key of their own:
 
 ```json
@@ -1563,23 +1568,30 @@ a key of their own:
 **`--out PATH` writes it to a file instead of printing it**, and the answer becomes the
 path — the same trade `config export-key --out` makes, since a caller who asked for a file
 wants to be told where it is rather than handed the contents they just redirected into it.
-The file is always the plain block, even under `--json`: it exists to be attached to an
-issue and read by a person. Redirection still works and is not replaced; what `--out` adds
-is a file laid out at full width rather than folded to whatever the terminal happened to be.
 
 ```console
-$ meshterm diagnostics --out meshterm-diagnostics.txt
+$ meshterm diagnostics --out meshterm-diagnostics.md
 ✓ diagnostics written — attach it to the report.
-/home/jp/meshterm-diagnostics.txt
+/home/jp/meshterm-diagnostics.md
 ```
 
-In the menu this is the **Diagnostics** page under *This app*, drawn on a bare frame — no
-border, no header, no footer, no key hints — because a terminal is selected by dragging and
-every one of those is a character the clipboard would carry into the issue. Its one line of
-its own is `s  save this to a file`, which writes `meshterm-diagnostics.txt` into the config
-directory beside the log and then says so on that same line. A bare frame has nowhere else
-to advertise a key, and one trailing line after a blank row costs a paste far less than a
-border costs it on every line.
+**The file is markdown**, whichever face the run was printing, because an issue tracker
+renders markdown as written — no fence, no apology. Every value is a code span, so a
+Windows path's backslashes and a firmware error's asterisks arrive as themselves rather
+than as markdown. Redirection still works and is not replaced; `--out` is what gives you
+the document rather than the record stream.
+
+In the menu this is the **Diagnostics** page under *This app*, and it is one of the app's
+**written pages** — the same markdown renderer behind the About pages, drawing the same
+document the file holds. That buys what a long block most needs: its `##` headings are
+landmarks, so each pins to the top row while its own section scrolls under it and
+`^PgUp`/`^PgDn` step section by section.
+
+`s` saves, advertised in the footer hint on a desktop and on the lane's free **F3** slot on
+the PicoCalc — never in the page's body, which belongs to the report. It writes
+`meshterm-diagnostics.md` into the config directory beside the log, and answers in a popup
+naming the path. A write that fails says so in the same popup, in red, and leaves the page
+readable.
 
 #### `meshterm platform`
 

@@ -17,10 +17,11 @@ without naming anyone the reporter talks to. :func:`~meshterm.core.hostinfo.host
 own side, so it cannot be crossed here by accident.
 
 **One report, three faces**, which is the whole reason this is a report and not a
-``print``: the menu draws it on a bare frame with nothing around it to select by mistake
-(see :mod:`meshterm.ui.diagnostics`), ``meshterm diagnostics`` prints the same rows for
-anyone who would rather redirect than copy, and ``--json`` hands the same facts to
-whatever files the issue.
+``print``: the menu draws it as a written page (see :mod:`meshterm.ui.diagnostics`) and
+saves it as markdown, ``meshterm diagnostics`` prints the same facts as aligned records for
+anyone who would rather redirect than read, and ``--json`` hands them to whatever files the
+issue. The document face is the one that leaves this machine, so it is the one written in
+the format an issue tracker already renders.
 
 The device is asked but never required. A report about a radio that will not connect is
 exactly the report that most needs to be filed, so a failure to reach it becomes a fact in
@@ -29,6 +30,7 @@ the block (``connected``/``error``) rather than an error that replaces it.
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -44,13 +46,10 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 _ROLES = {1: "client", 2: "repeater", 3: "room server", 4: "sensor"}
 
 #: What the saved file is called, in the config directory beside the log it sits next to
-#: in a bug report. Named for the app rather than just ``diagnostics.txt`` because the one
+#: in a bug report. Named for the app rather than just ``diagnostics.md`` because the one
 #: thing that happens to this file is being moved somewhere else and attached, and by then
 #: the directory it came from is no longer saying what it is.
-#:
-#: ``.txt`` and not ``.md``: the content is aligned columns, which markdown would reflow
-#: into a paragraph, and a plain-text extension is the one every issue tracker accepts.
-DIAGNOSTICS_FILENAME = "meshterm-diagnostics.txt"
+DIAGNOSTICS_FILENAME = "meshterm-diagnostics.md"
 
 
 @register
@@ -88,12 +87,10 @@ class DiagnosticsTool(Tool):
     async def prompt_params(self, ctx: AppContext) -> dict[str, Any] | None:
         """Open the page in the menu; returning ``None`` completes with no run row.
 
-        The same shape the About pages use: the menu's whole interaction *is* the screen,
-        and a run row recording that somebody looked at their own version number would be
-        a line in the log for every glance. Saving from the page is likewise not a run:
-        the page writes the file itself and says so on its own last line, because a
-        confirmation dialog over a page whose entire point is being unobstructed would
-        cover the thing it was confirming.
+        The same shape the About pages use — and the same screen, since the page *is* one:
+        the menu's whole interaction is the reading of it, and a run row recording that
+        somebody looked at their own version number would be a line in the log for every
+        glance. Saving from the page is likewise not a run.
 
         Args:
             ctx: Shared application context.
@@ -103,7 +100,8 @@ class DiagnosticsTool(Tool):
         """
         from ..ui.diagnostics import open_diagnostics_page
 
-        await open_diagnostics_page(ctx, await build_report(ctx), save_path=default_path(ctx))
+        report = await build_report(ctx)
+        await open_diagnostics_page(ctx, markdown_source(report), save_path=default_path(ctx))
         return None
 
     async def run(self, ctx: AppContext, params: dict[str, Any]) -> ToolResult:
@@ -125,7 +123,7 @@ class DiagnosticsTool(Tool):
         if out is None:
             return ToolResult(summary={"tool": self.name}, report=report)
 
-        written = write_report(report, out)
+        written = write_markdown(markdown_source(report), out)
         ctx.ui.ack("[ok]✓[/ok] diagnostics written — attach it to the report.")
         return ToolResult(
             summary={"tool": self.name, "path": str(written)},
@@ -137,26 +135,68 @@ class DiagnosticsTool(Tool):
 async def build_report(ctx: AppContext) -> Report:
     """Gather every diagnostic fact, as the report both faces render.
 
-    Five blocks in the order a reader needs them: what this program is, what it is running
-    on, what it is drawing into, what radio it found, and how much history it has. The
-    three :class:`~meshterm.ui.report.Facts` blocks merge into one flat JSON object and the
-    two :class:`~meshterm.ui.report.Listing` blocks keep a key of their own, which is also
-    why the table counts are a listing — a table named after a fact would otherwise be able
-    to collide with it.
+    Seven blocks in the order a reader needs them: what this program is, what it is running
+    on, what it is drawing into, what radio it found, how much history it has, what that
+    history is made of, and what has been changed from the defaults. Each carries a
+    ``caption``, which is what the markdown face turns into the page's ``##`` landmarks.
+
+    The five :class:`~meshterm.ui.report.Facts` blocks merge into one flat JSON object and
+    the two :class:`~meshterm.ui.report.Listing` blocks keep a key of their own — which is
+    also why the table counts are a listing, since a table named after a fact would
+    otherwise be able to collide with it.
 
     Args:
         ctx: Shared application context.
 
     Returns:
-        The five-block report.
+        The seven-block report.
     """
     return (
         _app_facts(),
         _host_facts(),
+        _terminal_facts(),
         await _device_facts(ctx),
         _mesh_facts(ctx),
         _table_listing(ctx),
         _preference_listing(ctx),
+    )
+
+
+def markdown_source(report: Report, *, when: datetime | None = None) -> str:
+    """The whole block as a markdown document — the page's source, and the file's contents.
+
+    Markdown because both places this goes already speak it: the menu draws it through
+    :func:`~meshterm.ui.markdown.render_markdown`, the same renderer behind the About
+    pages, so the page gets real ``##`` landmarks that pin as it scrolls and that its
+    section jumps step by; and an issue tracker renders it as written, with no fence and
+    no apology. The command line keeps its aligned records — that face is a stream a
+    person greps, and headings are furniture on it.
+
+    Args:
+        report: The blocks to write out.
+        when: The moment to stamp in the colophon (defaults to now, local). Injectable so
+            the same report can be rendered twice and compared.
+
+    Returns:
+        Markdown source, ready for :func:`~meshterm.ui.markdown.render_markdown` or a file.
+    """
+    from .. import __version__
+    from ..ui.renderers import markdown_blocks
+
+    stamp = (when or datetime.now().astimezone()).strftime("%Y-%m-%d %H:%M")
+    return (
+        # The `#` title carries what the frame around it cannot — which is the same reason
+        # `about.md` has one and the other three written pages do not. The screen is already
+        # headed "Diagnostics"; repeating that would spend the page's first line saying
+        # nothing, while the version belongs at the top of a file somebody will open later.
+        # Emphasis makes it the muted qualifier beside the name.
+        f"# MeshTerm diagnostics *v{__version__}*\n\n"
+        # The standfirst sits flush and muted under the title, and says the one thing a
+        # reader needs before reading any of it: this is safe to hand over.
+        "Everything a bug report opens with. Nothing here is private.\n\n"
+        f"{markdown_blocks(report)}\n\n"
+        "---\n\n"
+        f"Taken {stamp}.\n"
     )
 
 
@@ -170,29 +210,27 @@ def default_path(ctx: AppContext) -> Path:
     return ctx.settings.config_dir / DIAGNOSTICS_FILENAME
 
 
-def write_report(report: Report, path: Path | str) -> Path:
-    """Write a report's plain rendering to ``path``, creating its directory.
+def write_markdown(source: str, path: Path | str) -> Path:
+    """Write a markdown document to ``path``, creating its directory.
 
-    **Always the plain face**, whatever the run was printing. A file exists here to be
-    attached to an issue and read by a person, and a document of the same facts helps that
-    person less than the block does; anyone who wants the machine face can redirect
-    ``--json`` and already has a better filename for it than this one.
+    **Always markdown**, whatever face the run was printing. This file exists to be
+    attached to an issue and read there, and an issue tracker renders markdown; anyone who
+    wants the machine face can redirect ``--json`` and already has a better name for that
+    file than this one.
 
     Args:
-        report: The block to write.
+        source: The document, from :func:`markdown_source`.
         path: The destination.
 
     Returns:
-        The path written, resolved.
+        The path written.
 
     Raises:
         OSError: If the directory cannot be made or the file cannot be written.
     """
-    from ..ui.renderers import render_to_text
-
     written = Path(path)
     written.parent.mkdir(parents=True, exist_ok=True)
-    written.write_text(render_to_text(report), encoding="utf-8")
+    written.write_text(source, encoding="utf-8")
     return written
 
 
@@ -219,6 +257,7 @@ def _app_facts() -> Any:
 
     return Facts(
         key="meshterm",
+        caption="Build",
         fields=(
             fields.word("meshterm", "meshterm"),
             fields.word("install", "install"),
@@ -228,12 +267,38 @@ def _app_facts() -> Any:
 
 
 def _host_facts() -> Any:
-    """The machine and the terminal, including every verdict resolved once at boot.
+    """The machine underneath: which OS, which build, which processor, which Python."""
+    from ..core import hostinfo
+    from ..ui import fields
+    from ..ui.report import Facts
 
-    The boot-time verdicts are the point of this block. Whether icons draw, whether the
-    path widget's separators draw, which platform flavour resolved and *why* — each is
-    decided from the environment before the first frame, none is visible on any screen,
-    and each is the answer to a whole family of "it looks wrong" reports.
+    machine = hostinfo.host()
+    return Facts(
+        key="host",
+        caption="Host",
+        fields=(
+            fields.word("os", "os"),
+            fields.word("os_build", "os_build"),
+            fields.word("arch", "arch"),
+            fields.word("python", "python"),
+        ),
+        values={
+            "os": machine.os,
+            "os_build": machine.os_build,
+            "arch": machine.arch,
+            "python": machine.python,
+        },
+    )
+
+
+def _terminal_facts() -> Any:
+    """The terminal, and every verdict about it resolved once at boot.
+
+    Its own section rather than more host facts, because these are what a "it looks wrong"
+    report is actually about, and a reader skimming for them should not have to pass the
+    processor architecture on the way. Whether icons draw, whether the path widget's
+    separators draw, which platform flavour resolved and *why* — each is decided from the
+    environment before the first frame and none of it is visible on any screen.
     """
     from ..core import hostinfo
     from ..platforms import get_platform
@@ -241,17 +306,14 @@ def _host_facts() -> Any:
     from ..ui.report import Facts
     from ..ui.termfont import detect_terminal_font, emoji_support, powerline_support
 
-    machine, term = hostinfo.host(), hostinfo.terminal()
+    term = hostinfo.terminal()
     emoji = emoji_support()
     powerline = powerline_support()
     font = detect_terminal_font()
     return Facts(
-        key="host",
+        key="terminal",
+        caption="Terminal",
         fields=(
-            fields.word("os", "os"),
-            fields.word("os_build", "os_build"),
-            fields.word("arch", "arch"),
-            fields.word("python", "python"),
             fields.word("terminal", "terminal"),
             fields.word("term", "term"),
             fields.word("colorterm", "colorterm"),
@@ -264,10 +326,6 @@ def _host_facts() -> Any:
             fields.word("powerline", "powerline"),
         ),
         values={
-            "os": machine.os,
-            "os_build": machine.os_build,
-            "arch": machine.arch,
-            "python": machine.python,
             "terminal": term.program,
             "term": term.term,
             "colorterm": term.colorterm,
@@ -340,6 +398,7 @@ async def _device_facts(ctx: AppContext) -> Any:
 
     return Facts(
         key="device",
+        caption="Radio",
         fields=(
             fields.flag("connected", "connected"),
             fields.word("transport", "transport"),
@@ -375,6 +434,7 @@ def _mesh_facts(ctx: AppContext) -> Any:
     first, last = ctx.repo.observation_span()
     return Facts(
         key="mesh",
+        caption="Storage",
         fields=(
             fields.path("config_dir", "config_dir"),
             fields.integer("db_size_kb", "db_size_kb"),
@@ -412,6 +472,7 @@ def _table_listing(ctx: AppContext) -> Any:
     counts = ctx.repo.table_counts()
     return Listing(
         key="tables",
+        caption="Stored rows",
         columns=(fields.word("table", "TABLE"), Column(key="rows", lanes=(_rows_lane(),))),
         rows=[{"table": name, "rows": n} for name, n in counts.items()],
     )
@@ -431,6 +492,7 @@ def _preference_listing(ctx: AppContext) -> Any:
     preferences = ctx.preferences or current()
     return Listing(
         key="preferences",
+        caption="Changed preferences",
         columns=(fields.word("preference", "PREFERENCE"), fields.free("value", "VALUE")),
         rows=[
             {"preference": key, "value": str(value)}

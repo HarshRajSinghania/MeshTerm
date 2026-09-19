@@ -19,12 +19,6 @@ one caveat SemVer makes for a leading zero: while the major version is still `0`
   are the questions an issue thread otherwise asks one at a time, and the person who hit the
   bug is the one least able to answer them.
 
-  - **The page is a bare frame** — no border, no header, no footer, no key hints. Not a
-    style choice: a terminal is selected by dragging, so every one of those is a character
-    the clipboard carries into the issue. A long value hangs under its own block rather than
-    being cropped, which is the one place the page and the command line lay the same facts
-    out differently.
-
   - **Nothing in it is private.** No pairing PIN, no admin password, no channel secret, no
     private key, no position, and no contact's name or key. The mesh is described in
     **aggregate** — a row count per table and the span the observations cover — which is the
@@ -42,22 +36,35 @@ one caveat SemVer makes for a leading zero: while the major version is still `0`
     somewhere, so a table added later starts being reported the day it lands — and the
     interesting count is always the table nobody expected to be full.
 
-  - **It saves to a file, for attaching rather than pasting.** `s` on the page writes
-    `meshterm-diagnostics.txt` into the config directory beside the log, and says so on the
-    page's own last line rather than in a dialog over the block you were about to read.
+  - **It is one of the app's written pages.** The block is markdown, drawn through the same
+    renderer behind the About pages and saved as the same document, so what you read and
+    what you attach are one source. Its `##` headings are landmarks: each pins to the top
+    row while its own section scrolls under it, and `^PgUp`/`^PgDn` step section by section.
+    Every value is a code span, so a Windows path's backslashes and a firmware error's
+    asterisks arrive as themselves rather than as markdown.
+
+  - **It saves, for attaching rather than pasting.** `s` writes `meshterm-diagnostics.md`
+    into the config directory beside the log, and answers in a popup naming the path; a
+    write that fails says so in the same popup, in red, and leaves the page readable. The
+    key is advertised in the footer hint on a desktop and on the lane's free **F3** slot on
+    the PicoCalc — never in the page's body, which belongs to the report.
     `meshterm diagnostics --out PATH` does the same from a shell, spelled the way
-    `config export-key --out` already spells it. The file is always the plain block, even
-    under `--json` — it exists to be read by a person — and it is laid out at full width, so
-    nothing is folded to whatever the terminal happened to be.
+    `config export-key --out` already spells it.
 
 ### Changed
 
-- `--json` and the plain face grew a shared projection for a set of facts
-  (`ui/renderers.facts_pairs`), so the Diagnostics page cannot drift from what
-  `meshterm diagnostics` prints: a field added to the report reaches both without anyone
-  remembering to. A path also gained the lane constructor it never had
-  (`ui/fields.path`) — the machine face had always spelled one correctly and the plain
-  face could not render one at all.
+- **A report has a third face.** `ui/renderers.markdown_blocks` projects any report as
+  markdown sections — the *document* face, where the other two are a record stream and a
+  machine document. It is what the seam was built for: no tool was touched and no report
+  changed. A block may now carry a `caption`, the heading a format that *has* headings
+  draws above it; plain and JSON ignore it, and markdown makes it a `##`.
+
+  Rows are a list rather than a table, and that was measured: a markdown table's cells are
+  cropped with an ellipsis at a narrow width, and a diagnostics page whose one long value is
+  cut is missing the half that mattered.
+
+- A path gained the lane constructor it never had (`ui/fields.path`) — the machine face had
+  always spelled one correctly and the plain face could not render one at all.
 
 ## [0.9.0] — 2026-09-22
 

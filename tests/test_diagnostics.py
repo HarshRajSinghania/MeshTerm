@@ -27,8 +27,16 @@ from meshterm.core.device_store import DeviceStore
 from meshterm.core.models import Contact
 from meshterm.core.preferences import Preferences
 from meshterm.persistence.repository import Repository
-from meshterm.tools.diagnostics import build_report
-from meshterm.ui.renderers import JsonRenderer, PlainRenderer, facts_pairs
+from meshterm.tools.diagnostics import build_report, markdown_source
+from meshterm.ui import fields
+from meshterm.ui.about import AboutPage
+from meshterm.ui.markdown import render_markdown
+from meshterm.ui.renderers import (
+    JsonRenderer,
+    PlainRenderer,
+    facts_pairs,
+    markdown_blocks,
+)
 from meshterm.ui.report import Facts, Listing
 
 #: Planted into the stores that really hold this kind of value. Each is the kind of thing
@@ -197,115 +205,163 @@ def test_the_page_and_the_command_line_state_the_same_facts(ctx: AppContext) -> 
                 assert value in printed
 
 
-def test_the_page_draws_no_chrome(ctx: AppContext) -> None:
-    """The page is bare, and its rows start in column zero.
+def test_the_page_is_a_written_page_with_landmarks(ctx: AppContext) -> None:
+    """The page is markdown through the About-page renderer, and its sections are landmarks.
 
-    Both are the same requirement seen twice: a terminal is selected by dragging, so a
-    border, a header or a leading indent is a character the clipboard carries into the
-    issue.
+    The sections are the point of the format: a heading pins to the top row while its own
+    rows scroll under it, the section jumps step by them, and the PicoCalc lane earns its
+    ``Sect up``/``Sect down`` pair for the same reason a grouped list does.
     """
     page = _page(ctx)
-    assert page.bare is True
-    lines = [_strip(line) for line in page.render_body(72)]
-    content = [line for line in lines if line.strip()]
-    assert content, "the page should have drawn something"
-    assert not content[0].startswith(" ")
+    assert isinstance(page, AboutPage)
+    assert page.bare is False
+    assert {"Build", "Host", "Terminal", "Radio", "Storage"} <= set(page._doc.sections)
+
+
+def test_the_save_is_advertised_on_both_platforms(ctx: AppContext) -> None:
+    """The verb is named in the footer hint and on the lane's one free slot.
+
+    Never in the page's body, which belongs to the report — and never nowhere, which is
+    what a bare frame would have forced. F1/F2 are the section pair and F4/F5 the pager,
+    so F3 is the slot the About pages leave free.
+    """
+    from meshterm.ui.diagnostics import SAVE_ACTION, SAVE_KEY
+
+    page = _page(ctx)
+    assert f"{SAVE_KEY} save" in page.footer_hint
+    assert page.footer_hint.endswith("Esc back")
+    assert page.fkey_lane[2] is not None
+    assert page.fkey_lane[2].label == "Save"
+    assert page.fkey_lane[2].action == SAVE_ACTION
 
 
 # --- saving it ------------------------------------------------------------------------
 
 
-def test_the_saved_file_is_what_the_command_line_prints(ctx: AppContext, tmp_path: Path) -> None:
-    """The file holds the plain block, drawn wide enough that no lane is cropped.
+def test_the_saved_file_is_the_document_the_page_shows(ctx: AppContext, tmp_path: Path) -> None:
+    """The file holds the very markdown the page was built from — one source, two places."""
+    from meshterm.tools.diagnostics import markdown_source, write_markdown
 
-    Always the plain face, whatever the run was printing: this file exists to be attached
-    to an issue and read by a person.
-    """
-    from meshterm.tools.diagnostics import write_report
-
-    report = _report(ctx)
-    written = write_report(report, tmp_path / "out.txt")
-    saved = written.read_text(encoding="utf-8")
-    assert saved.strip()
-    for block in report:
-        if isinstance(block, Facts):
-            for key, value in facts_pairs(block):
-                assert key in saved
-                assert value in saved
+    source = markdown_source(_report(ctx))
+    written = write_markdown(source, tmp_path / "out.md")
+    assert written.read_text(encoding="utf-8") == source
+    assert source.startswith("# MeshTerm diagnostics")
 
 
 def test_saving_creates_the_directory_it_needs(ctx: AppContext, tmp_path: Path) -> None:
     """A destination whose parent does not exist yet is made rather than refused."""
-    from meshterm.tools.diagnostics import write_report
+    from meshterm.tools.diagnostics import markdown_source, write_markdown
 
-    written = write_report(_report(ctx), tmp_path / "nested" / "deeper" / "out.txt")
+    written = write_markdown(markdown_source(_report(ctx)), tmp_path / "a" / "b" / "out.md")
     assert written.is_file()
 
 
-def test_the_page_advertises_the_save_key_then_reports_where_it_went(
+def test_the_key_and_the_chip_both_save_and_answer_in_a_popup(
     ctx: AppContext, tmp_path: Path
 ) -> None:
-    """The page names its one key, and answers on the same line once it is pressed.
+    """Either affordance writes the file and reports the path in an acknowledgement popup.
 
-    A bare frame has no footer to advertise a key from, so the page carries the hint
-    itself — and the confirmation replaces it rather than opening a dialog over the block
-    the reader is about to copy.
+    The chip dispatches the same action the key does, so it is not a second implementation
+    of the same verb.
+    """
+    from meshterm.ui.diagnostics import SAVE_ACTION, SAVE_KEY
+
+    for trigger, target in ((("text", SAVE_KEY), "key.md"), ((SAVE_ACTION, ""), "chip.md")):
+        path = tmp_path / target
+        session = _Session()
+        page = _page(ctx, session=session, save_path=path)
+        page.handle(*trigger)
+        assert path.is_file()
+        assert len(session.messages) == 1
+        assert "\u2713" in session.messages[0]
+        assert str(path) in session.messages[0]
+
+
+def test_a_save_that_fails_is_reported_not_raised(ctx: AppContext, tmp_path: Path) -> None:
+    """An unwritable destination reports itself and leaves the page readable.
+
+    The page is still there to be read and copied off, which is the fallback that matters,
+    so a failed write must never take it down. The mark is also what turns the popup red.
     """
     from meshterm.ui.diagnostics import SAVE_KEY
 
-    target = tmp_path / "saved" / "meshterm-diagnostics.txt"
-    page = _page(ctx, save_path=target)
-    assert "save this to a file" in _body(page)
-
-    page.handle("text", SAVE_KEY)
-    assert target.is_file()
-    # Matched in two parts because a tmp_path is long enough to wrap the status line,
-    # which is the line behaving correctly rather than a failure.
-    body = _body(page)
-    assert "saved to" in body
-    assert target.name in body
-    assert "save this to a file" not in body
-
-
-def test_a_save_that_fails_is_said_on_the_page_not_raised(ctx: AppContext, tmp_path: Path) -> None:
-    """An unwritable destination leaves the block readable and explains itself.
-
-    The block on screen is still copyable, which is the whole reason that path exists
-    alongside the file — so a failed write must never take the page down with it.
-    """
-    from meshterm.ui.diagnostics import SAVE_KEY
-
-    # A path whose "directory" is an existing file: mkdir and write both refuse, on
-    # every OS, without needing permissions the suite cannot count on.
+    # A path whose "directory" is an existing file: mkdir and write both refuse, on every
+    # OS, without needing permissions the suite cannot count on.
     blocker = tmp_path / "blocker"
     blocker.write_text("not a directory", encoding="utf-8")
-    page = _page(ctx, save_path=blocker / "inside" / "out.txt")
+    session = _Session()
+    page = _page(ctx, session=session, save_path=blocker / "inside" / "out.md")
 
     page.handle("text", SAVE_KEY)
-    body = _body(page)
-    assert "could not save" in body
-    assert "meshterm" in body  # the block itself is untouched
+    assert "\u2717" in session.messages[0]
+    assert "could not save" in session.messages[0]
+    assert "Build" in _body(page)  # the page itself is untouched
 
 
-def test_the_save_key_is_the_only_letter_the_page_claims(ctx: AppContext, tmp_path: Path) -> None:
-    """Any other letter falls through to the scroll handler rather than doing something."""
-    page = _page(ctx, save_path=tmp_path / "out.txt")
+def test_a_held_save_key_does_not_stack_popups(ctx: AppContext, tmp_path: Path) -> None:
+    """One save at a time: a second press while one is in flight is ignored."""
+    from meshterm.ui.diagnostics import SAVE_KEY
+
+    session = _Session(defer=True)
+    page = _page(ctx, session=session, save_path=tmp_path / "out.md")
+    page.handle("text", SAVE_KEY)
+    page.handle("text", SAVE_KEY)
+    assert len(session.started) == 1
+
+
+def test_another_letter_falls_through_to_the_pager(ctx: AppContext, tmp_path: Path) -> None:
+    """Any other letter is the scroll handler's, not the save's."""
+    session = _Session()
+    page = _page(ctx, session=session, save_path=tmp_path / "out.md")
     page.handle("text", "q")
-    assert not (tmp_path / "out.txt").exists()
-    assert "save this to a file" in _body(page)
+    assert not (tmp_path / "out.md").exists()
+    assert session.messages == []
 
 
-def test_an_empty_listing_is_drawn_by_neither_face() -> None:
-    """A listing with no rows is absent from the page exactly as it is from the output.
+# --- the markdown face ------------------------------------------------------------------
 
-    The two faces must not disagree about whether a section exists: a reader comparing a
-    pasted block against their own would otherwise read the difference as meaningful.
+#: A value that is markdown in every direction: backslashes markdown reads as escapes,
+#: asterisks and underscores it reads as emphasis. None of it may be reinterpreted.
+_HOSTILE = r"C:\Users\*jp*\_meshterm_"
+
+
+def test_every_value_survives_markdown_untouched() -> None:
+    """Values are code spans, so a path's backslashes and stars arrive as themselves.
+
+    A path, or an error message a stranger's firmware wrote, is not markdown and must never
+    be silently read as it. A value already holding a backtick gets a longer fence.
     """
-    from meshterm.ui.diagnostics import render_report
+    source = markdown_blocks(
+        (
+            Facts(
+                key="x",
+                caption="X",
+                fields=(fields.word("p", "p"), fields.word("q", "q")),
+                values={"p": _HOSTILE, "q": "a `backtick` inside"},
+            ),
+        )
+    )
+    drawn = _render(render_markdown(source))
+    assert _HOSTILE in drawn
+    assert "a `backtick` inside" in drawn
 
-    empty = (Listing(key="preferences", columns=(), rows=[]),)
-    assert _plain(empty).strip() == ""
-    assert _render(render_report(empty)).strip() == ""
+
+def test_a_caption_becomes_the_section_heading() -> None:
+    """A block's caption is its ``##``; a block without one is drawn with no heading."""
+    assert markdown_blocks((Facts(key="x", caption="Radio", fields=()),)).startswith("## Radio")
+    assert not markdown_blocks((Facts(key="x", fields=()),)).startswith("#")
+
+
+def test_an_empty_section_says_so_rather_than_vanishing() -> None:
+    """An absence is a fact here: "no preferences changed" is something to act on.
+
+    The plain face drops an empty listing because a record stream has nothing to say about
+    one. A document does — a section silently missing only raises the question of whether
+    it was ever built.
+    """
+    empty = Listing(key="preferences", caption="Changed preferences", columns=(), rows=[])
+    assert markdown_blocks((empty,)).endswith("*none*")
+    assert "none" in _render(render_markdown(markdown_blocks((empty,))))
 
 
 # --- the host probe -------------------------------------------------------------------
@@ -443,12 +499,45 @@ def _strip(line: str) -> str:
     return re.sub(r"\x1b\[[0-9;]*m", "", line)
 
 
-def _page(ctx: AppContext, *, save_path: Path | None = None):
+class _Session:
+    """A session stand-in that runs the save flow inline and records the popup.
+
+    ``run_detached`` is where the real session hands a key handler's flow to the event
+    loop; here it simply runs it, so a test can press a key and assert on what the reader
+    would have been shown. ``defer`` holds the coroutine instead, for the one test that
+    needs a save still in flight.
+    """
+
+    def __init__(self, *, defer: bool = False) -> None:
+        """Start with nothing shown and nothing started."""
+        self.messages: list[str] = []
+        self.started: list[object] = []
+        self._defer = defer
+
+    def invalidate(self) -> None:
+        """A repaint request, which a test has no screen to repaint."""
+
+    def run_detached(self, work):
+        """Run the flow now (or bank it, with ``defer``)."""
+        self.started.append(work)
+        if self._defer:
+            work.close()
+            return None
+        return asyncio.run(work)
+
+    async def message_dialog(self, message, *, title: str = "") -> None:
+        """Record what the acknowledgement popup would have said."""
+        self.messages.append(str(message))
+
+
+def _page(ctx: AppContext, *, session: _Session | None = None, save_path: Path | None = None):
     """The page over this context's report, saving wherever the caller wants."""
     from meshterm.ui.diagnostics import DiagnosticsPage
 
-    target = save_path or (ctx.settings.config_dir / "meshterm-diagnostics.txt")
-    return DiagnosticsPage(_report(ctx), save_path=target)
+    target = save_path or (ctx.settings.config_dir / "meshterm-diagnostics.md")
+    return DiagnosticsPage(
+        markdown_source(_report(ctx)), session=session or _Session(), save_path=target
+    )
 
 
 def _body(page) -> str:

@@ -33,6 +33,7 @@ compartment inside it.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from enum import Enum
@@ -61,44 +62,71 @@ class OutputFormat(str, Enum):
     JSON = "json"
 
 
-#: How wide a report is drawn when it is going into a *file* rather than onto a terminal.
-#: Wide enough that no lane ever crops — a saved report exists to be complete, and the
-#: table sizes each column to its content, so nothing is padded out to this either.
-FILE_WIDTH = 200
+def markdown_blocks(report: Report | None) -> str:
+    """Project a report as markdown sections — the third face, and the only *document* one.
 
+    The plain face is a stream of records and the machine face is a document for a
+    program; this one is a page for a person to read, on a screen through
+    :func:`~meshterm.ui.markdown.render_markdown` and in an issue tracker through nothing
+    at all. It is where :attr:`~meshterm.ui.report.Block.caption` finally means something:
+    markdown has headings, and a heading is what a reader navigates by.
 
-def render_to_text(report: Report | None, fmt: OutputFormat = OutputFormat.PLAIN) -> str:
-    """Render a report to a string, for writing somewhere that is not a terminal.
+    Every value is written as **inline code**, and that is correctness rather than taste. A
+    Windows path is full of backslashes, which markdown reads as escapes, and an error
+    message a stranger's firmware wrote can hold an asterisk or a bracket. Inside a code
+    span none of it is interpreted, so the value that arrives is the value that left — the
+    same reason :func:`~meshterm.ui.script.name` quotes what it cannot vouch for. A value
+    already holding a backtick gets a longer fence rather than a broken one.
 
-    The same renderers, on a capture console: a file gets exactly what the corresponding
-    face would have printed, so there is no third rendering to keep in step with the other
-    two. No colour, no highlighting and no markup interpretation — a node's name can
-    contain a bracket, and a file is read by things that do not speak SGR.
+    Rows are a **list**, not a table, and that was measured rather than assumed: a markdown
+    table's cells are cropped with an ellipsis when the frame is narrow, and a diagnostics
+    page whose one long value is cut is missing the half that mattered. A list item wraps
+    and hangs under its own text at any width.
 
     Args:
-        report: The report to render, or ``None`` for nothing at all.
-        fmt: Which face to write.
+        report: The blocks to project, or ``None`` for nothing at all.
 
     Returns:
-        The rendered text, newline-terminated where it has any content.
+        Markdown source: one ``##`` section per captioned block, blank-line separated.
     """
-    console = Console(
-        width=FILE_WIDTH,
-        color_system=None,
-        highlight=False,
-        markup=False,
-        emoji=False,
-        # A capture must not consult the real terminal for its width or its legs.
-        force_terminal=False,
-    )
-    with console.capture() as captured:
-        for_format(fmt, console).render(report)
-    # Rich pads every cell out to its column's width, which is invisible on a terminal and
-    # is trailing whitespace on disk — noise in a diff, and something a reader pasting the
-    # file onward has to strip. The written pages already do the same (see
-    # ``tools.about._rendered_page``).
-    text = "\n".join(line.rstrip() for line in captured.get().splitlines())
-    return f"{text}\n" if text.strip() else ""
+    sections: list[str] = []
+    for block in report or ():
+        rows = _markdown_rows(block)
+        head = f"## {block.caption}\n\n" if block.caption else ""
+        # A section with nothing in it still says so. An absence is a fact here — "no
+        # preferences changed" is something a maintainer can act on, where a section
+        # silently missing only raises the question of whether it was ever built.
+        sections.append(head + ("\n".join(rows) if rows else "*none*"))
+    return "\n\n".join(sections)
+
+
+def _markdown_rows(block: Block) -> list[str]:
+    """One markdown list item per row of a block."""
+    if isinstance(block, Facts):
+        return [f"- **{key}** — {_code(value)}" for key, value in facts_pairs(block)]
+    lanes = block.lanes()
+    if not lanes:
+        return []
+    items: list[str] = []
+    for row in block.rows:
+        # The first lane names the record and the rest describe it, which is what a
+        # two-lane listing (a table and its count, a preference and its value) wants and
+        # what a wider one degrades to gracefully.
+        cells = [lane.render(row.get(column.key)) for column, lane in lanes]
+        described = " · ".join(_code(cell) for cell in cells[1:])
+        items.append(f"- **{cells[0]}** — {described}" if described else f"- **{cells[0]}**")
+    return items
+
+
+def _code(value: str) -> str:
+    """One value as a markdown code span, fenced long enough to survive its own backticks."""
+    if not value:
+        return ""
+    longest = max((len(run) for run in re.findall(r"`+", value)), default=0)
+    fence = "`" * (longest + 1)
+    # A span that starts or ends with a backtick needs a space the parser then eats.
+    pad = " " if value.startswith("`") or value.endswith("`") else ""
+    return f"{fence}{pad}{value}{pad}{fence}"
 
 
 def facts_pairs(block: Facts) -> list[tuple[str, str]]:

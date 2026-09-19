@@ -155,6 +155,13 @@ class Block:
 
     Attributes:
         key: The name this block goes under in a multi-block document.
+        caption: The heading a format that *has* headings draws above this block. The
+            plain face has none — a heading over a key/value block is furniture on a
+            line-oriented face, which is why ``config show`` drops even its column
+            headers — and the machine face has ``key`` instead. The markdown projection
+            makes it a ``##`` section, which is what gives a written page the landmarks
+            its section jumps and its sticky headings step by. Empty means the block is
+            drawn without one.
         plain_only: Whether this block is a rendering for a person that the machine face
             has no use for. The one case is a stream's closing summary: ``monitor`` prints
             a per-node aggregate under its live capture, and a consumer holding every
@@ -164,6 +171,7 @@ class Block:
     """
 
     key: str
+    caption: str = ""
     plain_only: bool = False
 
 
