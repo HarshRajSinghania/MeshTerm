@@ -153,6 +153,36 @@ def _where(device: DiscoveredDevice) -> str:
     return device.target
 
 
+def _fit_target(text: str, width: int) -> str:
+    """Fit a connection target into ``width`` cells, keeping its **end**.
+
+    Deliberately not :func:`~meshterm.ui.menus.fit_cells`, which keeps the head: what tells
+    two targets apart is their *tail* — ``usbmodem1101`` from ``usbmodem1102``,
+    ``ttyUSB0`` from ``ttyUSB1`` — while the head they share (``/dev/cu.``) is boilerplate.
+    Cutting the front is the cut that leaves the column able to do its one job in a picker,
+    and cutting the back would render two different ports identically. A CoreBluetooth UUID
+    is equally identifiable from either end, so the rule that is right for ports costs the
+    platform that needed the cap nothing.
+
+    Args:
+        text: The target to fit.
+        width: The cells available. Text already inside it is returned unchanged, so the
+            platforms that never reach :data:`_ADDRESS_MAX` are untouched.
+
+    Returns:
+        The target, or its tail behind a leading ``…``, measuring at most ``width`` cells.
+    """
+    if cell_len(text) <= width:
+        return text
+    keep = max(0, width - 1)  # the leading ellipsis costs a cell
+    tail = ""
+    for ch in reversed(text):
+        if cell_len(tail) + cell_len(ch) > keep:
+            break
+        tail = ch + tail
+    return "…" + tail
+
+
 def _hardware_label(device: DiscoveredDevice, registry: dict[str, RememberedDevice]) -> str:
     """The HARDWARE column text: the remembered firmware model, else the USB vendor.
 
@@ -670,6 +700,15 @@ async def _remove_network_device(
 #: Below this a model string says nothing at all, and the lane is better spent on the name.
 _HARDWARE_MIN = 10
 
+#: The widest the PORT / ADDRESS lane may grow before it ellipsizes (see :func:`_fit_target`).
+#: A MAC is 17 cells and ``/dev/ttyUSB0`` is 12, so Windows and Linux never reach this and
+#: are untouched by it. macOS is why it exists: CoreBluetooth reports no MAC at all but a
+#: per-machine 36-cell UUID, and even its serial ports run long
+#: (``/dev/cu.Bluetooth-Incoming-Port`` is 31). Uncapped, one of those ate the row —
+#: :func:`_name_width` sizes DEVICE from what this lane leaves, so a 36-cell address
+#: squeezed the name down to the width of its own heading and the interesting columns with it.
+_ADDRESS_MAX = 20
+
 
 def _name_width(
     devices: list[DiscoveredDevice], registry: dict[str, RememberedDevice], other_lanes: int
@@ -765,7 +804,7 @@ def _build_items(
     port_label = (
         "PORT / ADDRESS" if has_serial and has_address else "ADDRESS" if has_address else "PORT"
     )
-    port_w = max(cell_len(_where(d)) for d in devices)
+    port_w = min(max(cell_len(_where(d)) for d in devices), _ADDRESS_MAX)
     port_w = max(port_w, len(port_label))
     # The TYPE column holds a small transport badge (at most 3 cells); its heading is wider,
     # so the four-cell "TYPE" label sets the column width and every badge pads out to it.
@@ -806,7 +845,7 @@ def _build_items(
             style="device.known" if is_known else "",
         )
         row.append("  ")
-        row.append(_pad(_where(device), port_w), style="muted")
+        row.append(_pad(_fit_target(_where(device), port_w), port_w), style="muted")
         row.append("  ")
         # The TYPE badge marks the transport: a plug emoji for serial, or the Bluetooth rune
         # on its blue badge for BLE. It's built with its own colours, then the column is

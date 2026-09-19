@@ -1323,6 +1323,44 @@ def test_device_picker_builds_aligned_columns(tmp_path) -> None:
     assert device_rows[0].index("COM5") == device_rows[1].index("/dev/ttyUSB0")
 
 
+def test_device_picker_address_lane_gives_way_to_the_interesting_columns() -> None:
+    """A long target ellipsizes from the left instead of eating the DEVICE lane.
+
+    macOS is why: CoreBluetooth reports no MAC but a per-machine 36-cell UUID, and even
+    its serial ports run long. Uncapped, one address sized the lane and ``_name_width``
+    sized DEVICE from what was left — so the name shrank to the width of its own heading
+    and took HARDWARE down with it. Cutting the *front* is what keeps the lane useful:
+    what tells two targets apart is their tail.
+    """
+    from rich.cells import cell_len
+
+    from meshterm.core.discovery import DiscoveredDevice
+    from meshterm.ui.device_picker import _ADDRESS_MAX, _fit_target, _name_width
+
+    # Short targets are returned untouched, so Windows and Linux never notice the cap.
+    for short in ("COM3", "/dev/ttyUSB0", "C6:B6:26:BC:7F:09", "/dev/cu.usbmodem1101"):
+        assert _fit_target(short, _ADDRESS_MAX) == short
+
+    # A long one is cut at the head and fits the lane it was given.
+    uuid = "12345678-1234-1234-1234-123456789ABC"
+    fitted = _fit_target(uuid, _ADDRESS_MAX)
+    assert cell_len(fitted) <= _ADDRESS_MAX
+    assert fitted.startswith("…") and fitted.endswith("123456789ABC")
+
+    # THE property the cut direction exists for: sibling ports stay tellable apart.
+    assert _fit_target("/dev/cu.usbmodem1101", 14) != _fit_target("/dev/cu.usbmodem1102", 14)
+
+    # And the lane the address was stealing comes back.
+    devices = [
+        DiscoveredDevice(transport="ble", address=uuid, name="MeshCore-Johnputer Wardriver"),
+        DiscoveredDevice("/dev/cu.Bluetooth-Incoming-Port"),
+    ]
+    uncapped = max(cell_len(d.target) for d in devices)
+    assert _name_width(devices, {}, min(uncapped, _ADDRESS_MAX) + 4) > _name_width(
+        devices, {}, uncapped + 4
+    )
+
+
 def test_device_picker_names_and_sorts_known_devices(tmp_path) -> None:
     """A confirmed device shows its node name (in white), sorts to the top, and marks type."""
     from meshterm.core.device_store import DeviceStore
