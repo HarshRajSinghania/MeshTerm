@@ -18,7 +18,13 @@ import typer
 
 from ..context import AppContext
 from ..core import exitcodes
-from ..core.discovery import TRANSPORT_MOCK, DiscoveredDevice, discover_all, discover_devices
+from ..core.discovery import (
+    TRANSPORT_MOCK,
+    DiscoveredDevice,
+    ble_unavailable_reason,
+    discover_all,
+    discover_devices,
+)
 from .base import Tool, ToolResult, register
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -72,6 +78,18 @@ class DevicesTool(Tool):
         remembered = ctx.device_store.load()
         active = ctx.selected_device
         active_target = ctx.ble_override or ctx.port_override or (active.target if active else None)
+
+        # A refused Bluetooth scan is not the same as a quiet one, and the difference is
+        # invisible in the listing — both simply lack BLE rows. Say so whether or not
+        # anything else was found: a serial board being present does not make a companion
+        # the reader expected over Bluetooth any less missing.
+        blocked = ble_unavailable_reason()
+        if blocked:
+            from ..ui import script
+
+            script.stderr_console().print(
+                f"meshterm: Bluetooth not scanned — {blocked}", style="warn", highlight=False
+            )
 
         if not devices:
             # Not an error: the scan ran and found nothing. Said on stderr so a caller

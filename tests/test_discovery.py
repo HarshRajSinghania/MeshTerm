@@ -263,6 +263,50 @@ async def test_discover_ble_survives_no_adapter(monkeypatch: pytest.MonkeyPatch)
 
     monkeypatch.setattr(bleak, "BleakScanner", _BoomScanner, raising=False)
     assert await discovery.discover_ble_devices(timeout=0.0) == []
+    # A hiccup is not something the reader can act on, so it leaves no reason behind.
+    assert discovery.ble_unavailable_reason() is None
+
+
+async def test_discover_ble_records_a_refusal_the_user_can_fix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A denied scan keeps bleak's sentence instead of reading as "nothing nearby".
+
+    On macOS this is the routine case, not an exotic one: Bluetooth is granted to the
+    terminal running MeshTerm, so an ungranted terminal — and every SSH session, which
+    macOS refuses to even prompt in — scans successfully and hears nothing at all.
+    """
+    import bleak
+
+    import meshterm.core.discovery as discovery
+
+    not_available = pytest.importorskip("bleak.exc").BleakBluetoothNotAvailableError
+
+    class _DeniedScanner:
+        @staticmethod
+        async def discover(timeout: float, return_adv: bool):
+            raise not_available("Bluetooth access is denied by the user", 2)
+
+    monkeypatch.setattr(bleak, "BleakScanner", _DeniedScanner, raising=False)
+    assert await discovery.discover_ble_devices(timeout=0.0) == []
+    reason = discovery.ble_unavailable_reason()
+    assert reason is not None and "denied" in reason
+
+    # And it describes the latest attempt, never a stale one.
+    monkeypatch.setattr(bleak, "BleakScanner", _empty_scanner(), raising=False)
+    assert await discovery.discover_ble_devices(timeout=0.0) == []
+    assert discovery.ble_unavailable_reason() is None
+
+
+def _empty_scanner():
+    """A scanner that works and simply hears nothing — the "not a fault" case."""
+
+    class _Quiet:
+        @staticmethod
+        async def discover(timeout: float, return_adv: bool):
+            return {}
+
+    return _Quiet
 
 
 # -- device store --------------------------------------------------------------
@@ -496,13 +540,55 @@ def test_resolve_bad_tcp_endpoint_raises() -> None:
 
 
 def test_resolve_ambiguous_raises(tmp_path: Path) -> None:
-    """Multiple devices with no usable default raise a guidance error."""
+    """Two plausible companions with no usable default raise a guidance error."""
     devices = [
-        DiscoveredDevice("COM3", serial_number="SN1"),
-        DiscoveredDevice("COM4", serial_number="SN2"),
+        DiscoveredDevice("COM3", vid=0x303A, pid=0x1001, serial_number="SN1"),
+        DiscoveredDevice("COM4", vid=0x10C4, pid=0xEA60, serial_number="SN2"),
     ]
     with pytest.raises(DeviceSelectionError, match="Multiple companion devices"):
         resolve_device(devices, None)
+
+
+def test_resolve_ignores_implausible_ports_when_one_board_is_present() -> None:
+    """One real board among ports that look like nothing still resolves to the board.
+
+    This is the macOS case: every Mac permanently presents two virtual ``/dev/cu.*``
+    ports with no USB VID/PID, so counting them meant a Mac with a single companion
+    attached saw three devices and refused to choose — auto-detection could never fire
+    on that platform.
+    """
+    board = DiscoveredDevice("/dev/cu.usbmodem1101", vid=0x303A, pid=0x1001)
+    devices = [
+        board,
+        DiscoveredDevice("/dev/cu.Bluetooth-Incoming-Port"),
+        DiscoveredDevice("/dev/cu.debug-console"),
+    ]
+    res = resolve_device(devices, None)
+    assert res.target == board.target and res.source == "only"
+
+
+def test_resolve_lone_unrecognized_device_still_resolves() -> None:
+    """A single adapter we can't place still connects — an unlisted VID is usually real."""
+    lone = DiscoveredDevice("COM9", vid=0x1234, pid=0x0001)
+    assert not lone.is_likely_lora
+    res = resolve_device([lone], None)
+    assert res.target == "COM9" and res.source == "only"
+
+
+def test_resolve_several_implausible_ports_does_not_call_them_companions() -> None:
+    """Ports that look like nothing are not reported as "multiple companion devices".
+
+    A bare Mac with no companion attached reaches here with its two virtual ports, and
+    being told it has several companions — and asked to pick one of them — is the least
+    true answer available.
+    """
+    devices = [
+        DiscoveredDevice("/dev/cu.Bluetooth-Incoming-Port"),
+        DiscoveredDevice("/dev/cu.debug-console"),
+    ]
+    with pytest.raises(DeviceSelectionError, match="No companion devices detected among") as err:
+        resolve_device(devices, None)
+    assert "Multiple companion devices" not in str(err.value)
 
 
 def test_resolve_no_devices_raises() -> None:

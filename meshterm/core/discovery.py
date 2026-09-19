@@ -53,6 +53,31 @@ BLE_NAME_PREFIX = "MeshCore"
 #: advertisement, short enough not to stall the startup splash noticeably.
 BLE_SCAN_TIMEOUT_S = 5.0
 
+try:  # bleak >= 3 only; the floor in pyproject is 0.22, so this must not be assumed
+    from bleak.exc import BleakBluetoothNotAvailableError as _BleakNotAvailable
+
+    _BLE_NOT_AVAILABLE: tuple[type[BaseException], ...] = (_BleakNotAvailable,)
+except Exception:  # noqa: BLE001 - older bleak, or bleak absent entirely
+    # An empty tuple in ``except`` matches nothing, so older installs fall straight through
+    # to the broad handler and behave exactly as they did before.
+    _BLE_NOT_AVAILABLE = ()
+
+#: Why the last BLE scan could not run, when the cause is something the reader can act on
+#: (Bluetooth off; on macOS, permission not granted to the terminal running us). ``None``
+#: when the scan worked — including when it simply heard nothing, which is not a fault.
+_ble_unavailable: str | None = None
+
+
+def ble_unavailable_reason() -> str | None:
+    """Why the last BLE scan was refused, if it was, as a sentence fit to show the reader.
+
+    Returns:
+        The reason the most recent :func:`discover_ble_devices` could not scan, or ``None``
+        if it ran — whether or not it found anything. Reset at the start of every scan, so
+        it always describes the latest attempt rather than a stale one.
+    """
+    return _ble_unavailable
+
 #: Default seconds to watch for one *known* companion's advertisement while waiting for it to
 #: come back (see :func:`find_ble_device`). Deliberately longer than the startup scan: nothing
 #: is waiting on it, the watch ends the instant the device is heard, and a companion that just
@@ -393,6 +418,9 @@ async def discover_ble_devices(timeout: float = BLE_SCAN_TIMEOUT_S) -> list[Disc
     Returns:
         Discovered BLE companions (deduplicated by address), sorted by name.
     """
+    global _ble_unavailable
+    _ble_unavailable = None
+
     try:
         from bleak import BleakScanner
     except ImportError:  # bleak not installed → BLE simply unavailable
@@ -400,6 +428,16 @@ async def discover_ble_devices(timeout: float = BLE_SCAN_TIMEOUT_S) -> list[Disc
 
     try:
         found = await BleakScanner.discover(timeout=timeout, return_adv=True)
+    except _BLE_NOT_AVAILABLE as exc:
+        # A *state the reader can fix* — Bluetooth switched off, or (on macOS, routinely)
+        # the terminal running us has not been granted Bluetooth. That is not the "no
+        # adapter / driver hiccup" the broad catch below is for, and returning [] silently
+        # made it indistinguishable from "nothing is nearby": the one message that would
+        # have told the user what to do was thrown away at debug level, under a log that
+        # defaults to WARNING. Keep the sentence bleak wrote — it already names the remedy.
+        _ble_unavailable = str(getattr(exc, "args", [None])[0] or exc)
+        _log.warning("BLE unavailable: %s", _ble_unavailable)
+        return []
     except Exception as exc:  # noqa: BLE001 - no adapter / OS Bluetooth off / driver hiccup
         _log.debug("BLE scan unavailable: %s", exc)
         return []

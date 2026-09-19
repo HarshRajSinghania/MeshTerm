@@ -112,9 +112,17 @@ def resolve_device(
     3. ``explicit_port`` (an explicit ``--port``).
     4. A TCP profile's ``host:port``, or a serial profile's ``port``.
     5. The remembered "last known good" device, if it is currently attached/in range.
-    6. The single attached device, if exactly one is present.
+    6. The single *likely-LoRa* device, if exactly one is present — a port whose USB
+       vendor marks it a board or bridge, or a BLE/TCP endpoint. Ports that look like
+       nothing in particular are ignored at this step, because a platform may present
+       some unconditionally (every Mac carries two) and they would otherwise make the
+       count ambiguous forever.
+    7. The single attached device, if exactly one is present and *none* looked likely —
+       so an unrecognized-but-real adapter still resolves.
 
-    Otherwise a :class:`DeviceSelectionError` is raised listing the candidates.
+    Otherwise a :class:`DeviceSelectionError` is raised listing the candidates: the
+    likely ones where there are any, else everything attached under a message that does
+    not claim they are companions.
 
     Args:
         devices: Currently discovered devices (serial and/or BLE).
@@ -155,7 +163,23 @@ def resolve_device(
         if match is not None:
             return Resolution(match.target, match, "remembered", match.transport)
 
-    if len(devices) == 1:
+    # Prefer the devices that actually look like companions. macOS is why this matters:
+    # every Mac permanently presents /dev/cu.Bluetooth-Incoming-Port and
+    # /dev/cu.debug-console, which carry no USB VID/PID and so score "unknown". Counting
+    # them put `len(devices) == 1` out of reach there — a Mac with exactly one real board
+    # attached saw three devices and refused to choose, so auto-detection could never fire
+    # on that platform and every Mac user met "Multiple companion devices detected" on a
+    # first run. Which device is plausible is already known, and already printed in the
+    # listing below as "[likely LoRa]"; this decides with it instead of only saying it.
+    likely = [d for d in devices if d.is_likely_lora]
+
+    if len(likely) == 1:
+        return Resolution(likely[0].target, likely[0], "only", likely[0].transport)
+
+    # Nothing recognizable: fall back to the whole list rather than narrowing to nothing,
+    # so a lone *unrecognized* adapter — a UART bridge carrying a VID we don't list, which
+    # is a real board more often than not — still connects exactly as it always has.
+    if not likely and len(devices) == 1:
         return Resolution(devices[0].target, devices[0], "only", devices[0].transport)
 
     if not devices:
@@ -164,9 +188,20 @@ def resolve_device(
             "or pass --port / --ble explicitly, or use --mock for the simulator."
         )
 
+    if not likely:
+        # Several ports attached, none of them plausible. "Multiple companion devices" is
+        # simply false here: on a bare Mac it names two virtual ports that are not
+        # companions at all, and then tells the reader to choose one of them.
+        raise DeviceSelectionError(
+            "No companion devices detected among the attached ports.\n"
+            f"{_format_device_list(devices)}\n"
+            "Connect a companion device (USB or Bluetooth), or pass --port / --ble "
+            "explicitly if one of these is your companion, or use --mock for the simulator."
+        )
+
     raise DeviceSelectionError(
         "Multiple companion devices detected and no default to fall back on.\n"
-        f"{_format_device_list(devices)}\n"
+        f"{_format_device_list(likely)}\n"
         "Choose one with --port <PORT> or --ble <ADDRESS> (or run 'meshterm devices' to "
         "inspect them). The chosen device is remembered as the default after it connects."
     )

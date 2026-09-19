@@ -1305,7 +1305,20 @@ class MeshCoreDevice(Device):
         """
         from meshcore import BLEConnection
 
-        connection = BLEConnection(address=self._address, device=self._ble_device, pin=self._pin)
+        # Withhold the PIN on macOS. Handed one, ``BLEConnection.connect`` calls bleak's
+        # ``client.pair()``, and CoreBluetooth has no pairing API at all — the macOS
+        # backend raises ``NotImplementedError`` outright — whereupon the library
+        # disconnects and re-raises, so supplying a *correct* PIN is what breaks the
+        # connection. Apple's model is that pairing is the OS's to run, not ours: the
+        # companion firmware puts its UART characteristic at ENC+MITM
+        # (``SECMODE_ENC_WITH_MITM`` on nRF52, ``ESP_GATT_PERM_*_ENC_MITM`` on ESP32), so
+        # the unbonded subscribe below is answered with "Insufficient Authentication",
+        # and macOS reacts by running Passkey Entry and prompting for the code itself.
+        # Saying nothing here is therefore what *lets* a PIN-protected companion bond;
+        # the OS keeps the bond, and later connections need no PIN. Windows and Linux do
+        # expose explicit pairing, and keep it (see :meth:`_pair_ble_windows`).
+        pin = None if sys.platform == "darwin" else self._pin
+        connection = BLEConnection(address=self._address, device=self._ble_device, pin=pin)
         mc = mesh_core(
             connection,
             default_timeout=self._connect_timeout,
