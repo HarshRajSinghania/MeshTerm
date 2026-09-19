@@ -167,11 +167,22 @@ def launch_command() -> str:
     invocation alone, which the README itself suggests doing. So every ``MESHTERM_*``
     variable currently set is carried across, and the reopened-session marker with them.
 
-    ``exec`` so the shell replaces itself: the window then holds MeshTerm and nothing else,
-    and closing MeshTerm closes the window rather than dropping to a prompt.
+    The variables ride on ``/usr/bin/env`` rather than on a ``VAR=value`` prefix, and that
+    is not a stylistic choice. Terminal's own handling of the string is not something to
+    lean on: measured on macOS 26, the same command line runs under ``RunCommandAsShell``
+    *false* and fails under *true*, where Terminal takes the whole thing as the name of a
+    program and puts this on the screen::
+
+        Command not found: MESHTERM_REOPENED=1
+        Could not create a new process and open a pseudo-tty
+
+    ``env`` is a real executable, so it is a valid argv *and* a valid shell line, and the
+    window cannot land on that message however Terminal decides to read it. ``env`` execs
+    the program in its own place, so nothing lingers behind it either — the window holds
+    MeshTerm and nothing else, and closing MeshTerm does not drop to a prompt.
 
     Returns:
-        A ``sh`` command line.
+        A command line Terminal can run with or without a shell.
     """
     carried = {name: value for name, value in os.environ.items() if name.startswith("MESHTERM_")}
     carried[REOPENED_ENV] = "1"
@@ -179,7 +190,7 @@ def launch_command() -> str:
         f"{name}={shlex.quote(value)}" for name, value in sorted(carried.items())
     )
     program = " ".join(shlex.quote(part) for part in own_command())
-    return f"{assignments} exec {program}"
+    return f"/usr/bin/env {assignments} {program}"
 
 
 def build_profile(command: str | None = None) -> dict[str, object]:
@@ -229,13 +240,60 @@ def build_profile(command: str | None = None) -> dict[str, object]:
         "ShowActiveProcessInTitle": True,
         "ShowDimensionsInTitle": False,
         "ShowWindowSettingsNameInTitle": False,
+        # Close the window when MeshTerm exits cleanly, and keep it when it does not --
+        # a crash the reader never sees is a bug report nobody can write.
+        "shellExitAction": 1,
     }
     for key, (_slot, _label, rgb) in zip(_ANSI_KEYS, _VT_SLOTS, strict=True):
         profile[key] = ns_color(rgb)
     if command is not None:
         profile["CommandString"] = command
+        # False, measured. Under *true* Terminal takes the whole string as a program name
+        # and the window says "Command not found: ..."; under false it runs. The opposite
+        # of what the key's name suggests, which is why it is written down.
         profile["RunCommandAsShell"] = False
     return profile
+
+
+def launcher_path() -> Path:
+    """The little script the profile runs, beside the profile itself."""
+    from .config import default_config_dir
+
+    return default_config_dir() / "launch.sh"
+
+
+def write_launcher() -> Path:
+    """Write the launcher, and return where it landed.
+
+    This exists for one reason, and it is the finding that shaped this module. Terminal
+    names an imported settings set **after the file** — ``MeshTerm.terminal`` becomes the
+    profile "MeshTerm" — and re-importing the *same bytes* reuses that profile, while
+    importing **different** bytes under the same filename creates "MeshTerm 1", then
+    "MeshTerm 2". Measured, by opening one file four times: three identical imports left
+    one profile, and the fourth, one word different, left two.
+
+    So the command cannot live in the profile. It carries ``sys.argv`` and the reader's
+    ``MESHTERM_*`` variables, which differ between ``meshterm`` and ``meshterm --mock``,
+    and a profile per command line would fill the reader's settings list with junk that
+    only they can remove.
+
+    Moving the variable part behind a fixed path fixes it exactly: the profile says
+    ``~/.meshterm/launch.sh`` and never changes, and this file underneath it says whatever
+    this launch happens to need.
+
+    Returns:
+        The path written, executable.
+    """
+    path = launcher_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "#!/bin/sh\n"
+        "# Written by MeshTerm each time it reopens itself. Safe to delete.\n"
+        f"exec {launch_command()}\n",
+        encoding="utf-8",
+    )
+    path.chmod(0o755)
+    return path
 
 
 def profile_path() -> Path:
@@ -330,6 +388,10 @@ def reopen() -> bool:
     The new window is not a child in any meaningful sense: the caller exits immediately
     afterwards and the two never talk.
 
+    Two files, not one: the launcher carries what varies and the profile points at it, so
+    the profile's bytes are the same on every launch and Terminal reuses the one settings
+    set instead of adding a numbered copy. :func:`write_launcher` has the measurement.
+
     Returns:
         Whether ``open`` was launched. ``False`` leaves the caller exactly where it was,
         so a failure here is a detour and never a dead end.
@@ -337,7 +399,8 @@ def reopen() -> bool:
     if not available():
         return False
     try:
-        path = write_profile(command=launch_command())
+        launcher = write_launcher()
+        path = write_profile(command=str(launcher))
     except OSError:
         return False
     try:

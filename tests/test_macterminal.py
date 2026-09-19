@@ -61,6 +61,47 @@ def test_the_window_is_opaque_and_bold_is_not_brightness() -> None:
     assert profile["BackgroundColor"] == macterminal.ns_color("#000000")
     assert "BackgroundBlur" not in profile
     assert profile["UseBrightBold"] is False
+    # Tidy itself away on a clean exit, stay put on a crash the reader needs to read.
+    assert profile["shellExitAction"] == 1
+
+
+def test_the_profile_is_the_same_bytes_whatever_the_command_line() -> None:
+    """The finding that shaped the module, pinned.
+
+    Terminal names an imported settings set after the *file*, reuses it when the bytes
+    match, and adds "MeshTerm 1" when they do not. So the profile must not carry anything
+    that varies between launches — the launcher path is fixed, and the varying command
+    lives in the file it points at.
+    """
+    import plistlib
+
+    plain = plistlib.dumps(macterminal.build_profile("/Users/x/.meshterm/launch.sh"))
+    again = plistlib.dumps(macterminal.build_profile("/Users/x/.meshterm/launch.sh"))
+
+    assert plain == again
+    # And what actually goes in is a path, never an argv or an environment.
+    profile = macterminal.build_profile("/Users/x/.meshterm/launch.sh")
+    assert profile["CommandString"] == "/Users/x/.meshterm/launch.sh"
+    assert "--mock" not in str(profile["CommandString"])
+    assert "MESHTERM_" not in str(profile["CommandString"])
+
+
+def test_the_launcher_carries_the_command_and_is_executable(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """What varies lives here instead, regenerated on every launch."""
+    monkeypatch.setenv("MESHTERM_HOME", str(tmp_path / "home"))
+    monkeypatch.setattr(sys, "argv", ["meshterm", "--mock"])
+
+    path = macterminal.write_launcher()
+    body = path.read_text(encoding="utf-8")
+
+    assert path.name == "launch.sh"
+    assert body.startswith("#!/bin/sh")
+    assert "exec /usr/bin/env " in body
+    assert body.rstrip().endswith("--mock")
+    if sys.platform != "win32":  # NTFS has no execute bit for chmod to set
+        assert path.stat().st_mode & 0o111
 
 
 def test_a_bare_profile_runs_nothing() -> None:
@@ -95,8 +136,11 @@ def test_launch_command_carries_meshterm_variables_and_the_marker(
     assert f"{REOPENED_ENV}=1" in command
     # Quoted, because the reader's path may contain a space and the shell would split it.
     assert "MESHTERM_HOME='/Users/someone/meshterm test'" in command
-    assert command.split("exec ", 1)[1].endswith("--mock")
-    assert " exec " in command
+    assert command.endswith("--mock")
+    # A real executable, not a `VAR=value` shell prefix: measured on macOS 26, Terminal
+    # reads the string as a bare program name under one setting and as a shell line under
+    # the other, and a prefix puts "Command not found: MESHTERM_REOPENED=1" on the screen.
+    assert command.startswith("/usr/bin/env ")
 
 
 def test_an_unrelated_variable_is_not_carried(monkeypatch: pytest.MonkeyPatch) -> None:
