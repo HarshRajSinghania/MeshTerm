@@ -17,6 +17,7 @@ from pathlib import Path
 
 import pytest
 from rich.console import Console
+from rich.text import Text
 
 from meshterm.context import AppContext
 from meshterm.core import hostinfo
@@ -298,6 +299,26 @@ def test_a_save_that_fails_is_reported_not_raised(ctx: AppContext, tmp_path: Pat
     assert "Build" in _body(page)  # the page itself is untouched
 
 
+def test_the_popup_carries_its_tone_as_spans_not_as_markup(ctx: AppContext, tmp_path: Path) -> None:
+    """The message is a styled Text, so no tag is ever printed and the border reads right.
+
+    A markup *string* reaches this dialog unparsed: the reader sees the literal tags and a
+    failure is framed in the success colour, because the border is picked from the
+    message's spans. The mark carries the tone; nothing else needs to.
+    """
+    from meshterm.ui.diagnostics import SAVE_KEY
+    from meshterm.ui.tui.session import _message_border
+
+    for target, expected in ((tmp_path / "ok.md", "accent"), (_blocked(tmp_path), "err")):
+        session = _Session(keep=True)
+        page = _page(ctx, session=session, save_path=target)
+        page.handle("text", SAVE_KEY)
+        message = session.shown[0]
+        assert isinstance(message, Text)
+        assert "[/" not in message.plain and "[ok]" not in message.plain
+        assert _message_border(message) == expected
+
+
 def test_a_held_save_key_does_not_stack_popups(ctx: AppContext, tmp_path: Path) -> None:
     """One save at a time: a second press while one is in flight is ignored."""
     from meshterm.ui.diagnostics import SAVE_KEY
@@ -494,6 +515,18 @@ def _console(width: int) -> Console:
     return Console(width=width, color_system=None, highlight=False, markup=False)
 
 
+def _blocked(tmp_path: Path) -> Path:
+    """A destination no OS will accept: a "directory" that is really a file.
+
+    Refused by both the mkdir and the write, everywhere, without needing permissions the
+    suite cannot count on.
+    """
+    blocker = tmp_path / "blocker"
+    if not blocker.exists():
+        blocker.write_text("not a directory", encoding="utf-8")
+    return blocker / "inside" / "out.md"
+
+
 def _strip(line: str) -> str:
     """One rendered line with its SGR runs removed."""
     return re.sub(r"\x1b\[[0-9;]*m", "", line)
@@ -508,11 +541,13 @@ class _Session:
     needs a save still in flight.
     """
 
-    def __init__(self, *, defer: bool = False) -> None:
+    def __init__(self, *, defer: bool = False, keep: bool = False) -> None:
         """Start with nothing shown and nothing started."""
         self.messages: list[str] = []
+        self.shown: list[object] = []
         self.started: list[object] = []
         self._defer = defer
+        self._keep = keep
 
     def invalidate(self) -> None:
         """A repaint request, which a test has no screen to repaint."""
@@ -528,6 +563,8 @@ class _Session:
     async def message_dialog(self, message, *, title: str = "") -> None:
         """Record what the acknowledgement popup would have said."""
         self.messages.append(str(message))
+        if self._keep:
+            self.shown.append(message)
 
 
 def _page(ctx: AppContext, *, session: _Session | None = None, save_path: Path | None = None):

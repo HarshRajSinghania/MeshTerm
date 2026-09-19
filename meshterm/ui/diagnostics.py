@@ -26,6 +26,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from rich.text import Text
+
 from .about import AboutPage
 from .markdown import render_markdown
 
@@ -117,23 +119,33 @@ class DiagnosticsPage(AboutPage):
 
         self._session.run_detached(run())
 
-    def _write(self) -> str:
-        """Write the document, and say what happened in one marked-up line.
+    def _write(self) -> Text:
+        """Write the document, and say what happened as the popup's message.
 
-        The message carries its own mark — ``✓`` or ``✗`` — which is also what tells the
-        popup which border to take, so a failed write arrives red without anything here
-        naming a colour.
+        A :class:`~rich.text.Text` with real spans rather than a markup string: the dialog
+        draws the message as given and reads its *spans* to pick a border tone (see
+        ``session._message_border``), so markup left as text would both print its own tags
+        and leave a failure framed in the success colour.
+
+        Only the **mark** is styled — ``✓`` or ``✗``, the app's own ok/err pair — which is
+        enough for the border to read the tone and leaves the path itself in body ink,
+        where it stays legible. That is what the mark is for.
         """
         from ..tools.diagnostics import write_markdown
 
+        message = Text()
         try:
             written = write_markdown(self._source, self._save_path)
         except OSError as exc:
             # A read-only home, a full disk, a path that is not there. The page itself is
             # untouched and still readable, which is the fallback that matters.
-            reason = exc.strerror or str(exc)
-            return f"[err]✗[/err] could not save to {self._save_path}\n{reason}"
-        return f"[ok]✓[/ok] saved to\n{written}"
+            message.append("✗ ", style="err")
+            message.append(f"could not save to\n{self._save_path}\n\n")
+            message.append(exc.strerror or str(exc), style="muted")
+            return message
+        message.append("✓ ", style="ok")
+        message.append(f"saved to\n{written}")
+        return message
 
 
 async def open_diagnostics_page(ctx: AppContext, source: str, *, save_path: Path) -> None:
