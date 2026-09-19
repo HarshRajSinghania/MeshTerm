@@ -204,14 +204,95 @@ def test_the_page_draws_no_chrome(ctx: AppContext) -> None:
     border, a header or a leading indent is a character the clipboard carries into the
     issue.
     """
-    from meshterm.ui.diagnostics import DiagnosticsPage
-
-    page = DiagnosticsPage(_report(ctx))
+    page = _page(ctx)
     assert page.bare is True
     lines = [_strip(line) for line in page.render_body(72)]
     content = [line for line in lines if line.strip()]
     assert content, "the page should have drawn something"
     assert not content[0].startswith(" ")
+
+
+# --- saving it ------------------------------------------------------------------------
+
+
+def test_the_saved_file_is_what_the_command_line_prints(ctx: AppContext, tmp_path: Path) -> None:
+    """The file holds the plain block, drawn wide enough that no lane is cropped.
+
+    Always the plain face, whatever the run was printing: this file exists to be attached
+    to an issue and read by a person.
+    """
+    from meshterm.tools.diagnostics import write_report
+
+    report = _report(ctx)
+    written = write_report(report, tmp_path / "out.txt")
+    saved = written.read_text(encoding="utf-8")
+    assert saved.strip()
+    for block in report:
+        if isinstance(block, Facts):
+            for key, value in facts_pairs(block):
+                assert key in saved
+                assert value in saved
+
+
+def test_saving_creates_the_directory_it_needs(ctx: AppContext, tmp_path: Path) -> None:
+    """A destination whose parent does not exist yet is made rather than refused."""
+    from meshterm.tools.diagnostics import write_report
+
+    written = write_report(_report(ctx), tmp_path / "nested" / "deeper" / "out.txt")
+    assert written.is_file()
+
+
+def test_the_page_advertises_the_save_key_then_reports_where_it_went(
+    ctx: AppContext, tmp_path: Path
+) -> None:
+    """The page names its one key, and answers on the same line once it is pressed.
+
+    A bare frame has no footer to advertise a key from, so the page carries the hint
+    itself — and the confirmation replaces it rather than opening a dialog over the block
+    the reader is about to copy.
+    """
+    from meshterm.ui.diagnostics import SAVE_KEY
+
+    target = tmp_path / "saved" / "meshterm-diagnostics.txt"
+    page = _page(ctx, save_path=target)
+    assert "save this to a file" in _body(page)
+
+    page.handle("text", SAVE_KEY)
+    assert target.is_file()
+    # Matched in two parts because a tmp_path is long enough to wrap the status line,
+    # which is the line behaving correctly rather than a failure.
+    body = _body(page)
+    assert "saved to" in body
+    assert target.name in body
+    assert "save this to a file" not in body
+
+
+def test_a_save_that_fails_is_said_on_the_page_not_raised(ctx: AppContext, tmp_path: Path) -> None:
+    """An unwritable destination leaves the block readable and explains itself.
+
+    The block on screen is still copyable, which is the whole reason that path exists
+    alongside the file — so a failed write must never take the page down with it.
+    """
+    from meshterm.ui.diagnostics import SAVE_KEY
+
+    # A path whose "directory" is an existing file: mkdir and write both refuse, on
+    # every OS, without needing permissions the suite cannot count on.
+    blocker = tmp_path / "blocker"
+    blocker.write_text("not a directory", encoding="utf-8")
+    page = _page(ctx, save_path=blocker / "inside" / "out.txt")
+
+    page.handle("text", SAVE_KEY)
+    body = _body(page)
+    assert "could not save" in body
+    assert "meshterm" in body  # the block itself is untouched
+
+
+def test_the_save_key_is_the_only_letter_the_page_claims(ctx: AppContext, tmp_path: Path) -> None:
+    """Any other letter falls through to the scroll handler rather than doing something."""
+    page = _page(ctx, save_path=tmp_path / "out.txt")
+    page.handle("text", "q")
+    assert not (tmp_path / "out.txt").exists()
+    assert "save this to a file" in _body(page)
 
 
 def test_an_empty_listing_is_drawn_by_neither_face() -> None:
@@ -360,3 +441,16 @@ def _console(width: int) -> Console:
 def _strip(line: str) -> str:
     """One rendered line with its SGR runs removed."""
     return re.sub(r"\x1b\[[0-9;]*m", "", line)
+
+
+def _page(ctx: AppContext, *, save_path: Path | None = None):
+    """The page over this context's report, saving wherever the caller wants."""
+    from meshterm.ui.diagnostics import DiagnosticsPage
+
+    target = save_path or (ctx.settings.config_dir / "meshterm-diagnostics.txt")
+    return DiagnosticsPage(_report(ctx), save_path=target)
+
+
+def _body(page) -> str:
+    """The page's drawn rows as plain text."""
+    return "\n".join(_strip(line) for line in page.render_body(100))

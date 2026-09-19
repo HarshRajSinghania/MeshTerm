@@ -993,7 +993,10 @@ def _diagnostics(cols: int, rows: int) -> Screen:
     """
     from meshterm.ui.diagnostics import DiagnosticsPage
 
-    return DiagnosticsPage(_diagnostics_report())
+    return DiagnosticsPage(
+        _diagnostics_report(),
+        save_path=Path("C:/Users/somebody/.meshterm/meshterm-diagnostics.txt"),
+    )
 
 
 def _diagnostics_report():

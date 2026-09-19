@@ -42,6 +42,14 @@ one caveat SemVer makes for a leading zero: while the major version is still `0`
     somewhere, so a table added later starts being reported the day it lands — and the
     interesting count is always the table nobody expected to be full.
 
+  - **It saves to a file, for attaching rather than pasting.** `s` on the page writes
+    `meshterm-diagnostics.txt` into the config directory beside the log, and says so on the
+    page's own last line rather than in a dialog over the block you were about to read.
+    `meshterm diagnostics --out PATH` does the same from a shell, spelled the way
+    `config export-key --out` already spells it. The file is always the plain block, even
+    under `--json` — it exists to be read by a person — and it is laid out at full width, so
+    nothing is folded to whatever the terminal happened to be.
+
 ### Changed
 
 - `--json` and the plain face grew a shared projection for a set of facts

@@ -61,6 +61,46 @@ class OutputFormat(str, Enum):
     JSON = "json"
 
 
+#: How wide a report is drawn when it is going into a *file* rather than onto a terminal.
+#: Wide enough that no lane ever crops — a saved report exists to be complete, and the
+#: table sizes each column to its content, so nothing is padded out to this either.
+FILE_WIDTH = 200
+
+
+def render_to_text(report: Report | None, fmt: OutputFormat = OutputFormat.PLAIN) -> str:
+    """Render a report to a string, for writing somewhere that is not a terminal.
+
+    The same renderers, on a capture console: a file gets exactly what the corresponding
+    face would have printed, so there is no third rendering to keep in step with the other
+    two. No colour, no highlighting and no markup interpretation — a node's name can
+    contain a bracket, and a file is read by things that do not speak SGR.
+
+    Args:
+        report: The report to render, or ``None`` for nothing at all.
+        fmt: Which face to write.
+
+    Returns:
+        The rendered text, newline-terminated where it has any content.
+    """
+    console = Console(
+        width=FILE_WIDTH,
+        color_system=None,
+        highlight=False,
+        markup=False,
+        emoji=False,
+        # A capture must not consult the real terminal for its width or its legs.
+        force_terminal=False,
+    )
+    with console.capture() as captured:
+        for_format(fmt, console).render(report)
+    # Rich pads every cell out to its column's width, which is invisible on a terminal and
+    # is trailing whitespace on disk — noise in a diff, and something a reader pasting the
+    # file onward has to strip. The written pages already do the same (see
+    # ``tools.about._rendered_page``).
+    text = "\n".join(line.rstrip() for line in captured.get().splitlines())
+    return f"{text}\n" if text.strip() else ""
+
+
 def facts_pairs(block: Facts) -> list[tuple[str, str]]:
     """Project a :class:`Facts` block into its ``(key, value)`` text rows.
 

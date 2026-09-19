@@ -29,6 +29,7 @@ the block (``connected``/``error``) rather than an error that replaces it.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ..context import AppContext
@@ -42,6 +43,15 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 #: cross-import between two tools to save five entries buys a dependency and no clarity.
 _ROLES = {1: "client", 2: "repeater", 3: "room server", 4: "sensor"}
 
+#: What the saved file is called, in the config directory beside the log it sits next to
+#: in a bug report. Named for the app rather than just ``diagnostics.txt`` because the one
+#: thing that happens to this file is being moved somewhere else and attached, and by then
+#: the directory it came from is no longer saying what it is.
+#:
+#: ``.txt`` and not ``.md``: the content is aligned columns, which markdown would reflow
+#: into a paragraph, and a plain-text extension is the one every issue tracker accepts.
+DIAGNOSTICS_FILENAME = "meshterm-diagnostics.txt"
+
 
 @register
 class DiagnosticsTool(Tool):
@@ -54,12 +64,36 @@ class DiagnosticsTool(Tool):
     category = "This app"
     order = 7  # after Preferences (the row that changes MeshTerm), before the pages
 
+    def register_cli(self, app: Any) -> None:
+        """Register the command, with the one option that turns the answer into a file.
+
+        ``--out`` is spelled the way ``config export-key --out`` already spells it, rather
+        than inventing a second word for writing an answer to a path. Plain redirection
+        still works and is not replaced by it — what the option adds is a file whose
+        columns are laid out at full width instead of at whatever the terminal happened to
+        be, which is the difference between a readable attachment and a folded one.
+        """
+        import typer
+
+        from ..cli import run_tool_command
+
+        @app.command(name=self.name, help=self.help)
+        def _command(
+            out: Path | None = typer.Option(
+                None, "--out", help="Write the block to this file instead of printing it"
+            ),
+        ) -> None:
+            run_tool_command(self, {"out": out})
+
     async def prompt_params(self, ctx: AppContext) -> dict[str, Any] | None:
         """Open the page in the menu; returning ``None`` completes with no run row.
 
         The same shape the About pages use: the menu's whole interaction *is* the screen,
         and a run row recording that somebody looked at their own version number would be
-        a line in the log for every glance.
+        a line in the log for every glance. Saving from the page is likewise not a run:
+        the page writes the file itself and says so on its own last line, because a
+        confirmation dialog over a page whose entire point is being unobstructed would
+        cover the thing it was confirming.
 
         Args:
             ctx: Shared application context.
@@ -69,20 +103,35 @@ class DiagnosticsTool(Tool):
         """
         from ..ui.diagnostics import open_diagnostics_page
 
-        await open_diagnostics_page(ctx, await build_report(ctx))
+        await open_diagnostics_page(ctx, await build_report(ctx), save_path=default_path(ctx))
         return None
 
     async def run(self, ctx: AppContext, params: dict[str, Any]) -> ToolResult:
-        """State the diagnostics — only reachable from the CLI (the menu opens the screen).
+        """State the diagnostics, or write them to a file — only reachable from the CLI.
+
+        With ``--out`` the answer *becomes the path*, the same trade ``config export-key``
+        makes: a caller who asked for a file wants to be told where it is, not handed the
+        contents they just redirected into it.
 
         Args:
             ctx: Shared application context.
-            params: Unused beyond the injected ``_run_id``.
+            params: ``out`` — a destination path, or ``None`` to print the block.
 
         Returns:
-            A :class:`ToolResult` carrying the whole block as its report.
+            A :class:`ToolResult` carrying the block, or the path it was written to.
         """
-        return ToolResult(summary={"tool": self.name}, report=await build_report(ctx))
+        report = await build_report(ctx)
+        out = params.get("out")
+        if out is None:
+            return ToolResult(summary={"tool": self.name}, report=report)
+
+        written = write_report(report, out)
+        ctx.ui.ack("[ok]✓[/ok] diagnostics written — attach it to the report.")
+        return ToolResult(
+            summary={"tool": self.name, "path": str(written)},
+            artifacts=[str(written)],
+            report=(_written_to(written),),
+        )
 
 
 async def build_report(ctx: AppContext) -> Report:
@@ -108,6 +157,56 @@ async def build_report(ctx: AppContext) -> Report:
         _mesh_facts(ctx),
         _table_listing(ctx),
         _preference_listing(ctx),
+    )
+
+
+def default_path(ctx: AppContext) -> Path:
+    """Where the page saves when nobody named a place: beside the log, in the config dir.
+
+    The config directory rather than the working directory, which in the menu is wherever
+    the reader happened to launch from and is not somewhere they can be told to look. It
+    is also where the log already lives, so "send me both" names one folder.
+    """
+    return ctx.settings.config_dir / DIAGNOSTICS_FILENAME
+
+
+def write_report(report: Report, path: Path | str) -> Path:
+    """Write a report's plain rendering to ``path``, creating its directory.
+
+    **Always the plain face**, whatever the run was printing. A file exists here to be
+    attached to an issue and read by a person, and a document of the same facts helps that
+    person less than the block does; anyone who wants the machine face can redirect
+    ``--json`` and already has a better filename for it than this one.
+
+    Args:
+        report: The block to write.
+        path: The destination.
+
+    Returns:
+        The path written, resolved.
+
+    Raises:
+        OSError: If the directory cannot be made or the file cannot be written.
+    """
+    from ..ui.renderers import render_to_text
+
+    written = Path(path)
+    written.parent.mkdir(parents=True, exist_ok=True)
+    written.write_text(render_to_text(report), encoding="utf-8")
+    return written
+
+
+def _written_to(written: Path) -> Any:
+    """The answer a ``--out`` run gives: the path, alone on the plain face."""
+    from ..ui import fields
+    from ..ui.report import BARE, Facts
+
+    return Facts(
+        key="saved",
+        fields=(fields.path("path", "path"),),
+        values={"path": written},
+        shape=BARE,
+        bare="path",
     )
 
 

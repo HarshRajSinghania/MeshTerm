@@ -1560,9 +1560,26 @@ a key of their own:
 {"meshterm":"0.3.7","install":"frozen","os":"Windows 11","…":"…","tables":[{"table":"observations","rows":418203}],"preferences":[{"preference":"log_level","value":"DEBUG"}]}
 ```
 
+**`--out PATH` writes it to a file instead of printing it**, and the answer becomes the
+path — the same trade `config export-key --out` makes, since a caller who asked for a file
+wants to be told where it is rather than handed the contents they just redirected into it.
+The file is always the plain block, even under `--json`: it exists to be attached to an
+issue and read by a person. Redirection still works and is not replaced; what `--out` adds
+is a file laid out at full width rather than folded to whatever the terminal happened to be.
+
+```console
+$ meshterm diagnostics --out meshterm-diagnostics.txt
+✓ diagnostics written — attach it to the report.
+/home/jp/meshterm-diagnostics.txt
+```
+
 In the menu this is the **Diagnostics** page under *This app*, drawn on a bare frame — no
 border, no header, no footer, no key hints — because a terminal is selected by dragging and
-every one of those is a character the clipboard would carry into the issue.
+every one of those is a character the clipboard would carry into the issue. Its one line of
+its own is `s  save this to a file`, which writes `meshterm-diagnostics.txt` into the config
+directory beside the log and then says so on that same line. A bare frame has nowhere else
+to advertise a key, and one trailing line after a blank row costs a paste far less than a
+border costs it on every line.
 
 #### `meshterm platform`
 
