@@ -22,7 +22,7 @@ from . import __version__
 from .context import AppContext
 from .core import exitcodes, win32dll
 from .core.admin_store import AdminStore
-from .core.config import Settings
+from .core.config import MOCK_DB_FILENAME, Settings
 from .core.connection import DeviceCommandError, is_connection_lost
 from .core.device_config import DeviceConfigError
 from .core.device_store import DeviceStore
@@ -175,7 +175,9 @@ def main_callback(
         help="Network address host[:port] of a TCP companion (selects the TCP transport)",
     ),
     mock: bool = typer.Option(False, "--mock", help="Use the built-in simulator"),
-    db_path: Path | None = typer.Option(None, "--db", help="SQLite database path"),
+    db_path: Path | None = typer.Option(
+        None, "--db", help="SQLite database path (--mock records to meshterm-mock.db)"
+    ),
     json_output: bool = typer.Option(False, "--json", help="Machine-readable output"),
     absolute: bool = typer.Option(
         False, "--absolute", help="Print absolute timestamps instead of relative ages"
@@ -198,7 +200,8 @@ def main_callback(
         ble_pin: Optional BLE pairing PIN for the Bluetooth companion.
         tcp: Explicit network address ``host[:port]``, selecting the TCP transport.
         mock: Whether to use the simulator instead of real hardware.
-        db_path: Override the database location.
+        db_path: Override the database location. Without it, a ``--mock`` run records to
+            the simulator's own database rather than the real history.
         json_output: Print the answer as JSON instead of aligned text.
         absolute: Print times as ISO-8601 instants rather than relative ages, for this run.
         quiet: Suppress console logging (file logging continues).
@@ -232,6 +235,17 @@ def main_callback(
     settings = Settings.load()
     if db_path is not None:
         settings.db_path = db_path
+    elif mock:
+        # The simulator is a fake radio, not a fake MeshTerm: everything it adverts was
+        # written to the real history like anything a companion said, and its four
+        # invented contacts then turned up in the mesh walk, the dashboard and the map of
+        # the mesh you actually run. A pretend radio gets a pretend history —
+        # ``<config_dir>/meshterm-mock.db``, created on first use — while ``--db`` still
+        # wins, because naming a database is a deliberate claim about where a run records.
+        # ``$MESHTERM_HOME`` remains the only thing that isolates a run whole: the contact
+        # and channel caches, the outbox and the remembered devices live beside the
+        # database either way (see docs/cli.md).
+        settings.db_path = settings.config_dir / MOCK_DB_FILENAME
 
     # Two front ends, two consoles, and which one this process gets is settled here — a
     # named subcommand is a scripted run, so it prints on the plain, colourless,

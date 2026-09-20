@@ -34,6 +34,17 @@ else:  # pragma: no cover - exercised only on 3.10
 #: can move it between cases.
 CONFIG_DIR_ENV = "MESHTERM_HOME"
 
+#: The history's filename inside the config directory, when ``config.toml`` and ``--db``
+#: both leave it alone.
+DB_FILENAME = "meshterm.db"
+
+#: The simulator's history, kept beside the real one and used by ``--mock`` runs that did
+#: not name a database themselves. ``--mock`` is a fake radio, not a fake MeshTerm: what
+#: the simulator adverts is recorded like anything a real companion said, so without a
+#: database of its own its four invented contacts turn up in the mesh walk, the dashboard
+#: and the map of the mesh you actually run.
+MOCK_DB_FILENAME = "meshterm-mock.db"
+
 
 def default_config_dir() -> Path:
     """Return the directory MeshTerm uses for config and data.
@@ -138,7 +149,7 @@ class Settings:
     def __post_init__(self) -> None:
         """Derive dependent paths that were not explicitly provided."""
         if self.db_path is None:
-            self.db_path = self.config_dir / "meshterm.db"
+            self.db_path = self.config_dir / DB_FILENAME
 
     def resolve_profile(self, name: str | None) -> DeviceProfile | None:
         """Look up a profile by name, falling back to the default profile.

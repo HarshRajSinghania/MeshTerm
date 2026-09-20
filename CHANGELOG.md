@@ -9,6 +9,16 @@ one caveat SemVer makes for a leading zero: while the major version is still `0`
 
 ## [Unreleased]
 
+### Changed
+
+- **`--mock` keeps its invented mesh out of your history.** The simulator is a fake radio,
+  not a fake MeshTerm: what it adverted was written to `meshterm.db` like anything a real
+  companion said, and its four invented contacts then turned up in the mesh walk, the
+  dashboard and the map of the mesh you actually run. A `--mock` run now records to
+  `meshterm-mock.db` beside it, created on first use. Naming a database with `--db` still
+  wins, and `$MESHTERM_HOME` is still the only thing that isolates a run whole — the
+  contact and channel caches, the outbox and the remembered devices are untouched by this.
+
 ## [0.9.0] — 2026-09-22
 
 **The first public release.** Everything in MeshTerm is new today, so instead of a list of

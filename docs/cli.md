@@ -57,8 +57,8 @@ With no command, MeshTerm launches the interactive menu instead.
 | `--ble ADDRESS` | Bluetooth address of a companion; selects the BLE transport. |
 | `--ble-pin PIN` | Pairing PIN, if the Bluetooth companion asks for one. |
 | `--tcp HOST[:PORT]` | Network address of a TCP companion; selects the TCP transport. Default port 5000. |
-| `--mock` | Use the built-in simulator instead of real hardware. Nothing transmits. |
-| `--db PATH` | Use this SQLite database instead of `~/.meshterm/meshterm.db`. **It moves the database and nothing else** — see [Where MeshTerm keeps its state](#where-meshterm-keeps-its-state). |
+| `--mock` | Use the built-in simulator instead of real hardware. Nothing transmits, and the run records to `meshterm-mock.db` rather than your real history. |
+| `--db PATH` | Use this SQLite database instead of `~/.meshterm/meshterm.db` (or `meshterm-mock.db`, under `--mock`). **It moves the database and nothing else** — see [Where MeshTerm keeps its state](#where-meshterm-keeps-its-state). |
 | `--json` | Print the answer as JSON instead of aligned text. |
 | `--absolute` | Print times as ISO-8601 instants rather than relative ages, for this run. |
 | `-q`, `--quiet` | Suppress console logging entirely (the log file still records). |
@@ -97,6 +97,7 @@ of two directories from the same shell.
 | File | What it holds |
 | --- | --- |
 | `meshterm.db` | The history: every packet overheard, every trace walked, every message. **The one file `--db` moves.** |
+| `meshterm-mock.db` | The same, for the simulator: where a `--mock` run records when it doesn't name a database itself. Absent until you run one. |
 | `config.toml` | Machine setup — device profiles, where the database lives. Yours to write; MeshTerm only reads it. |
 | `preferences.toml` | Your overrides of MeshTerm's own behaviour. Lists only what you changed. |
 | `courier.json` | The outbox — queued messages, waiting and finished. |
@@ -114,7 +115,8 @@ weight but none of the identity: the contact and channel caches, the outbox, the
 admin passwords and the remembered device all live beside it in the config directory and
 would still be the ones you use every day. To run against a scratch state — a test, a
 demo, a second radio — set `MESHTERM_HOME`, and set `--db` inside it if you want the
-database somewhere else again.
+database somewhere else again. The same holds for the database `--mock` picks for itself:
+it keeps the simulator's invented mesh out of your history, not out of the caches.
 
 ---
 
@@ -140,11 +142,13 @@ Three things the simulator does that a radio does not, all visible in the sample
   *forced* path (`--path "a1,d4"`) resolves properly. The forced form is what the samples
   use, and what to build a golden file from.
 
-> **`--mock` records into your real history unless you tell it not to.** The simulator is
-> a fake radio, not a fake MeshTerm: what it adverts is written to the database and the
-> caches like anything else, and invented nodes then turn up in the mesh walk, the
-> dashboard and the map. Give it its own home — `MESHTERM_HOME=... meshterm --mock …` —
-> or its own database with `--db`, and it leaves your mesh alone.
+> **`--mock` records into its own history, not yours — but it still writes the caches.**
+> The simulator is a fake radio, not a fake MeshTerm: what it adverts is written down like
+> anything else. The database it writes is `meshterm-mock.db`, so its invented nodes stay
+> out of your mesh walk, dashboard and map; naming a database with `--db` overrides that
+> choice. The contact and channel caches, the outbox and the remembered devices are still
+> the ones you use every day, so a demo that should touch nothing at all gets a home of
+> its own: `MESHTERM_HOME=... meshterm --mock …`.
 
 ---
 

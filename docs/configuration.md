@@ -53,7 +53,9 @@ Both live in `~/.meshterm`, along with everything else MeshTerm remembers: the S
 history, the outbox, the contact and channel caches, stored admin passwords, and the log.
 **`$MESHTERM_HOME` moves the whole directory**, which is the way to run a second radio —
 or a `--mock` session — without touching the one you use every day. `--db` moves the
-database alone; the rest stays where it was. [`docs/cli.md`](cli.md#where-meshterm-keeps-its-state)
+database alone; the rest stays where it was. A `--mock` run that names neither writes to
+`meshterm-mock.db` beside the real history, so the simulator's invented nodes never enter
+it. [`docs/cli.md`](cli.md#where-meshterm-keeps-its-state)
 lists every file.
 
 Timestamps are stored as UTC and rendered in your local time. History older than the

@@ -707,6 +707,53 @@ def test_a_closing_message_goes_to_stderr_too(run) -> None:  # noqa: ANN001
     assert "records stored" in result.stderr
 
 
+# -- the simulator's own history ------------------------------------------------------
+
+
+def test_mock_records_into_a_database_of_its_own(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A pretend radio gets a pretend history, so a demo run leaves the real mesh alone.
+
+    The simulator is a fake radio, not a fake MeshTerm: what it adverts used to be written
+    to ``meshterm.db`` like anything a companion said, and its invented contacts then sat
+    in the mesh walk, the dashboard and the map of the mesh actually being run. The run
+    still records — the history is how a ``--mock`` session's own tools read back what it
+    heard — just not there.
+    """
+    from meshterm.cli import app
+
+    home = tmp_path / "home"
+    monkeypatch.setenv("MESHTERM_HOME", str(home))
+
+    result = CliRunner().invoke(app, ["--mock", "info"])
+    assert result.exit_code == exitcodes.OK, result.output
+    assert (home / "meshterm-mock.db").exists()
+    assert not (home / "meshterm.db").exists()
+
+
+def test_an_explicit_db_still_wins_under_mock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``--db`` names one exact database, which is a claim the simulator does not override.
+
+    Unlike ``--port``, it is not a contradictory one: where a run records and which radio
+    it talks to are different questions, so this is a precedence rule and not a usage
+    error. It is also what the suite's own ``run`` fixture depends on.
+    """
+    from meshterm.cli import app
+
+    home = tmp_path / "home"
+    monkeypatch.setenv("MESHTERM_HOME", str(home))
+    named = tmp_path / "named.db"
+
+    result = CliRunner().invoke(app, ["--mock", "--db", str(named), "info"])
+    assert result.exit_code == exitcodes.OK, result.output
+    assert named.exists()
+    assert not (home / "meshterm-mock.db").exists()
+    assert not (home / "meshterm.db").exists()
+
+
 # -- devices under --mock -------------------------------------------------------------
 
 
