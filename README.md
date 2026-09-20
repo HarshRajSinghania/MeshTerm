@@ -229,12 +229,12 @@ manuals run are in [`scripts/`](scripts/); not sure which manual is yours?
 
 ## What it does
 
-The menu answers one question — *what would you like to do?* — so its five sections are
-named for the doing, not the subject. **Message** is chat, channels, the courier outbox
-and contacts. **Watch** is the dashboard, the live feed, the watchtower and the time
-machine. **Explore** is the map, the mesh walk, tracing and the trophy case. **This
-node** configures the radio in your hand; **Other nodes** administers someone else's
-over the mesh.
+The menu asks one question — *what would you like to do?* — and answers it in two halves.
+Three sections name a doing: **Message** is chat, channels, the courier outbox and
+contacts; **Watch** is the dashboard, the live feed, the watchtower and the time machine;
+**Explore** is the map, the mesh walk, tracing and the trophy case. Three name a scope:
+**This node** is the radio in your hand, **Other nodes** is someone else's over the mesh,
+and **This app** is MeshTerm itself — preferences, diagnostics, and the written pages.
 
 Nearly every one of them has a mirror `meshterm` subcommand — the same registry builds
 the menu and the CLI, so they can't drift apart. The live pictures stay in the menu,

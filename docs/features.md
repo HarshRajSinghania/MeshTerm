@@ -3,9 +3,12 @@
 Every screen the menu offers, and the command that does the same job without it. This is
 the catalogue; [the command line](cli.md) is the manual for the scripted half of it.
 
-MeshTerm's menu answers one question — *what would you like to do?* — so its five
-sections are named for the doing, not the subject. Every interactive screen is listed
-here with its scripted equivalent, where one exists.
+MeshTerm's menu asks one question — *what would you like to do?* — and its six sections
+answer it in two halves. The first three name a **doing**: Message, Watch, Explore. The
+last three name the **scope** a setting belongs to: This node, the radio in your hand;
+Other nodes, someone else's over the mesh; and This app, the program in front of you.
+
+Every interactive screen is listed here with its scripted equivalent, where one exists.
 
 ## 💬 Message — the people on the other end
 
@@ -52,3 +55,17 @@ here with its scripted equivalent, where one exists.
 | **🗼 Repeater admin** | Set up remote repeaters and room servers over the mesh: log in (remembered or prompted password), then a config-style editor speaking the node's text CLI — including repeater-only knobs (TX delay, airtime factor, advert intervals) — plus one-shot actions and a readline remote command line. | `meshterm repeater-admin <node> <command…>` |
 | **📶 TX optimize** | Sweep a remote node's transmit power live — coarse, then refine, then verify — watch each level land, and decide whether to apply the winner. | `meshterm tx-optimize --path … [--apply]` |
 
+## ⚙ This app — the program in front of you
+
+The last scope, and the one nothing on the mesh can answer. Preferences leads it because
+it is the only row here that *changes* MeshTerm rather than describing it; the written
+pages close it.
+
+| Feature | What it does | Scripted |
+| --- | --- | --- |
+| **⚙ Preferences** | How MeshTerm behaves — startup, sending, history, map framing. Grouped and staged, saved by one action at the bottom, and written to `preferences.toml` as only the values you changed. [Configuring MeshTerm](configuration.md) has the detail. | `meshterm preferences show / set / reset` |
+| **🩺 Diagnostics** | Everything a bug report opens with, in one block: which build this is and how it was installed, the OS, the terminal and its size, the boot-time verdicts that show on no screen (icons, powerline, platform flavour and why), the radio and its link, and how much history is stored. Nothing private — no keys, passwords, positions or contact names; the mesh is described as per-table counts and the span they cover. `s` saves it beside the log for attaching. | `meshterm diagnostics [--out PATH]` |
+| **📖 About MeshTerm** | What MeshTerm is, where it came from, and the terms it ships under — including the map and font credits and the licence URL. | `meshterm about` |
+| **👤 About the author** | The person behind MeshTerm, on the mesh and off it. | `meshterm about-author` |
+| **🔗 Join Discord** | The community server: one invite link, and a QR of it for a phone to read. | `meshterm discord` |
+| **💰 Support MeshTerm** | What keeps MeshTerm going, and the ways — paid and unpaid — to help it along. | `meshterm support` |
