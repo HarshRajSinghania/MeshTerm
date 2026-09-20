@@ -9,63 +9,6 @@ one caveat SemVer makes for a leading zero: while the major version is still `0`
 
 ## [Unreleased]
 
-### Added
-
-- **Diagnostics — everything a bug report opens with, in one block.** A new page under
-  *This app*, and a new `meshterm diagnostics` command. It states which MeshTerm this is
-  and how it was installed, the OS and its build, the terminal and its size, every verdict
-  resolved once at boot and shown on no screen (icons, powerline, the platform flavour and
-  why), the radio and what its link is set to, and how much stored history there is. Those
-  are the questions an issue thread otherwise asks one at a time, and the person who hit the
-  bug is the one least able to answer them.
-
-  - **Nothing in it is private.** No pairing PIN, no admin password, no channel secret, no
-    private key, no position, and no contact's name or key. The mesh is described in
-    **aggregate** — a row count per table and the span the observations cover — which is the
-    half that explains a bug without naming anyone the reporter talks to. It is a property
-    of the feature rather than a habit: `tests/test_diagnostics.py` plants real secrets in
-    the stores that hold them and fails if any of them, or a field merely *named* like one,
-    reaches either face.
-
-  - **The radio is asked but never required.** A report about a companion that will not
-    connect is exactly the report most worth filing, so a failure to reach it becomes
-    `connected no` with the radio's own words in `error`, and every other fact still
-    arrives.
-
-  - **The table counts are discovered from the schema**, not from a list written down
-    somewhere, so a table added later starts being reported the day it lands — and the
-    interesting count is always the table nobody expected to be full.
-
-  - **It is one of the app's written pages.** The block is markdown, drawn through the same
-    renderer behind the About pages and saved as the same document, so what you read and
-    what you attach are one source. Its `##` headings are landmarks: each pins to the top
-    row while its own section scrolls under it, and `^PgUp`/`^PgDn` step section by section.
-    Every value is a code span, so a Windows path's backslashes and a firmware error's
-    asterisks arrive as themselves rather than as markdown.
-
-  - **It saves, for attaching rather than pasting.** `s` writes `meshterm-diagnostics.md`
-    into the config directory beside the log, and answers in a popup naming the path; a
-    write that fails says so in the same popup, in red, and leaves the page readable. The
-    key is advertised in the footer hint on a desktop and on the lane's free **F3** slot on
-    the PicoCalc — never in the page's body, which belongs to the report.
-    `meshterm diagnostics --out PATH` does the same from a shell, spelled the way
-    `config export-key --out` already spells it.
-
-### Changed
-
-- **A report has a third face.** `ui/renderers.markdown_blocks` projects any report as
-  markdown sections — the *document* face, where the other two are a record stream and a
-  machine document. It is what the seam was built for: no tool was touched and no report
-  changed. A block may now carry a `caption`, the heading a format that *has* headings
-  draws above it; plain and JSON ignore it, and markdown makes it a `##`.
-
-  Rows are a list rather than a table, and that was measured: a markdown table's cells are
-  cropped with an ellipsis at a narrow width, and a diagnostics page whose one long value is
-  cut is missing the half that mattered.
-
-- A path gained the lane constructor it never had (`ui/fields.path`) — the machine face had
-  always spelled one correctly and the plain face could not render one at all.
-
 ## [0.9.0] — 2026-09-22
 
 **The first public release.** Everything in MeshTerm is new today, so instead of a list of
@@ -116,6 +59,13 @@ what the mesh is doing.
 - **It works with no internet.** Map tiles are kept on disk once fetched, and when there is
   no network at all the map falls back to a plain grid. Nothing about MeshTerm needs to
   phone home.
+
+- **When something goes wrong, it can describe itself.** `meshterm diagnostics`, or the
+  Diagnostics page in the menu, puts everything a bug report opens with in one block: which
+  build this is and how it was installed, the operating system, the terminal and how big it
+  is, and whether the radio answered. It names nothing private — no keys, no passwords, no
+  positions, no contacts — and describes your mesh as counts rather than names. One keypress
+  saves it to a file you can attach to an issue.
 
 ### Getting it
 
