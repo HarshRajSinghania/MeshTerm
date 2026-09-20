@@ -27,6 +27,11 @@ your mesh's history is worth.
 > open an issue before writing a pull request. [More on how it's run](#how-this-project-is-run).
 
 <p align="center">
+  <a href="https://meshterm.net/#demo"><img src="https://meshterm.net/assets/demo-play.png" alt="Watch the demo: MeshTerm showing every route a channel message took to arrive" width="840"></a>
+</p>
+<p align="center"><sub>Under two minutes on a real mesh &mdash; <a href="https://meshterm.net/#demo">watch it on meshterm.net</a>.</sub></p>
+
+<p align="center">
   <img src="docs/screenshots/dashboard.png" alt="The dashboard: a packets-per-minute timeline over the last two hours, and every packet class counted" width="49%">
   <img src="docs/screenshots/map.png" alt="The map: repeaters named over an OpenStreetMap basemap of the Lachine Canal" width="49%">
 </p>
