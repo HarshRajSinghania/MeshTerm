@@ -1,0 +1,84 @@
+name: Issue trailers
+
+# A commit that names an issue is the only thing connecting a fix to the person
+# who reported it. GitHub resolves that link silently: `Fixes: #42` against an
+# issue that does not exist is not an error, it is nothing at all -- the issue
+# stays open, the reporter is never told, and the commit looks like it did the
+# job. A typo costs a whole loop and announces itself nowhere.
+#
+# So this checks the trailers that ARE there rather than nagging about the ones
+# that are not. Most commits here are internal work that legitimately closes
+# nothing, and a workflow that complains about all of them gets muted in a week.
+#
+# Cross-repo trailers (`Fixes: owner/repo#12`) are reported but not verified:
+# GITHUB_TOKEN only reaches this repository.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write      # to leave a comment on the offending commit
+  issues: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    steps:
+      - name: Verify every issue named in a trailer exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          COMMITS: ${{ toJSON(github.event.commits) }}
+        run: |
+          set -euo pipefail
+
+          echo "$COMMITS" > /tmp/commits.json
+          count=$(jq 'length' /tmp/commits.json)
+          echo "checking $count commit(s)"
+
+          problems=0
+
+          for i in $(seq 0 $((count - 1))); do
+            sha=$(jq -r ".[$i].id" /tmp/commits.json)
+            msg=$(jq -r ".[$i].message" /tmp/commits.json)
+            short="${sha:0:8}"
+
+            # Trailers only: a line that starts with the keyword. A bare "#12"
+            # in prose is a reference someone wrote on purpose, not a claim
+            # that this commit closes anything.
+            refs=$(printf '%s\n' "$msg" \
+              | grep -oiE '^(fixes|closes|resolves|refs|see):[[:space:]]*([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)?#[0-9]+' \
+              || true)
+
+            [ -z "$refs" ] && continue
+
+            while IFS= read -r ref; do
+              [ -z "$ref" ] && continue
+              target=$(printf '%s' "$ref" | sed -E 's/^[A-Za-z]+:[[:space:]]*//')
+              num="${target##*#}"
+
+              if [ "$target" != "#${num}" ]; then
+                repo="${target%%#*}"
+                echo "  $short -> $target (other repository, not verified here)"
+                continue
+              fi
+
+              if state=$(gh api "repos/$REPO/issues/$num" --jq .state 2>/dev/null); then
+                echo "  $short -> #$num ($state)"
+              else
+                echo "::error::commit $short names #$num, which does not exist in $REPO"
+                problems=$((problems + 1))
+                gh api "repos/$REPO/commits/$sha/comments" \
+                  -f body="This commit's trailer names **#$num**, which does not exist in \`$REPO\`.
+
+          GitHub resolves a closing keyword silently, so nothing failed and nothing was linked — the issue this was meant to close is still open, and whoever reported it has not been told. Worth a follow-up commit with the right number, or a note on the issue itself." \
+                  >/dev/null
+              fi
+            done <<< "$refs"
+          done
+
+          if [ "$problems" -gt 0 ]; then
+            echo "::warning::$problems trailer(s) pointed at issues that do not exist"
+          fi

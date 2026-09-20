@@ -4,10 +4,12 @@ contact_links:
     url: https://discord.gg/AZwe5Uvb3S
     about: >
       Setup trouble, "is it supposed to do this", or anything you want a second opinion
-      on. The support forum is the place. Someone running your radio has probably hit it.
+      on. The #support forum is the place. Someone running your radio has probably hit it.
 
-  - name: No GitHub account? Report it on Discord instead
+  - name: No GitHub account? Report it in the #bugs forum instead
     url: https://discord.gg/AZwe5Uvb3S
     about: >
-      Drop reproducible bugs in #bugs and they'll get moved here. Being told beats
+      One post per bug, tagged, with the diagnostics file attached. Real ones get opened
+      here and your post is renamed with the issue number, so you can follow it without an
+      account — and something comes back to tell you when it ships. Being told beats
       filing it tidily.
