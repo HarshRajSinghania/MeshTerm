@@ -35,15 +35,12 @@ USB, Bluetooth or Wi-Fi needs none of this.
 
 ## Historical record
 
-Two surveys of the code, written the same day against the same commit. They are kept
-because a project that writes down its own problems is easier to trust than one that
-doesn't — but they are **snapshots of a date, not to-do lists**. Some of what they
-describe has been fixed since. The navigation survey marks what was resolved; the UI
-survey does not.
+A survey of the code, kept because a project that writes down its own problems is easier
+to trust than one that doesn't — but it is a **snapshot of a date, not a to-do list**.
+Some of what it describes has been fixed since, and it does not mark which.
 
 | Read | For |
 | --- | --- |
-| [Navigation survey](survey-navigation.md) | Every exception to "Esc pops the stack", catalogued. |
 | [UI consistency survey](survey-ui-consistency.md) | Everything else in the CLAUDE.md UX standard — six sweeps found nothing, which is the useful part. |
 
 ## Also here

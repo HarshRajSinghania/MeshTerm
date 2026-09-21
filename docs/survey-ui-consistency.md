@@ -5,9 +5,8 @@
 > that doesn't. Some of what's here has since been fixed and some hasn't; nothing in
 > it is a to-do list. Read it as "what this looked like then", not "what is wrong now".
 
-Written 2026-08-22 against `main` @ `4b29248`. Companion to
-[`survey-navigation.md`](survey-navigation.md), which covers navigation exceptions; this one
-covers everything else in the CLAUDE.md UX standard. A catalogue, not a change.
+Written 2026-08-22 against `main` @ `4b29248`. It covers the CLAUDE.md UX standard apart
+from navigation. A catalogue, not a change.
 
 **The short version: the standard is very well kept.** Six sweeps found nothing at all;
 what remains is nine small, specific things. That is the useful result — it means the list
