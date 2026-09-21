@@ -18,7 +18,7 @@ only), so :class:`PlainUi` leaves them unsupported.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Callable, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -222,8 +222,13 @@ class Ui:
         footer_hint: str | None = None,
         keys: Mapping[str, Any] | None = None,
         key_hint: Callable[[Any], str] | None = None,
+        live: Callable[[Callable[[list], None]], Awaitable[None]] | None = None,
     ) -> Any:
         """Choose one item on a chromeless startup splash; ``None`` if skipped.
+
+        ``live`` is work to run while the splash is up, handed a ``redraw(items)`` that
+        swaps the rows under the reader and repaints -- the device picker's rescan. It is
+        cancelled when the splash resolves.
 
         ``keys`` declares bare-key shortcuts the splash answers, resolving with a
         :class:`~meshterm.ui.tui.select.KeyRequest` (the picker's hide/show-all pair), and
@@ -516,6 +521,7 @@ class PlainUi(Ui):
         footer_hint: str | None = None,
         keys: Mapping[str, Any] | None = None,
         key_hint: Callable[[Any], str] | None = None,
+        live: Callable[[Callable[[list], None]], Awaitable[None]] | None = None,
     ) -> Any:
         """Unsupported in scripted CLI mode."""
         raise self._no_prompt()
@@ -779,6 +785,7 @@ class TuiUi(Ui):
         footer_hint: str | None = None,
         keys: Mapping[str, Any] | None = None,
         key_hint: Callable[[Any], str] | None = None,
+        live: Callable[[Callable[[list], None]], Awaitable[None]] | None = None,
     ) -> Any:
         """Delegate to the session's chromeless startup select splash."""
         return await self.session.select_startup(
@@ -789,6 +796,7 @@ class TuiUi(Ui):
             footnote=footnote,
             keys=keys,
             key_hint=key_hint,
+            live=live,
             **({} if footer_hint is None else {"footer_hint": footer_hint}),
         )
 

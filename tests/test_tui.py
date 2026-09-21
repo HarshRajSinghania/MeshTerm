@@ -3573,3 +3573,33 @@ def test_bluetooth_is_not_scanned_on_every_poll(tmp_path, monkeypatch) -> None:
     assert calls["serial"] > calls["ble"], (
         f"bluetooth scanned {calls['ble']} time(s) against {calls['serial']} serial poll(s)"
     )
+
+
+def test_the_picker_only_passes_arguments_the_splash_surface_accepts(tmp_path) -> None:
+    """Every keyword `prompt_device` sends must exist on `Ui.select_startup`.
+
+    This is the shape of bug a test double hides. `prompt_device` calls the *surface*,
+    which delegates to the session; adding an argument to the session alone crashes the
+    startup path and nothing else, because every fake Ui in this file absorbs unknown
+    keywords with `**kwargs` and is perfectly happy. So the fake here binds what it is
+    given against the real signature, and a keyword the surface has never heard of raises
+    exactly where a running MeshTerm would.
+    """
+    import inspect
+
+    from meshterm.core.device_store import DeviceStore
+    from meshterm.ui.device_picker import prompt_device
+    from meshterm.ui.surface import Ui
+
+    signature = inspect.signature(Ui.select_startup)
+
+    class _Ui:
+        async def select_startup(self, title, items, **kw):  # noqa: ANN001, ANN003, ANN201
+            signature.bind(self, title, items, **kw)  # TypeError on an unknown keyword
+            return None
+
+    async def _never(_device):
+        raise AssertionError("verify should not run when selection is skipped")
+
+    store = DeviceStore(tmp_path / "devices.json")
+    asyncio.run(prompt_device(_Ui(), [], store, _never))
