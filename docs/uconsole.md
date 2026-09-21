@@ -71,6 +71,8 @@ The bridge assumes the AIO's wiring by default:
 | Bandwidth | 62.5 kHz |
 | Coding rate | 4/5 |
 
+The radio settings (frequency, spreading factor, bandwidth, coding rate) are MeshCore's
+US/Canada preset. Anywhere else, set the `MESHCORE_*` variables to your region's preset.
 Every one of these is overridable with a `MESHCORE_*` environment variable if your board or
 region differs — see [Hardware knobs](#hardware-knobs).
 
@@ -145,16 +147,18 @@ and `spi` and `gpio` in your `groups` output.
 
 Which route you take depends on your Debian release:
 
-- **trixie**, with `meshcore-uconsole` installed from the vendor's package: you already
+- **trixie**, with the `meshcore-uconsole` package (by cwill747) installed: you already
   have a working runtime (Python 3.13-based). Skip to [Step 3](#step-3--get-the-bridge).
-- **bookworm**: the `meshcore-uconsole` 1.12.0+ package is built for Python 3.13 and will
-  **not run** — its virtualenv points at an interpreter bookworm doesn't have. Don't take
-  the upgrade if apt offers it. Instead give the bridge a runtime of its own:
+- **bookworm**: the trixie `.deb` of `meshcore-uconsole` 1.12.0 is built on Python 3.13
+  and needs glibc 2.38, so it will not install on bookworm, and the APT repository offers
+  nothing for bookworm. Upstream's GitHub Releases also carry a separate bookworm `.deb`
+  built on Python 3.11; it has not been tested with the bridge. The documented route is to
+  give the bridge a runtime of its own:
 
-```bash
-python3 -m venv ~/.local/share/meshterm-spi-bridge/venv
-~/.local/share/meshterm-spi-bridge/venv/bin/pip install "openhop-core[hardware]"
-```
+  ```bash
+  python3 -m venv ~/.local/share/meshterm-spi-bridge/venv
+  ~/.local/share/meshterm-spi-bridge/venv/bin/pip install "openhop-core[hardware]"
+  ```
 
 This is also the route to take if you'd rather not install the `meshcore-uconsole` package
 at all.
@@ -215,8 +219,11 @@ If the first three checks all pass, you're ready to run it.
 ./meshterm-spi-bridge --run
 ```
 
-This runs the preflight again, prints it, then starts the bridge in this terminal. A
-healthy startup logs something like:
+This runs the preflight again and prints it. Before it starts the bridge, it asks whether
+to add a `bridge` profile to your MeshTerm config
+(`` Add a 'bridge' profile to /home/you/.meshterm/config.toml so you can just run `meshterm`? [y/N] ``).
+Either answer is fine; Step 6 asks again if you say no. Then it starts the bridge in this
+terminal. A healthy startup logs something like:
 
 ```
 node runtime openhop_core 1.1.3 (/home/you/.local/share/meshterm-spi-bridge/venv/bin/python)
@@ -230,7 +237,8 @@ READY — connect with:  meshterm --tcp 127.0.0.1:5000
 The `radio config` line lists every setting as `key=value`, so the one above is
 shortened; yours is longer.
 
-Leave it running, and in another terminal on the same machine try:
+Once MeshTerm is installed ([Step 7](#step-7--install-meshterm-and-connect)), you can test
+the bridge this way: leave it running, and in another terminal on the same machine run:
 
 ```bash
 meshterm --tcp 127.0.0.1:5000
@@ -281,8 +289,9 @@ Menu option **4) Show status** prints the same information from inside the scrip
 Install MeshTerm on the uConsole. The simplest way is the Linux ARM64 one-file release:
 
 ```bash
-chmod +x meshterm-*-linux-arm64
-sudo mv meshterm-*-linux-arm64 /usr/local/bin/meshterm
+curl -fL -o meshterm https://github.com/jpmartineau/MeshTerm/releases/latest/download/meshterm-linux-arm64
+chmod +x meshterm
+sudo mv meshterm /usr/local/bin/meshterm
 ```
 
 Or install it from the repository with `pipx`:
@@ -293,7 +302,8 @@ pipx install git+https://github.com/jpmartineau/MeshTerm
 pipx ensurepath
 ```
 
-If you accepted the profile in Step 6, your `config.toml` now has:
+If you accepted the profile in Step 5 or 6, `~/.meshterm/config.toml` now has this block
+(the bridge always writes to that path, even if you set `MESHTERM_HOME`):
 
 ```toml
 [profiles.bridge]
@@ -314,13 +324,16 @@ or, without a profile:
 meshterm --tcp 127.0.0.1:5000
 ```
 
-You're connected when the device page or dashboard shows a node name (`uConsole` by
+You're connected when **Device info** or the dashboard shows a node name (`uConsole` by
 default) instead of a connection error. MeshTerm reports the device model as
 `pyMC-spi-bridge` — that's how you tell a bridged node from a real companion.
 
 **Identity.** If the `meshcore-console` GUI's package is present, the bridge loads *that*
-package's identity key, so MeshTerm and the GUI are the same node — same contacts, same
-public key. On a library-only install, the bridge mints and keeps its own identity key
+package's identity key, so MeshTerm and the GUI share the same public key. Contacts and
+radio settings are the bridge's own: it keeps contacts in
+`~/.local/share/meshterm-spi-bridge/contacts.json`, and builds its radio settings from the
+`MESHCORE_*` variables and its defaults, never from the GUI's saved settings. Set the
+`MESHCORE_*` variables to match what the GUI uses. On a library-only install, the bridge mints and keeps its own identity key
 under `~/.local/share/meshterm-spi-bridge/identity.key`.
 
 **Only one program may use the radio at a time.** Never run the bridge and the
@@ -332,7 +345,15 @@ radio.
 ## Updating and uninstalling
 
 To update, pull or re-download `meshterm-spi-bridge` and reinstall the service (menu option
-2 again — it overwrites the copy in `~/.local/bin/`).
+2 again — it overwrites the copy in `~/.local/bin/`). The running service keeps the old
+code until you restart it:
+
+```bash
+systemctl --user restart meshterm-spi-bridge.service
+```
+
+Option 2 also rewrites the unit file, so any `Environment=` lines you added to it by hand
+are lost. Put them in a drop-in instead, as [Hardware knobs](#hardware-knobs) shows.
 
 To remove the bridge, run the menu and choose **3) Uninstall the service**. This stops and
 removes the `systemd --user` unit and the installed script copy. It does **not** touch
@@ -344,16 +365,31 @@ that block by hand if you no longer want it.
 
 ## Hardware knobs
 
-The defaults match the hackergadgets uConsole AIO, so a stock AIO needs none of these. They
-exist for a revision or a board that differs: export what differs before launching the
-bridge, or put the lines in the service's environment.
+The pin defaults match the hackergadgets uConsole AIO v1, which needs none of these. The
+**AIO v2 needs `MESHCORE_EN_PINS=27`**, whether or not the `meshcore-console` package is
+installed. The radio settings default to the US/Canada preset. For a foreground run, export
+what differs before launching the bridge. For the service, add a drop-in, which survives a
+reinstall:
+
+```bash
+systemctl --user edit meshterm-spi-bridge.service
+```
+
+and put the variables under a `[Service]` heading, one `Environment=` line each:
+
+```ini
+[Service]
+Environment=MESHCORE_EN_PINS=27
+```
+
+Then `systemctl --user restart meshterm-spi-bridge.service`.
 
 | Variable | What it sets |
 | --- | --- |
 | `MESHCORE_BUS_ID`, `MESHCORE_CS_ID`, `MESHCORE_CS_PIN` | which SPI bus, device and chip-select pin the radio is on |
 | `MESHCORE_RESET_PIN`, `MESHCORE_BUSY_PIN`, `MESHCORE_IRQ_PIN` | the three control lines |
 | `MESHCORE_FREQUENCY`, `MESHCORE_TX_POWER` | frequency in Hz, power in dBm |
-| `MESHCORE_SPREADING_FACTOR`, `MESHCORE_BANDWIDTH`, `MESHCORE_CODING_RATE` | the modem preset — all three must match the mesh you are joining |
+| `MESHCORE_SPREADING_FACTOR`, `MESHCORE_BANDWIDTH`, `MESHCORE_CODING_RATE` | the modem preset — all three must match the mesh you are joining. Whole numbers only: bandwidth in Hz (`62500`), coding rate as the denominator (`5` for 4/5). A decimal or `4/5` stops the bridge at startup. |
 | `MESHCORE_TXEN_PIN`, `MESHCORE_RXEN_PIN`, `MESHCORE_EN_PINS` | the RF-switch and power-enable lines a board may need (`-1` for none; `EN_PINS` is a comma list — the AIO v2 wants `27`) |
 | `MESHCORE_USE_DIO2_RF`, `MESHCORE_USE_DIO3_TCXO`, `MESHCORE_IS_WAVESHARE` | whether DIO2 drives the RF switch and DIO3 the TCXO (both on for the AIO), and a flag for a different vendor's wiring the runtime knows about |
 | `MESHCORE_GPIO_CHIP`, `MESHCORE_USE_GPIOD_BACKEND`, `MESHCORE_PREAMBLE_LENGTH` | which gpiochip, whether to drive it through `gpiod`, and the LoRa preamble |
@@ -361,10 +397,11 @@ bridge, or put the lines in the service's environment.
 
 The bridge passes a knob only when the runtime's radio constructor accepts it, so the same
 environment works under `pymc_core` 1.0.x, which lacks the newer ones. Where the
-`meshcore-console` package is installed, the bridge builds the radio through *its* hardware
-configuration, which reads the same names plus a few more of its own — see that package's
-documentation. On a library-only install the table above is the whole of it, so an AIO v2
-without that package present may not power its radio.
+`meshcore-console` package is installed, the bridge builds the radio through that
+package's environment reader, which reads the same names plus a few more of its own (see
+that package's documentation) and ignores the GUI's saved presets. On a library-only
+install the table above is the whole of it. Either way, an AIO v2 without
+`MESHCORE_EN_PINS=27` will not power its radio.
 
 ---
 
@@ -375,10 +412,10 @@ without that package present may not power its radio.
 | `node runtime` fails in the preflight | Did you build the venv in [Step 2](#step-2--install-the-radio-runtime)? Is `MESHTERM_PYMC_PYTHON` pointing at the right interpreter, if set? |
 | `SPI device` shows "no /dev/spidev* found" | Is `dtoverlay=spi1-1cs` in `/boot/firmware/config.txt`? Did you reboot after adding it? |
 | `SPI device` or `GPIO chip` shows a permission error | Are you in the `spi` and `gpio` groups (`groups`)? Did you log out and back in after `usermod`? |
-| Preflight warns "radio in use — meshcore-console is running" | Close the GUI before running or installing the bridge. |
-| Preflight warns "port 5000 busy" | Something else is already listening there — check `systemctl --user status meshterm-spi-bridge.service` for an already-running instance. |
-| Bridge starts but `radio.begin()` fails after 4 attempts | GPIO lines may still be held by a session that just closed — wait a few seconds and try again. |
-| MeshTerm connects but direct messages to an old contact say "not found" | Restart the bridge — contacts are restored from its snapshot file at startup; if the snapshot is missing, the contact needs to be heard again. |
+| Preflight warns `radio in use         meshcore-console is running:` | Close the GUI before running or installing the bridge. |
+| Preflight warns `port 5000 busy         something is already on 127.0.0.1:5000` | Something other than the bridge service is listening there (an active service is reported as `bridge service running` instead). Usually it is a foreground `--run` in another terminal; stop that one. |
+| Bridge exits with `bridge failed: GPIO pins still busy after retries` | The bridge retries `radio.begin()` four times only when the GPIO lines are busy. They may still be held by a session that just closed — wait a few seconds and try again. |
+| MeshTerm connects but direct messages to an old contact say "not found" | Contacts are restored from the bridge's snapshot file at startup. If the contact is not in it, wait until the contact is heard again. |
 | Reboot, factory reset, or setting a device PIN silently does nothing | Expected — the radio library has no handler for these three, whatever runtime you're on. |
 | Traces or the live feed don't show up | These rely on compatibility shims the bridge installs (or, under `openhop_core`, on the library's own equivalents). Check the bridge's log for lines starting `compat:` to confirm they're wired. |
 
@@ -390,7 +427,7 @@ This has been verified on a bookworm uConsole with `openhop-core` 1.1.3: the rad
 contacts are restored across a restart, and `info` and `contacts` answer correctly over the
 TCP connection. The older `pymc-core` 1.0.x path, with all three of the bridge's
 compatibility shims active, has been exercised in full, including traces and the live feed.
-Every interface the bridge calls in both runtimes is checked by MeshTerm's test suite.
+MeshTerm's test suite does not cover the bridge.
 
 What has not been confirmed:
 

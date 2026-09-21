@@ -2,10 +2,9 @@
 # Copy to ~/.meshterm/config.toml (or pass --db / --port on the CLI).
 #
 # How MeshTerm itself behaves — transmit cooldown, message retries, how much history it
-# keeps, whether it connects at launch — is *not* here. Those are preferences: they live
-# in ~/.meshterm/preferences.toml, and are edited on the Preferences page (or with
-# `meshterm preferences set <key> <value>`). Every one has a built-in default, so that
-# file only ever lists what you have changed.
+# keeps — is *not* here. Those are preferences: they live in ~/.meshterm/preferences.toml,
+# and are edited on the Preferences page (or with `meshterm preferences set <key> <value>`).
+# Every one has a built-in default, so that file only ever lists what you have changed.
 #
 # Profiles are optional. With no profile, no --port/--ble/--tcp, MeshTerm discovers attached
 # serial devices and nearby Bluetooth companions, lets you pick one (interactively) or uses the
@@ -14,7 +13,10 @@
 # the picker's "add a network device" prompt. Define profiles below only to give your hardware
 # stable aliases (e.g. --profile yagi, --profile handheld for Bluetooth, --profile wifi for TCP).
 
-default_profile = "s3"
+# Uncomment and name one of your own profiles below to make it the default. Left
+# commented, MeshTerm finds the device itself, as described above.
+# default_profile = "s3"
+
 # Open the radio link as soon as the menu appears. False opens it lazily instead — only
 # once monitoring is turned on or a tool first needs the radio.
 connect_on_start = true
@@ -24,7 +26,6 @@ connect_on_start = true
 [profiles.s3]
 port = "COM5"
 baudrate = 115200
-default_tx_power = 20
 description = "XIAO ESP32-S3 + Wio SX1262 serial companion"
 
 [profiles.yagi]

@@ -26,7 +26,7 @@ Every interactive screen is listed here with its scripted equivalent, where one 
 | **📊 Dashboard** | The live mesh overview: a two-hour all-packet activity chart with a pulse line, session traffic tallies by packet class, and window RF health beside the radio's own live numbers. Repaints every second. | — |
 | **📰 Live feed** | Every packet as it arrives, newest first: time, what the frame *is* (its parsed payload class), and what it is *about* — the node for an advert, the channel for a channel text, sender → recipient for a direct message or a request, the tag for a trace — with reception quality beside it. Enter opens any row in the packet viewer, route graph and all. | — |
 | **🚨 Watchtower** | A passive sentinel over the nodes you star: silence alarms when a watched node goes quiet, SNR-sag warnings when reception degrades, recovery notes when it returns, and a heads-up when a never-before-seen node appears. Runs in the background all session; unacked alerts show as a header badge. | — |
-| **⏳ Time machine** | Everything the recorder ever heard, as braille charts: reception volume, the median-SNR band, hour-of-day rhythm, packets and nodes per day, and first-ever arrivals — over a switchable 24h / 7d / 30d / all-time window, per node or mesh-wide. | — |
+| **⏳ Time machine** | Everything the recorder ever heard, as braille charts: reception volume, the median-SNR band, hour-of-day rhythm, packets and nodes per day, and first-ever arrivals — over a switchable 24h / 7d / 30d / all-time window (on the PicoCalc the windows stop at 30d), per node or mesh-wide. | — |
 | **🎧 Monitor** | Passive recording is always on in the app. On the CLI, capture a bounded foreground window, tailing each overheard packet and summarising when it ends. It transmits nothing — it only listens. | `meshterm monitor --seconds 60` |
 
 ## 🧭 Explore — where the nodes are and how they reach each other
@@ -44,16 +44,16 @@ Every interactive screen is listed here with its scripted equivalent, where one 
 | Feature | What it does | Scripted |
 | --- | --- | --- |
 | **📋 Device info** | The connected companion's identity and full radio configuration at a glance. | `meshterm info` |
-| **🔧 Device config** | Every setting the companion firmware exposes — name, radio, client repeat, auto-add, telemetry, custom variables — *staged* for review and applied in place, plus the operations on the box itself: clock sync, TOML backup/restore, the identity key, reboot, and factory reset, each acting the moment it's confirmed, with destructive ops gated. Laid out like Repeater admin, so the radio in your hand and one over the mesh are configured the same way. | `meshterm config` / `config set <key> <value>` / `config backup` / `reboot` / … |
+| **🔧 Device config** | Every setting the companion firmware exposes — name, radio, client repeat, auto-add, telemetry, custom variables — *staged* for review and applied in place, plus the operations on the box itself: clock sync, TOML backup/restore, the identity key, reboot, and factory reset, each acting the moment it's confirmed, with destructive ops gated. Laid out like Repeater admin, so the radio in your hand and one over the mesh are configured the same way. | `meshterm config` / `config set <key> <value>` / `config backup` / `config reboot` / … |
 | **📡 Send advert** | Announce this node to the mesh — a zero-hop or flood advertisement, or share this node's contact card as a QR code. | `meshterm config advert` / `config share` |
-| **🔌 Device discovery** | Enumerate serial *and* Bluetooth LE companions, pick one interactively (or auto-select the only one present), add a network (TCP) companion by host:port, and remember the last good default. A dropped link is detected live and offers to reconnect. | `meshterm devices` |
+| **🔌 Devices** | Not a menu screen. The companion is picked on the startup splash, which enumerates serial *and* Bluetooth LE companions (or auto-selects the only one present), adds a network (TCP) companion by host:port, and remembers the last good default. A dropped link is detected live and offers to reconnect. `meshterm devices` lists what discovery finds. | `meshterm devices` |
 
 ## 🗼 Other nodes — someone else's radio, over the mesh
 
 | Feature | What it does | Scripted |
 | --- | --- | --- |
 | **🗼 Repeater admin** | Set up remote repeaters and room servers over the mesh: log in (remembered or prompted password), then a config-style editor speaking the node's text CLI — including repeater-only knobs (TX delay, airtime factor, advert intervals) — plus one-shot actions and a readline remote command line. | `meshterm repeater-admin <node> <command…>` |
-| **📶 TX optimize** | Sweep a remote node's transmit power live — coarse, then refine, then verify — watch each level land, and decide whether to apply the winner. | `meshterm tx-optimize --path … [--apply]` |
+| **📶 TX optimize** | Sweep a remote node's transmit power live — coarse, then refine, then verify — watch each level land, and decide whether to apply the winner. The scripted form applies the winner unless told not to. | `meshterm tx-optimize --path … [--no-apply]` |
 
 ## ⚙ This app — the program in front of you
 
@@ -63,7 +63,7 @@ pages close it.
 
 | Feature | What it does | Scripted |
 | --- | --- | --- |
-| **⚙ Preferences** | How MeshTerm behaves — startup, sending, history, map framing. Grouped and staged, saved by one action at the bottom, and written to `preferences.toml` as only the values you changed. [Configuring MeshTerm](configuration.md) has the detail. | `meshterm preferences show / set / reset` |
+| **⚙ Preferences** | How MeshTerm behaves, in eight groups: Device, Sending, TX optimize, Watchtower, Map, History, Display and Diagnostics. Grouped and staged, saved by one action at the bottom, and written to `preferences.toml` as only the values you changed. [Configuring MeshTerm](configuration.md) has the detail. | `meshterm preferences show / set / reset` |
 | **🩺 Diagnostics** | Everything a bug report opens with, in one block: which build this is and how it was installed, the OS, the terminal and its size, the boot-time verdicts that show on no screen (icons, powerline, platform flavour and why), the radio and its link, and how much history is stored. Nothing private — no keys, passwords, positions or contact names; the mesh is described as per-table counts and the span they cover. `s` saves it beside the log for attaching. | `meshterm diagnostics [--out PATH]` |
 | **📖 About MeshTerm** | What MeshTerm is, where it came from, and the terms it ships under — including the map and font credits and the licence URL. | `meshterm about` |
 | **👤 About the author** | The person behind MeshTerm, on the mesh and off it. | `meshterm about-author` |

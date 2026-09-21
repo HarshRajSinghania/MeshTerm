@@ -38,7 +38,8 @@ USB, Bluetooth or Wi-Fi needs none of this.
 Two surveys of the code, written the same day against the same commit. They are kept
 because a project that writes down its own problems is easier to trust than one that
 doesn't — but they are **snapshots of a date, not to-do lists**. Some of what they
-describe has been fixed since, and each says so where it has.
+describe has been fixed since. The navigation survey marks what was resolved; the UI
+survey does not.
 
 | Read | For |
 | --- | --- |

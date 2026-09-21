@@ -37,8 +37,9 @@ meshterm courier queue Alice "ping me when you're back" --at 18:30
 meshterm courier list                 # the outbox — waiting and finished
 meshterm courier send 3               # force one delivery attempt now
 
-# Remote repeater admin (one transmission per invocation)
-meshterm repeater-admin Bravo-Repeater "get name"
+# Remote repeater admin (one transmission per invocation). --password is needed
+# until an interactive login has stored one.
+meshterm repeater-admin Bravo-Repeater "get name" --password YOUR-ADMIN-PASSWORD
 
 # Device configuration: view, set, back up, restore
 meshterm config                       # show all current settings, one `key value` per line
@@ -54,16 +55,18 @@ meshterm monitor --seconds 60
 ```
 
 Global options — `--profile/-p`, `--port`, `--ble`, `--ble-pin`, `--tcp`, `--mock`,
-`--db`, `--json`, `--absolute`, `--quiet/-q` — may be typed **before or after** the
-subcommand: `meshterm contacts --json` and `meshterm --json contacts` are the same run.
+`--db`, `--json`, `--absolute`, `--quiet/-q`, `--platform` — may be typed **before or
+after** the subcommand: `meshterm contacts --json` and `meshterm --json contacts` are the
+same run.
 
 ## Two output faces
 
 *(The short version — [`docs/cli.md`](cli.md) has the whole of it.)*
 
 The **plain face** is for a person at a prompt. It prints like a standard Unix utility —
-no colour, no borders, one record per line, nothing wrapped — and it is allowed to be
-comfortable about it: listings are `ps`-style aligned records with **bare names**
+no colour, no borders, one record per line, nothing wrapped except the four written
+pages (`about`, `about-author`, `discord`, `support`), which wrap at 72 cells — and it is
+allowed to be comfortable about it: listings are `ps`-style aligned records with **bare names**
 (alignment is the delimiter), times are **relative ages** (`now`, `5m`, `never`), and a
 route is drawn with arrows — `MockCompanion (00) → Yagi-Repeater (a1) → Alice (d4)`.
 `--absolute` swaps every age back for an ISO-8601 instant. A *path*, the spec `--path`
@@ -98,7 +101,7 @@ without counting output lines.
 
 ```bash
 if meshterm contacts > contacts.txt; then
-    echo "$(wc -l < contacts.txt) contacts"
+    echo "$(($(wc -l < contacts.txt) - 1)) contacts"      # minus the header
 elif [ $? -eq 5 ]; then
     echo "no contacts yet"
 fi

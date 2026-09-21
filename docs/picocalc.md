@@ -65,9 +65,9 @@ a radio in the meantime.
 | Item | Product / what to search for | Approx. price | Link | Note |
 | --- | --- | --- | --- | --- |
 | PicoCalc kit | ClockworkPi PicoCalc | $89 | [clockworkpi.com/product-page/picocalc](https://www.clockworkpi.com/product-page/picocalc) | Comes with a Raspberry Pi Pico 1H, screen, keyboard, shell, hex key and a 32 GB SD card. **18650 batteries are not included.** |
-| Luckfox Lyra | "Luckfox Lyra 128MB, pre-soldered header, no NAND" | $20–25 | [luckfox.com/Luckfox-Lyra](https://www.luckfox.com/Luckfox-Lyra) | Buy the **plain 128 MB RAM, Pico-form-factor** variant, **with the header pre-soldered**. See the note below — this is the one part of the list where the wrong SKU won't work. |
+| Luckfox Lyra | "Luckfox Lyra 128MB, pre-soldered header, no NAND" | $20–25 | [luckfox.com/Luckfox-Lyra](https://www.luckfox.com/Luckfox-Lyra) | Buy the **plain 128 MB RAM, Pico-form-factor** variant, **with the header pre-soldered**. Other RAM sizes have incompatible pinouts, so this is the one part of the list where the wrong SKU won't work. |
 | microSD card | 16 GB+, Class 10 or better | $6–10 | — | The PicoCalc's stock 32 GB card works fine — it's more than the 8 GB minimum. You can reuse it instead of buying a new one. |
-| Two 18650 batteries | e.g. Samsung 30Q, Molicel P26A, Sony VTC6 (examples, not endorsements) | $10–20 | — | **Unprotected**, flat-top or button-top, Ø18 × 65–69 mm. See [the battery note](#a-note-on-batteries) below. |
+| An 18650 battery | e.g. Samsung 30Q, Molicel P26A, Sony VTC6 (examples, not endorsements) | $5–10 | — | **Unprotected**, flat-top or button-top, Ø18 × 65–69 mm. One is enough to run; a second is optional (below). See [the battery note](#a-note-on-batteries) below. |
 | USB Wi-Fi dongle | TP-Link TL-WN725N (an RTL8188EU nano dongle), or search the **chipset name**: RTL8192CU, R8712U, RTL8188EU | $5–10 | [amazon.ca/dp/B008IFXQFU](https://www.amazon.ca/dp/B008IFXQFU) | The TL-WN725N is the dongle this guide was built with. Must run at **3.3 V** — see [Step 3](#step-3--attach-the-wi-fi-dongle). Only needed for setup and updates; MeshTerm itself runs offline. |
 | MX1.25 4-pin pigtail | "MX1.25 4P cable with leads" (a pack of pre-crimped pigtails, 10–15 cm) | $2–4 | — | One end of the DIY USB lead in [Step 3](#step-3--attach-the-wi-fi-dongle). Pre-crimped, because MX1.25 contacts need a crimper you don't otherwise own. |
 | USB-A female socket | "USB 2.0 type A female socket, solder / through-hole" | $2–3 | — | The other end of the DIY lead. A ready-made [MX1.25 4P to USB-A cable](https://spotpear.com/shop/Luckfox-Lyra-MX1.25-4P-To-USB-A-Cable.html) (about $1, 30 cm) works too, but it is a lot of cable to fold into the shell. |
@@ -101,7 +101,7 @@ a radio in the meantime.
 | Foam tape | To secure the XIAO board inside the shell once it's wired in. |
 
 Approximate total: **$130–150** for the machine and radio together, before batteries — most
-of that is the two boards ($89 + ~$22) and the radio kit ($13.49).
+of that is the PicoCalc kit ($89), the Lyra (~$22) and the radio kit ($13.49).
 
 **What you do NOT need:**
 
@@ -213,8 +213,8 @@ machine it describes. Read this section before you open the shell.
 Follow ClockworkPi's own
 [assembly guidelines](https://github.com/clockworkpi/PicoCalc/blob/master/Clockwork_PicoCalc_Assembly_Guidelines.pdf)
 (a PDF in the [PicoCalc repository](https://github.com/clockworkpi/PicoCalc), which also
-has a wiki) to put the kit together: mainboard, screen, keyboard, speakers and shell. Insert your two
-18650 batteries, watching the `+`/`-` marks in the battery compartment.
+has a wiki) to put the kit together: mainboard, screen, keyboard, speakers and shell. Insert your 18650
+battery (or two), watching the `+`/`-` marks in the battery compartment.
 
 ⚠ Two of the warnings in [Three ways to break it](#three-ways-to-break-it) apply here: tape
 the screen's edges with Kapton before you close the shell and check it sits square, and
@@ -311,14 +311,17 @@ Don't power the device on yet — Wi-Fi is set up later, once Calculinux is inst
 
 ### Step 4 — Write the image to the microSD
 
-On your PC, download the latest `calculinux-image-luckfox-lyra.rootfs.wic.gz` from the
-[Calculinux releases page](https://github.com/Calculinux/meta-calculinux/releases).
+On your PC, download `calculinux-image-luckfox-lyra.rootfs-<timestamp>.wic.gz` from the
+newest release on the
+[Calculinux releases page](https://github.com/Calculinux/meta-calculinux/releases). Every
+Calculinux release is marked **Pre-release**, so there is no "Latest" badge to follow; take
+the newest pre-release.
 
 Decompress it:
 
 ```bash
 # on the PC
-gunzip calculinux-image-luckfox-lyra.rootfs.wic.gz
+gunzip calculinux-image-luckfox-lyra.rootfs-*.wic.gz
 ```
 
 (The Calculinux installation page mentions `unxz`, but the file is a `.gz`, so use
@@ -331,11 +334,11 @@ Write the resulting `.wic` file to your microSD card. Three options:
 - **`dd`**, on Linux/macOS. Check the device name first — writing to the wrong device
   destroys its contents:
 
-```bash
-# on the PC
-lsblk                                        # find your SD card's device, e.g. /dev/sdb
-sudo dd if=calculinux-image-luckfox-lyra.rootfs.wic of=/dev/sdX bs=4M status=progress conv=fsync
-```
+  ```bash
+  # on the PC
+  lsblk                                        # find your SD card's device, e.g. /dev/sdb
+  sudo dd if=calculinux-image-luckfox-lyra.rootfs-*.wic of=/dev/sdX bs=4M status=progress conv=fsync
+  ```
 
 - **Rufus**, on Windows — select the device and the image, choose the **MBR** partition
   scheme, and start.
@@ -344,6 +347,9 @@ This erases everything already on the card. Once it finishes, eject it and put i
 **Luckfox Lyra's own microSD slot** — not the PicoCalc's front-facing slot. The Lyra boots
 from its own slot; the front slot is only reachable once MeshTerm (or anything else) is
 already running on Linux.
+
+Leave the front slot **empty** for the first boot, as Calculinux's own instructions warn: a
+second card there with duplicate partition labels leaves the system read-only.
 
 ### Step 5 — First boot
 
@@ -417,30 +423,29 @@ the network, so this is a one-time step; to change networks later, run `uwific` 
 ### Step 8 — Copy the setup scripts to the device
 
 You need this repository's `scripts/` directory on the Lyra — its `picocalc/` folder is the
-part the Lyra runs. Three ways to get it there, in order of ease:
+part the Lyra runs. Two ways to get it there, once Wi-Fi is up:
 
-- **`scp` from your PC**, once Wi-Fi is up. Find the Lyra's IP address with `ip addr show
-  wlan0` on the device, then from your PC:
+- **`scp` from your PC**. Find the Lyra's IP address with `ip addr show wlan0` on the
+  device, then from your PC:
 
-```bash
-# on the PC, from your MeshTerm checkout
-scp -r scripts root@<lyra-ip>:/root/
-```
+  ```bash
+  # on the PC, from your MeshTerm checkout
+  scp -r scripts root@<lyra-ip>:/root/
+  ```
 
   If root is refused over SSH, copy as the `pico` user (password `calc`) instead, then
   move the directory as root on the device:
 
-```bash
-# on the PC
-scp -r scripts pico@<lyra-ip>:/home/pico/
-# on the PicoCalc, as root
-mv /home/pico/scripts /root/
-```
+  ```bash
+  # on the PC
+  scp -r scripts pico@<lyra-ip>:/home/pico/
+  # on the PicoCalc, as root
+  mv /home/pico/scripts /root/
+  ```
 
-- **The microSD card.** Pull the card, copy `scripts/` onto it from your PC's card reader,
-  put it back.
-- **`git clone` on the device.** Only once `git` is installed, and the setup script is what
-  installs it — so this is a route for later updates, not the first copy.
+- **`git clone` on the device.** `git` ships in the Calculinux base image, so as root you
+  can run `git clone https://github.com/jpmartineau/MeshTerm` and use the `scripts/`
+  folder inside the clone.
 
 `scp` is the recommended route.
 
@@ -452,30 +457,40 @@ cd scripts/picocalc
 sh calculinux-setup.sh
 ```
 
-It's idempotent — safe to re-run — and it checks before it acts. Two things it can't figure
-out on its own, both covered by environment variables read at the top of the script:
+It's idempotent — safe to re-run — and it checks before it acts. It reads these
+environment variables at the top of the script:
 
 | Knob | Default | Effect |
 | --- | --- | --- |
 | `DEPLOY_USER` | `meshterm` | the login MeshTerm runs under |
-| `TIMEZONE` | `America/Toronto` | any IANA zone |
+| `TIMEZONE` | `America/Toronto` | any IANA zone. Set it if you are not on Eastern time. |
 | `REPO_URL` | the project's HTTPS URL | cloned when there's no deploy key |
 | `REPO_SSH` | the project's SSH URL | cloned when there is one |
 | `KEY_PATH` | `/home/$DEPLOY_USER/.ssh/id_ed25519` | a read-only GitHub deploy key, if you want SSH instead of HTTPS |
+| `WIFI_SSID`, `WIFI_PSK` | unset | set both and the script writes `iwd`'s credentials for that network, as an alternative to Step 7 |
 
-You don't need to set any of these for a normal install — the defaults clone MeshTerm's
-public repository over plain HTTPS, which needs no credential at all.
+The defaults clone MeshTerm's public repository over plain HTTPS, which needs no credential
+at all. The one you are likely to need is `TIMEZONE`, if you live outside Eastern time:
+
+```bash
+# on the PicoCalc, as root
+TIMEZONE=America/Vancouver sh calculinux-setup.sh
+```
+
+The script installs only the Americas time-zone data, so a zone elsewhere may not take. If
+it cannot set the zone, it warns and the clock stays on UTC.
 
 What it does, one line per phase:
 
-- **opkg packages** — installs `python3-modules`, `python3-pip`, `git`, `kbd`, because
-  Calculinux ships a stripped Python missing `pip`, `venv` and several stdlib modules.
+- **opkg packages** — installs `python3-modules` and `python3-pip` (and `git` and `kbd`,
+  if the image lacks them), because Calculinux ships a stripped Python missing `pip`,
+  `venv` and several stdlib modules.
 - **Wi-Fi kick** — installs a boot-time service that re-scans until the dongle joins the
   network `iwd` already knows, because on a cold boot the dongle's firmware finishes
   loading after `iwd`'s first scan and the link would otherwise never come up.
 - **Time sync** — installs a boot-time service that sets the clock over the network, since
   this board has no battery-backed real-time clock.
-- **Timezone** — sets `$TIMEZONE` (Eastern by default).
+- **Timezone** — sets `$TIMEZONE` (`America/Toronto` by default).
 - **Deploy user** — creates the `meshterm` login and puts it in the groups it needs.
 - **Clone** — checks out MeshTerm to `/home/meshterm/MeshTerm`.
 - **venv and install** — builds a Python virtual environment and `pip install -e .`s
@@ -493,9 +508,10 @@ password yet, so set one first:
 passwd meshterm
 ```
 
-> **With no Wi-Fi dongle attached, the next boot takes about six minutes** to get past the
-> Wi-Fi kick, which keeps trying before it gives up. Nothing is broken. If the device is
-> going to live offline, see [Day-to-day](#day-to-day) for how to switch the kick off.
+> **With no Wi-Fi dongle attached, the next boot can take up to about eleven minutes.**
+> The Wi-Fi kick keeps trying for about six before it gives up, and the time sync then
+> waits up to five more for a network route. Nothing is broken. If the device is going to
+> live offline, see [Day-to-day](#day-to-day) for how to switch both off.
 
 ### Step 10 — Log in as meshterm
 
@@ -521,7 +537,7 @@ Then look at the whole visual language on one card:
 meshterm specimen
 ```
 
-There are two console fonts available — a 6×12 one (53×26 rows) and a 6×8 one (53×40 rows,
+There are two console fonts available — a 6×12 one (53 × 26) and a 6×8 one (53 × 40,
 more rows but no Cyrillic glyphs). Try both from *Preferences → Display → Console font* —
 picking one previews it immediately, and the screen repaints at the new row count so you can
 see the choice before you keep it.
@@ -776,8 +792,9 @@ default_tx_power = 22
 description = "XIAO nRF52840 + SX1262 via Lyra UART1 on GP4/GP5"
 ```
 
-If a `config.toml` already exists, it prints those lines instead of touching your file —
-paste them in yourself.
+If a `config.toml` already exists, it leaves your file untouched and prints only the
+`default_profile` line, the `[profiles.picocalc]` heading and the `port`. Copy the whole
+block above into your file yourself.
 
 ### Step 16 — Run it
 
@@ -788,7 +805,8 @@ Log out and back in as `meshterm` (so the `dialout` group membership takes effec
 meshterm
 ```
 
-Because `default_profile` is set, a bare `meshterm` connects straight to the radio. You
+A bare `meshterm` opens on the **Select a companion device** splash, with the `picocalc`
+profile listed as a row; pick it. To skip the splash, run `meshterm -p picocalc`. You
 should see your node come up under whatever name the firmware advertises — both the device
 page and the dashboard header show it.
 
@@ -815,38 +833,46 @@ through the Lyra's own USB-C at the back — see
 sudo poweroff
 ```
 
-**Updating MeshTerm.** Either re-run the setup script from root (it pulls the repository,
-reinstalls, and rebuilds the console font):
+**Updating MeshTerm.** The copy of `scripts/` you made in Step 8 goes stale as soon as
+the checkout moves on, so run the scripts inside the checkout instead. Either pull and
+re-run the setup script from root (it reinstalls and rebuilds the console font):
 
 ```bash
 # on the PicoCalc, as root
-sh calculinux-setup.sh
+su - meshterm -c 'git -C ~/MeshTerm pull'
+sh /home/meshterm/MeshTerm/scripts/picocalc/calculinux-setup.sh
 ```
 
 or, as the `meshterm` user, do just the update:
 
 ```bash
 # on the PicoCalc, as meshterm
-cd ~/MeshTerm && git pull && .venv/bin/pip install -e .
+cd ~/MeshTerm && git pull && TMPDIR=$HOME/tmp .venv/bin/pip install -e .
 ```
 
 If an update adds new glyphs to the console font, rebuild it on its own afterwards:
 
 ```bash
 # on the PicoCalc, as root
-sh calculinux-console-font-6x12.sh
+sh /home/meshterm/MeshTerm/scripts/picocalc/calculinux-console-font-6x12.sh
 ```
 
 **Changing Wi-Fi.** Run `uwific` as root, as in [Step 7](#step-7--join-wi-fi). The boot-time
 kick picks up the new network on its own; it only needs `iwd` to know it.
 
-**The six-minute boot without a dongle.** If the device is going to run permanently offline,
-the Wi-Fi kick is wasted time on every boot. Disable it:
+**The slow boot without a dongle.** If the device is going to run permanently offline,
+the Wi-Fi kick and the time sync are wasted time on every boot. Disabling the kick is not
+enough, because the time sync pulls it back in, so mask it. Then disable the time sync,
+which would otherwise still wait up to five minutes for a network:
 
 ```bash
 # on the PicoCalc, as root
-systemctl disable --now wifi-kick.service
+systemctl mask --now wifi-kick.service
+systemctl disable --now time-sync.service
 ```
+
+To undo it later, `systemctl unmask wifi-kick.service` and
+`systemctl enable time-sync.service`.
 
 **The console font restores itself.** MeshTerm saves whatever font the console was using
 before it starts, and puts it back when it exits — on a normal quit and on a crash alike.
@@ -876,10 +902,10 @@ You don't need to do anything to keep the shell's own font intact.
 
 This whole path — from a stock PicoCalc kit through a running radio — has been exercised on
 one maintainer's bench: one Luckfox Lyra, one PicoCalc, one XIAO + Wio-SX1262 pair. It
-works. Some of it is also checked in code: a test parses the font script and pins it to
-MeshTerm's glyph inventory, the profile keys the scripts write are tested, the pinned
-MeshCore commit exists, the patch's two hunks are still needed on `dev`, and the nRF52840
-UF2 family id and both XIAO bootloader ids match Adafruit's board files.
+works. One part is also checked in code: a test (`tests/test_theme16.py`) parses the font
+script and pins it to MeshTerm's glyph inventory. The pinned MeshCore commit, the need for
+the patch's two hunks on `dev`, and the nRF52840 UF2 family id and XIAO bootloader ids
+against Adafruit's board files were checked by hand when this was written.
 
 The rest is one bench's findings, and a second device may disagree:
 

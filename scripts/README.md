@@ -5,7 +5,7 @@ Repo-side tools. None of these ship in the wheel.
 | Script | What it is for |
 |---|---|
 | `basemap-doctor.py` | Why a user's map has no basemap — certificates, DNS, proxy, or colour depth |
-| `picocalc/` | Calculinux device setup: console font, palette, Wi-Fi, radio bridge |
+| `picocalc/` | Calculinux device setup: console font, palette, Wi-Fi; `xiao-radio/` is the XIAO radio kit (firmware build, flashing, UART setup) |
 | `uconsole/` | The uConsole SPI bridge service |
 
 ## basemap-doctor.py

@@ -13,13 +13,11 @@ It prints two ways, and the difference is who is reading.
   `2026-09-08T04:26:00-04:00`, and a route is drawn with arrows.
 - The **JSON face** (`--json`) is for a program, often on another machine and often later.
   It is the contract: typed values, absent spelled `null`, timestamps in UTC, keys that do
-  not move. It works on **every** command — it used to reach two out of twenty.
+  not move. It works on **every** command.
 
-The CLI used to make one promise to both of them — that it was written to be read by
-`awk` — and every rule followed from that. That promise now belongs to `--json`, which
-keeps it properly, and the plain face is released from it. If you are splitting output on
-whitespace to feed a script, stop: `--json` exists so you do not have to, and the plain
-face is no longer holding still for you.
+The promise to be read by a program belongs to `--json`. The plain face makes no such
+promise. If you are splitting output on whitespace to feed a script, stop: `--json` exists
+so you do not have to, and the plain face may change between releases.
 
 - [Running it](#running-it)
 - [Where MeshTerm keeps its state](#where-meshterm-keeps-its-state)
@@ -123,7 +121,8 @@ it keeps the simulator's invented mesh out of your history, not out of the cache
 ## About the examples
 
 **Every sample below was captured from a real run against the built-in simulator**
-(`--mock`), in a throwaway `MESHTERM_HOME`. None of it is typed out by hand. The simulator
+(`--mock`), in a throwaway `MESHTERM_HOME`, except the `diagnostics` sample, which says so
+where it appears. None of it is typed out by hand. The simulator
 answers as a companion would — it has four contacts (`Alice`, `Yagi-Repeater`,
 `Local-Repeater`, `Observer-Bot`), it adverts, it replies to traces — so the shapes are
 real even where the numbers are invented.
@@ -176,11 +175,10 @@ Yagi-Repeater   repeater     7m     -  a1    45.50190,-73.56740  a1b2c3d40000000
 Alice           node         7m     -  d4    -                   d4e5f6a700000000000000000000000000000000000000000000000000000000
 ```
 
-Names used to be quoted, so that `awk` could split on the quote and get one field out of a
-name holding a space. That bought one reader a delimiter and cost every other reader a
-line full of punctuation. The **escaping under the quoting stays and always will**: a node
-broadcasts its own name and a stranger fills in a message body, so neither may hold a raw
-control character or end the record it sits in.
+Names are not quoted. Quoting would give a script a delimiter and give every person a
+line full of punctuation. Names **are escaped**: a node broadcasts its own name and a
+stranger fills in a message body, so neither may hold a raw control character or end the
+record it sits in.
 
 **A time is an age**, because "recently?" is the question a listing is opened to answer:
 `now`, `5m`, `3h`, `never`. An absolute instant survives where the instant *is* the fact —
@@ -260,12 +258,12 @@ last so it can push nothing.
 **No wrapping, with one exception.** A record is a line; wrapping would put half a
 record's fields under the wrong headings, so nothing folds and a long line runs off the
 right. The exception is the four written pages (`about`, `about-author`, `discord`,
-`support`), which now wrap at 72 cells. The no-wrap rule exists to protect a record's
+`support`), which wrap at 72 cells. The no-wrap rule exists to protect a record's
 fields; a paragraph has no fields, and unwrapped it is a 600-cell line no terminal can
 read.
 
 **stdout is the answer; everything else is stderr** — errors (`meshterm: what went
-wrong`), progress bars, log records, and now the two things that used to be thrown away:
+wrong`), progress bars, log records, acknowledgements and closing messages:
 
 ```console
 $ meshterm config set radio_sf 9
@@ -275,10 +273,9 @@ $ meshterm config set radio_sf 9 2>&1
 ```
 
 An **acknowledgement** ("✓ device clock set") and a command's closing **message** ("0
-records stored") are reassurance a person needs and a script does not. They used to be
-dropped on the CLI entirely. Sending them to stderr keeps the promise the dropping was
-made to keep — `meshterm contacts > contacts.txt` still puts contacts in the file and
-nothing else — while giving the person at the prompt back their tick and their count.
+records stored") are reassurance a person needs and a script does not. Sending them to
+stderr means `meshterm contacts > contacts.txt` puts contacts in the file and nothing
+else, while the person at the prompt still sees their tick and their count.
 
 ---
 
@@ -428,7 +425,7 @@ The return value is half the report, on both faces.
 | Code | Meaning |
 | --- | --- |
 | `0` | Success. |
-| `1` | Failure with no more specific code — an unreadable file, an unhandled fault. |
+| `1` | Failure with no more specific code — an unreadable file, an unknown setting or preference key (`config set`, `preferences set`), an unhandled fault. |
 | `2` | Usage error: an unknown flag, a missing argument, a value the parser rejected, a confirmation not given. |
 | `3` | No companion device could be selected: none attached, the named one could not be opened, or the choice was ambiguous. **Nothing was transmitted.** |
 | `4` | A device was reached but the operation failed — a command error, a timeout, a link lost mid-run. Retrying is reasonable. |
@@ -436,9 +433,8 @@ The return value is half the report, on both faces.
 
 The table is printed under `meshterm --help` as well.
 
-Two boundaries are worth stating because both used to sit in the wrong place. **Nothing
-transmitted is not a device failure**: a value the tool refuses before it opens the radio
-is a usage error, so a missing `--yes`, a bad `--sort` or `--category`, an unknown
+Two boundaries need stating. **Nothing transmitted is not a device failure**: a value
+the tool refuses before it opens the radio is a usage error, so a missing `--yes`, a bad `--sort` or `--category`, an unknown
 `--profile`, an outbox id that does not exist, and `tx-optimize` with no password
 available are all `2`. And **a named connection that will not open is `3`, not `4`**: a
 `--port` that is not there means no device was selected, and nothing went out.
@@ -621,11 +617,11 @@ table has no room for.
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `target` | string | What `--port` / `--ble` take, verbatim. |
-| `transport` | string | `"serial"` \| `"ble"` \| `"tcp"`. |
-| `port` | string \| null | The serial port, for a serial device. |
+| `transport` | string | `"serial"` \| `"ble"` \| `"tcp"`, or `"mock"` under `--mock`. |
+| `port` | string \| null | The serial port, for a serial device. `""` on the `--mock` row. |
 | `address` | string \| null | The Bluetooth address, for a BLE device. |
 | `label` | string | The OS's name for the device, or the confirmed node name where we have one. |
-| `hardware` | string \| null | The confirmed hardware model, else the USB vendor label. |
+| `hardware` | string \| null | The confirmed hardware model, else the USB vendor label. `""` on the `--mock` row. |
 | `meshcore` | string | `"yes"` \| `"maybe"` \| `"no"`. Not a boolean — rounding a hint up to `true` would be a lie. |
 | `confidence` | string | `"board"` \| `"bridge"` \| `"unknown"` — what a `"maybe"` was derived from. |
 | `serial_number` | string \| null | |
@@ -633,6 +629,9 @@ table has no room for.
 | `confirmed` | boolean | Whether this device is stored as a proven companion. |
 | `remembered` | boolean | Whether it is the remembered default. |
 | `active` | boolean | Whether this invocation is (or would be) using it. |
+
+Under `--mock` there is no scan. The list is one row for the simulator: `target`
+`"--mock"`, `transport` `"mock"`, `stable_id` `"mock:simulator"`.
 
 Returns `5` when nothing is found.
 
@@ -686,10 +685,11 @@ always present:
 {"name":"MockCompanion","public_key":"0000000000000000000000000000000000000000000000000000000000000000","role":"companion","model":"MeshCore Simulator","firmware":"mock mock","battery_v":4.1,"storage_used_kb":128,"storage_total_kb":1024,"clock_at":"2026-09-08T08:24:42Z","clock_drift_s":-125,"uptime_s":93784,"noise_floor_dbm":-110,"last_rssi_dbm":-62,"last_snr_db":9.5,"tx_air_s":42,"rx_air_s":360,"packets_sent":210,"packets_received":1234,"receive_errors":3}
 ```
 
-`role` is `"companion"` \| `"repeater"` \| `"room server"` \| `"sensor"` \| `null`. This is
-the one place the two faces disagree about absence on purpose: plain omits a key the
-firmware never answered for, JSON writes `null`, because a variable key set costs every
-consumer a lookup guard on every field.
+`role` is `"companion"` \| `"repeater"` \| `"room server"` \| `"sensor"` \| `null`, or
+`"type N"` for an advert type MeshTerm does not know. This is the one place the two faces
+disagree about absence on purpose: plain omits a key the firmware never answered for, JSON
+writes `null`, because a variable key set costs every consumer a lookup guard on every
+field.
 
 `info` does not embed a `node` object — it is our own node in far more detail than the
 shape carries, and `name` / `public_key` here are its whole identity. What the radio is
@@ -728,10 +728,12 @@ radio_bw             62.5
 radio_sf             8
 radio_cr             5
 tx_power             20
+client_repeat        false
 airtime_factor       0.0
 rx_delay             0.0
 manual_add_contacts  false
 autoadd_config       0
+autoadd_max_hops     0
 flood_scope          ""
 adv_loc_policy       0
 multi_acks           0
@@ -792,7 +794,7 @@ $ meshterm config advert-cadence 6 --json
 $ meshterm config sync-clock --json
 {"changes":1,"set_at":"2026-09-08T08:29:27Z","drift_s":-125}
 $ meshterm config backup node.toml --json
-{"path":"D:\\vibe\\MeshTerm\\node.toml","settings":20,"channels":0,"custom":0}
+{"path":"node.toml","settings":22,"channels":0,"custom":0}
 $ meshterm config restore node.toml --dry-run --json
 {"dry_run":true,"changes":0}
 $ meshterm config export-key --json
@@ -805,8 +807,8 @@ $ meshterm config share --json
 
 `previous` is `null` where the snapshot held no prior value; `changes` is `0` and
 `applied` is `[]` where the value already was what was asked for, and the exit stays `0`
-because the command did what it was asked. `backup`'s `path` is the file actually written
-(the plain face prints it bare, so a caller can keep it). `export-key` carries a private
+because the command did what it was asked. `backup`'s `path` is the file written, as you
+named it (the plain face prints it bare, so a caller can keep it). `export-key` carries a private
 key, exactly as the plain face does — that is what the command was asked for, and no extra
 gate is introduced here. `factory-reset --yes` answers `{"factory_reset":true}`.
 
@@ -839,8 +841,8 @@ Yagi-Repeater   repeater     7m     -  a1    45.50190,-73.56740  a1b2c3d40000000
 answer; `--absolute` turns it into an instant. `PKTS` is how many packets passive
 monitoring has overheard.
 
-**`HASH` is the token `--path` and `--to` take.** It used to have to be sliced out of `KEY`
-by hand, and getting the width wrong meant addressing a different node. It is exactly the
+**`HASH` is the token `--path` and `--to` take**, so it never has to be sliced out of `KEY`
+by hand, where getting the width wrong would address a different node. It is exactly the
 device's path-hash width. **`LOCATION`** is a fact the model always carried and no column
 had room for. `KEY` stays full and last, so it runs off the right harmlessly and is never
 elided: a truncated key is not something a caller can hand back.
@@ -880,7 +882,6 @@ TIME                       NODE      SNR_DB  RSSI_DBM  LOCATION             NAME
 2026-09-08T04:26:00-04:00  b2c3d4e5    +9.5       -98  45.47680,-73.59900   Local-Repeater
 2026-09-08T04:26:00-04:00  c3d4e5f6    +4.9       -93  -                    Observer-Bot
 2026-09-08T04:26:00-04:00  d4e5f6a7    +7.4       -86  -                    Alice
-
 NODE      NAME            PKTS  MEDIAN_SNR_DB  BEST_SNR_DB  RSSI_DBM  HEARD  LOCATION
 d4e5f6a7  Alice            149           +6.9        +14.1       -93    now  -
 c3d4e5f6  Observer-Bot     148           +5.7        +13.0      -108    now  -
@@ -888,9 +889,10 @@ b2c3d4e5  Local-Repeater   132           +6.7        +14.9      -102    now  45.
 a1b2c3d4  Yagi-Repeater    132           +6.0        +13.6       -90    now  45.50190,-73.56740
 ```
 
-Two blocks, separated by a blank line. The **stream** is a header and then a record per
-packet as it arrives; its lanes are pinned in advance, because a capture cannot measure a
-column it has not seen yet, and `TIME` is an absolute instant rather than an age — on a
+Two blocks, one straight after the other: the summary starts at its own `NODE` header
+line, with no blank line before it. The sample shows only the first four stream records.
+The **stream** is a header and then a record per packet as it arrives; its lanes are
+pinned in advance, because a capture cannot measure a column it has not seen yet, and `TIME` is an absolute instant rather than an age — on a
 live tail every row would otherwise read `now`. The **summary** is the aggregate the
 stream cannot give: a count, a median, a best per node, most recently heard first.
 
@@ -972,7 +974,7 @@ prints, honestly.
 | `lower_bound` | boolean | **JSON only.** `true` where the score is a floor — the plain face's `>=` prefix, extracted, so a consumer comparing scores need not string-match a qualifier off the front of its own data. |
 | `recorded_at` | timestamp | |
 | `version` | string | The MeshTerm version that discovered it. |
-| `path` | string | **JSON only.** The transmitted spec, comma-separated hex — what a caller re-walks with. It has no column because a route line already runs off the right. |
+| `path` | string \| null | **JSON only.** The transmitted spec, comma-separated hex — what a caller re-walks with. It has no column because a route line already runs off the right. `null` where the record stored no spec. |
 | `route` | array | The `route` shape, hop-aligned with `path`. |
 
 Returns `5` and `[]` when no records match.
@@ -1409,20 +1411,33 @@ runs `show`.
 ```console
 $ meshterm preferences show
 PREFERENCE                   VALUE                                 DEFAULT                               DESCRIPTION
+set_clock_on_connect         off                                   off                                   Set the device clock from this computer when it connects
 trace_cooldown_s             5                                     5                                     Wait this long before transmitting again
 flood_advert_cooldown_s      60                                    60                                    Extra wait before another mesh-wide advert
 direct_message_soft_retries  0                                     0                                     Times to resend a message that gets no reply
 tx_opt_min                   18                                    18                                    Weakest power it will try
 tx_opt_max                   28                                    28                                    Strongest power it will try
+tx_snr_tolerance_db          1                                     1                                     Signals this close are a tie, so less power wins
+watch_silence_hours          12                                    12                                    Warn when a watched node goes quiet this long
+watch_alerts_kept            200                                   200                                   How many past alerts to keep
 map_view_fraction            0.5                                   0.5                                   Share of nodes to fit on screen; 1 shows them all
+basemap_tilejson_url         https://tiles.openfreemap.org/planet  https://tiles.openfreemap.org/planet  Where map images come from (next launch)
 history_days                 365                                   365                                   Older ones are deleted; 0 keeps everything
+chat_history_limit           200                                   200                                   Old messages to load when you open a chat
+courier_history_kept         100                                   100                                   Finished outbox messages to keep
 cli_time_format              relative                              relative                              Whether the command line prints ages or timestamps
+fast_render                  on                                    on                                    Faster screen updates; turn off if it looks wrong (next launch)
+full_width                   auto                                  auto                                  Use the extra column some terminals hide
+color_depth                  auto                                  auto                                  How many colours to send this terminal (next launch)
+console_setup                auto                                  auto                                  Move to a better terminal when this console can't draw MeshTerm
+console_font                 6x12                                  6x12                                  Bigger text, or more rows on the handheld's panel
+log_level                    WARNING                               WARNING                               How much MeshTerm writes to its log file (next launch)
 ```
 
-**`DESCRIPTION` is back**, because a key's name is not its meaning and the alternative was
-opening the menu to find out what one does. Values print in the form `preferences set`
-accepts back — no unit suffix on a number, `on`/`off` for a boolean. Where `VALUE` differs
-from `DEFAULT`, this install has an override.
+**`DESCRIPTION`** says what each preference does, because a key's name is not its
+meaning. Values print in the form `preferences set` accepts back — no unit suffix on a
+number, `on`/`off` for a boolean. Where `VALUE` differs from `DEFAULT`, this install has an
+override.
 
 Overrides live in `preferences.toml` in [MeshTerm's state
 directory](#where-meshterm-keeps-its-state), which lists only what you have changed; delete
@@ -1488,6 +1503,10 @@ three or four questions that otherwise get asked one at a time in an issue threa
 person who hit the bug is usually the one least able to answer them — half of it is
 resolved at boot and shown on no screen.
 
+This sample is the one exception to [About the examples](#about-the-examples): it is an
+illustrative report from a real radio over Bluetooth, because the simulator's report says
+little. The field names and layout are what the command prints; the values are examples.
+
 ```console
 $ meshterm diagnostics
 meshterm  0.9.0
@@ -1522,22 +1541,30 @@ radio_cr        5
 tx_power_dbm    20
 error           -
 
-config_dir   C:\Users\jp\.meshterm
+config_dir   C:\Users\you\.meshterm
 db_size_kb   41280
-log_level    WARNING
+log_level    DEBUG
 log_size_kb  96
 runs_failed  3
-first_heard  8mo
-last_heard   now
+first_heard  2026-01-14T19:42:10-05:00
+last_heard   2026-09-21T11:03:00-04:00
 
-TABLE           ROWS
-observations  418203
-runs             912
-traces            47
+TABLE                ROWS
+app_state               4
+discovered_paths     1287
+messages             3316
+neighbour_reports     214
+observations       418203
+path_candidates        96
+runs                  912
+schema_meta             1
+trace_hops            233
+traces                 47
+tx_samples             68
 
-PREFERENCE  VALUE
-log_level   DEBUG
-map_style   terrain
+PREFERENCE    VALUE
+log_level     DEBUG
+history_days  730
 ```
 
 The seven groups are the page's seven sections — build, host, terminal, radio, storage,
@@ -1566,7 +1593,7 @@ Under `--json`, the five fact blocks merge into one flat object and the two list
 a key of their own:
 
 ```json
-{"meshterm":"0.9.0","install":"frozen","os":"Windows 11","…":"…","tables":[{"table":"observations","rows":418203}],"preferences":[{"preference":"log_level","value":"DEBUG"}]}
+{"meshterm":"0.9.0","install":"frozen","os":"Windows 11","…":"…","tables":[{"table":"app_state","rows":4},"…"],"preferences":[{"preference":"log_level","value":"DEBUG"},{"preference":"history_days","value":"730"}]}
 ```
 
 **`--out PATH` writes it to a file instead of printing it**, and the answer becomes the
@@ -1576,7 +1603,7 @@ wants to be told where it is rather than handed the contents they just redirecte
 ```console
 $ meshterm diagnostics --out meshterm-diagnostics.md
 ✓ diagnostics written — attach it to the report.
-/home/jp/meshterm-diagnostics.md
+meshterm-diagnostics.md
 ```
 
 **The file is markdown**, whichever face the run was printing, because an issue tracker

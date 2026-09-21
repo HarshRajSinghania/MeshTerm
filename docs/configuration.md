@@ -28,13 +28,12 @@ Write a config file only to give your hardware stable aliases.
 Copy [`config.example.toml`](../config.example.toml) to `~/.meshterm/config.toml`:
 
 ```toml
-default_profile = "s3"
+# default_profile = "s3"   # uncomment and name your own profile to make it the default
 connect_on_start = true   # false opens the radio link lazily instead of at launch
 
 [profiles.s3]
 port = "COM5"
 baudrate = 115200
-default_tx_power = 20
 description = "XIAO ESP32-S3 + Wio SX1262 serial companion"
 
 # A Bluetooth LE companion: give it an `address` instead of a `port`.
@@ -58,6 +57,7 @@ database alone; the rest stays where it was. A `--mock` run that names neither w
 it. [`docs/cli.md`](cli.md#where-meshterm-keeps-its-state)
 lists every file.
 
-Timestamps are stored as UTC and rendered in your local time. History older than the
-`history_days` preference is pruned once at session start.
+Timestamps are stored as UTC and rendered in your local time. Heard packets older than the
+`history_days` preference are deleted when monitoring starts: once in each menu session,
+and at the start of each `meshterm monitor` run. Nothing else is pruned.
 
