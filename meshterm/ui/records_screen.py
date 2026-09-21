@@ -714,7 +714,7 @@ class RecordScreen(Screen):
         lines = self._graph_lines(width)
         caption = Text("you → … → you · labels = hash byte", style="faint")
         lines.append(render_to_ansi(caption, width, no_wrap=True))
-        lines.append(render_to_ansi(node_type_legend(), width, no_wrap=True))
+        lines.extend(render_lines(node_type_legend(width=width), width, no_wrap=True))
 
         # The walk itself, on THE path widget, across the card's whole width. No ``route``
         # label lane: the line under a route graph captioned "you → … → you" is the route,

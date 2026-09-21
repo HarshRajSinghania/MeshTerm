@@ -35,15 +35,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ..context import AppContext
+from ..core.models import node_type_label
 from .base import Tool, ToolResult, register
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from ..ui.report import Report
-
-#: MeshCore advert-type byte -> the role a person calls it. Duplicated from ``info``
-#: rather than shared: that module's copy is part of the device-status answer, and a
-#: cross-import between two tools to save five entries buys a dependency and no clarity.
-_ROLES = {1: "client", 2: "repeater", 3: "room server", 4: "sensor"}
 
 #: What the saved file is called, in the config directory beside the log it sits next to
 #: in a bug report. Named for the app rather than just ``diagnostics.md`` because the one
@@ -382,9 +378,7 @@ async def _device_facts(ctx: AppContext) -> Any:
             connected=True,
             transport="mock" if ctx.mock else (ctx.active_transport or "serial"),
             port=ctx.active_port,
-            device_role=(
-                _ROLES.get(int(adv_type), f"type {adv_type}") if adv_type is not None else None
-            ),
+            device_role=node_type_label(adv_type),
             device_model=info.get("model") or None,
             firmware=" ".join(str(info[k]) for k in ("ver", "fw_build") if info.get(k)) or None,
             radio_freq_mhz=snapshot.get("radio_freq"),

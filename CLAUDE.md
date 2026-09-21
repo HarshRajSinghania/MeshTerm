@@ -56,7 +56,7 @@ them instead of hand-rolling:
 
 | Term | Meaning |
 |---|---|
-| node | any device on the mesh — a radio broadcasting packets; roles: client, repeater, room server. The umbrella term |
+| node | any device on the mesh — a radio broadcasting packets; roles: companion, repeater, room server, sensor. The umbrella term |
 | contact | a node your device knows: **discovered** (heard broadcasting, not yet added) or **added** (in the contact list, messageable). Every contact is a node; not every node is a contact |
 | heard | received from ("last heard", "first heard") — never "seen" in UX text |
 | key | the full fixed-length value — a node's public key, a channel secret |
@@ -68,7 +68,7 @@ them instead of hand-rolling:
 | Quit | leave the app (main menu, device splash) — nowhere else |
 
 Node vs contact — the boundary: **node** is the hardware/participant sense — the map,
-mesh walk, heard-nodes, relay hops, graph vertices, and node *types* (client/repeater/room/
+mesh walk, heard-nodes, relay hops, graph vertices, and node *types* (companion/repeater/room server/
 sensor) all speak "node". **Contact** is the saved-identity sense — the Contacts screen,
 the courier recipient, anything you *address*. The reception/persistence layer
 (`observations.node`, `HeardNode`, `heard_nodes()`, `trace_hops.node`) stays "node"; the
@@ -296,8 +296,8 @@ as a grouped list does. Filling a page in is editing its `.md`; no Python follow
 
 - Status marks (single-width, themed): `✓` ok · `✗` err · `⚠`/`?` warn · `●` unread/
   unacked (err) · `○` acked/empty (muted). Never `✔`, `✖`, `✅`, `❌` as status.
-- Node types (shared with the map): `★` you (yellow) · `●` node · `▲` repeater ·
-  `■` room · `◉` sensor · `○` unknown.
+- Node types (shared with the map): `★` you (yellow) · `●` companion · `▲` repeater ·
+  `■` room server · `◉` sensor · `○` unknown.
 - Path cuts: a path line drawn as **chips** that gets cut — a lane that ran out, a row
   scrolled past its edge — breaks the chip off on a half block in that chip's own fill
   (`▐` ends a line, `▌` opens one; `pathline.cut_mark`/`cut_to`), so half the cell is

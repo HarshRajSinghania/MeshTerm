@@ -169,6 +169,21 @@ def test_record_dialog_shows_the_node_type_legend() -> None:
     assert "★ you" in body and "▲ repeater" in body and "◉ sensor" in body
 
 
+def test_record_dialog_legend_breaks_between_entries_on_a_picocalc_width() -> None:
+    """At 53 cells the legend takes two lines, and no mark is parted from its name.
+
+    The full names run to 59 cells on one line, so cropping would cut "sensor" off the
+    PicoCalc; breaking inside an entry would leave a glyph at the end of one line and its
+    name at the start of the next.
+    """
+    screen = _dialog(_record())
+    screen.handle("tab")  # the Route tab
+    body = _plain(screen.render_body(53))
+    for entry in ("★ you", "▲ repeater", "● companion", "■ room server", "◉ sensor"):
+        assert entry in body
+    assert all(cell_len(line) <= 53 for line in body.splitlines())
+
+
 def test_record_graph_marks_a_repeater_relay_with_its_triangle() -> None:
     """A relay whose type is a repeater draws ▲, not the generic ● dot."""
     dialog = _dialog(_record(), type_of=lambda h: 2 if h == HUB_ID else None)

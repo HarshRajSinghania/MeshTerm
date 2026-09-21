@@ -14,13 +14,11 @@ from rich.text import Text
 
 from ..context import AppContext
 from ..core.connection import Device
+from ..core.models import node_type_label
 from .base import Tool, ToolResult, register
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from ..ui.report import Column, Facts
-
-#: MeshCore advert-type byte -> human-readable node role.
-_ROLES = {1: "companion", 2: "repeater", 3: "room server", 4: "sensor"}
 
 
 @register
@@ -141,7 +139,7 @@ async def _status_panel(device: Device, snapshot: dict) -> Panel:
 
     adv_type = snapshot.get("adv_type")
     if adv_type is not None:
-        role = _ROLES.get(int(adv_type), f"type {adv_type}")
+        role = node_type_label(adv_type)
         rows.append(("role", Text(role, style="brand")))
 
     if info.get("model"):
@@ -239,7 +237,7 @@ async def status_facts(device: Device, snapshot: dict) -> Facts:
         # `config show`'s answer, not this one.
         "name": snapshot.get("name"),
         "public_key": str(snapshot.get("public_key") or "").lower() or None,
-        "role": _ROLES.get(int(adv_type), f"type {adv_type}") if adv_type is not None else None,
+        "role": node_type_label(adv_type),
         "model": info.get("model"),
         "firmware": _firmware(info) or None,
         "battery_v": round(int(level) / 1000, 2) if level else None,

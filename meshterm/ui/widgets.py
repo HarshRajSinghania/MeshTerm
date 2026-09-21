@@ -11,6 +11,7 @@ from itertools import pairwise
 from typing import TYPE_CHECKING
 
 from rich import box
+from rich.cells import cell_len
 from rich.console import Console, Group
 from rich.panel import Panel
 from rich.progress import (
@@ -1140,24 +1141,39 @@ def _sort_header(label: str, column: str, sort: ContactsSort) -> str:
     return f"[cursor]{label} {triangle}[/]"
 
 
-def node_type_legend(indent: str = "") -> Text:
-    """The one-line key to the node-type marks: ``★ you  ▲ repeater  ● node  …``.
+def node_type_legend(indent: str = "", width: int | None = None) -> Text:
+    """The key to the node-type marks: ``★ you   ▲ repeater   ● companion   …``.
 
     Every glyph in its shared map colour (see :data:`NODE_GLYPHS`), each named muted after
     it. THE legend for any surface that draws typed node markers — the contacts list under its
     table, the route graph under its lanes — so one glyph means one thing app-wide.
 
+    One line where it fits. Where it does not — the full names run to 59 cells, and the
+    PicoCalc has 53 — it breaks onto a second line between entries, never inside one, so
+    a mark is never parted from its name and no name is cropped.
+
     Args:
         indent: Leading spaces to sit the legend under a table or graph body.
+        width: The cells available. None keeps the legend on one line.
     """
-    legend = Text(indent)
-    legend.append(SELF_MARK[0], style=SELF_MARK[1])
-    legend.append(" you", style="muted")
+    entries = [Text.assemble((SELF_MARK[0], SELF_MARK[1]), (" you", "muted"))]
     for node_type in (NODE_TYPE_REPEATER, NODE_TYPE_CHAT, NODE_TYPE_ROOM, NODE_TYPE_SENSOR):
         glyph, color = NODE_GLYPHS[node_type]
-        legend.append("   ")
-        legend.append(glyph, style=color)
-        legend.append(f" {NODE_TYPE_LABELS[node_type]}", style="muted")
+        entries.append(Text.assemble((glyph, color), (f" {NODE_TYPE_LABELS[node_type]}", "muted")))
+
+    gap = "   "
+    legend = Text(indent)
+    line = cell_len(indent)
+    for i, entry in enumerate(entries):
+        size = cell_len(entry.plain)
+        if i and width is not None and line + len(gap) + size > width:
+            legend.append("\n" + indent)
+            line = cell_len(indent)
+        elif i:
+            legend.append(gap)
+            line += len(gap)
+        legend.append_text(entry)
+        line += size
     return legend
 
 

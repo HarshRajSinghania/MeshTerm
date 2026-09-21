@@ -58,7 +58,7 @@ from .pathline import (
     path_line,
 )
 from .theme import snr_style
-from .tui.render import crop_cells, render_to_ansi
+from .tui.render import crop_cells, render_lines, render_to_ansi
 from .tui.screen import ListWindow, Screen
 from .widgets import (
     NameKeyResolver,
@@ -293,7 +293,7 @@ class MessagePathsScreen(Screen):
                 style="faint",
             )
             lines.append(render_to_ansi(caption, width, no_wrap=True))
-            lines.append(render_to_ansi(node_type_legend(), width, no_wrap=True))
+            lines.extend(render_lines(node_type_legend(width=width), width, no_wrap=True))
             lines.extend(revisit)
         lines.append("")
 

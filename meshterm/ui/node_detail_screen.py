@@ -950,7 +950,7 @@ class NodeDetailScreen(Screen):
             while lines and not _SGR.sub("", lines[0]).strip():
                 lines.pop(0)
         if rv.legend:
-            lines.extend(render_lines(node_type_legend(), width, no_wrap=True))
+            lines.extend(render_lines(node_type_legend(width=width), width, no_wrap=True))
         self._stage_memo = (stage_key, lines)
         return lines
 

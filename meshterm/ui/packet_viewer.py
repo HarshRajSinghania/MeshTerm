@@ -50,7 +50,7 @@ from rich.table import Table
 from rich.text import Text
 
 from ..core.channels import decrypt_channel_text, identify_channel
-from ..core.models import NODE_TYPE_LABELS, Observation, utcnow
+from ..core.models import Observation, node_type_label, utcnow
 from ..services.trace_runner import NodeResolver
 from .marks import SELF_MARK, UNKNOWN_MARK
 from .menus import SEP_COMPACT, SEP_ROOMY
@@ -677,7 +677,7 @@ class PacketViewer(Screen):
             lines.extend(graph)
             caption = Text("origin → you · labels = hash byte", style="faint")
             lines.append(render_to_ansi(caption, width, no_wrap=True))
-            lines.append(render_to_ansi(node_type_legend(), width, no_wrap=True))
+            lines.extend(render_lines(node_type_legend(width=width), width, no_wrap=True))
             if tail:
                 lines.append("")
         lines.extend(self._grid_lines(tail, width, label_w))
@@ -748,8 +748,7 @@ class PacketViewer(Screen):
                 who.append_text(highlighted_hash(entry.node, self._prefix_bytes))
             rows.append(("from", who))
         if entry.node_type is not None:
-            label = NODE_TYPE_LABELS.get(entry.node_type, f"type {entry.node_type}")
-            rows.append(("type", Text(label)))
+            rows.append(("type", Text(node_type_label(entry.node_type))))
 
         if entry.kind == "packet":
             rows.extend(self._packet_rows(entry))

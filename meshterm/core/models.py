@@ -48,12 +48,22 @@ NODE_TYPE_ROOM = 3
 NODE_TYPE_SENSOR = 4
 
 #: Human-readable label for each advert type, for legends and summaries.
+#: The one name for each advert type, everywhere MeshTerm prints one and in every
+#: `--json` answer that carries a role or a type. A type-1 node is a companion: the radio
+#: someone talks through, the same kind as the one in your hand.
 NODE_TYPE_LABELS = {
-    NODE_TYPE_CHAT: "node",
+    NODE_TYPE_CHAT: "companion",
     NODE_TYPE_REPEATER: "repeater",
-    NODE_TYPE_ROOM: "room",
+    NODE_TYPE_ROOM: "room server",
     NODE_TYPE_SENSOR: "sensor",
 }
+
+
+def node_type_label(node_type: int | None) -> str | None:
+    """The name for an advert type, ``type N`` for one MeshTerm does not know, None for none."""
+    if node_type is None:
+        return None
+    return NODE_TYPE_LABELS.get(int(node_type), f"type {node_type}")
 
 
 class LoginResult(Enum):

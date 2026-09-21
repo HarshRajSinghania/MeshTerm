@@ -188,11 +188,11 @@ the device clock, an appointment set with `--at`, a live capture's own `TIME` co
 
 ```console
 $ meshterm --absolute contacts
-NAME            TYPE                          HEARD  PKTS  HASH  LOCATION            KEY
-Observer-Bot    node      2026-09-08T04:30:50-04:00     -  c3    45.48800,-73.58100  c3d4e5f600000000000000000000000000000000000000000000000000000000
-Local-Repeater  repeater  2026-09-08T04:30:49-04:00     -  b2    45.47680,-73.59900  b2c3d4e500000000000000000000000000000000000000000000000000000000
-Yagi-Repeater   repeater  2026-09-08T04:30:49-04:00     -  a1    45.50190,-73.56740  a1b2c3d400000000000000000000000000000000000000000000000000000000
-Alice           node      2026-09-08T04:30:48-04:00     -  d4    -                   d4e5f6a700000000000000000000000000000000000000000000000000000000
+NAME            TYPE                           HEARD  PKTS  HASH  LOCATION            KEY
+Observer-Bot    companion  2026-09-08T04:30:50-04:00     -  c3    45.48800,-73.58100  c3d4e5f600000000000000000000000000000000000000000000000000000000
+Local-Repeater  repeater   2026-09-08T04:30:49-04:00     -  b2    45.47680,-73.59900  b2c3d4e500000000000000000000000000000000000000000000000000000000
+Yagi-Repeater   repeater   2026-09-08T04:30:49-04:00     -  a1    45.50190,-73.56740  a1b2c3d400000000000000000000000000000000000000000000000000000000
+Alice           companion  2026-09-08T04:30:48-04:00     -  d4    -                   d4e5f6a700000000000000000000000000000000000000000000000000000000
 ```
 
 The flag is an **override of a preference**, not a switch beside one: `cli_time_format` is
@@ -374,7 +374,7 @@ present.
 | `name` | string \| null | The name the node advertises. Never quoted, never truncated. |
 | `key` | string \| null | The full public key, lowercase hex, 64 characters. `null` where only a hash was ever heard. |
 | `hash` | string \| null | The short derived id, at the width the surrounding surface addressed the node by. Never `key` cut short. |
-| `type` | string \| null | `"node"` \| `"repeater"` \| `"room"` \| `"sensor"` \| `null`. |
+| `type` | string \| null | `"companion"` \| `"repeater"` \| `"room server"` \| `"sensor"` \| `null`. |
 | `self` | boolean | `true` for our own node. What the menu's star says and the plain face deliberately does not. |
 
 Reception facts — when heard, how strong, where — belong to the **row**, not to the node:
@@ -829,16 +829,16 @@ The contacts your device knows.
 
 ```console
 $ meshterm contacts --sort name
-NAME            TYPE      HEARD  PKTS  HASH  LOCATION            KEY
-Alice           node         7m     -  d4    -                   d4e5f6a700000000000000000000000000000000000000000000000000000000
-Local-Repeater  repeater     7m     -  b2    45.47680,-73.59900  b2c3d4e500000000000000000000000000000000000000000000000000000000
-Observer-Bot    node         7m     -  c3    45.48800,-73.58100  c3d4e5f600000000000000000000000000000000000000000000000000000000
-Yagi-Repeater   repeater     7m     -  a1    45.50190,-73.56740  a1b2c3d400000000000000000000000000000000000000000000000000000000
+NAME            TYPE       HEARD  PKTS  HASH  LOCATION            KEY
+Alice           companion     7m     -  d4    -                   d4e5f6a700000000000000000000000000000000000000000000000000000000
+Local-Repeater  repeater      7m     -  b2    45.47680,-73.59900  b2c3d4e500000000000000000000000000000000000000000000000000000000
+Observer-Bot    companion     7m     -  c3    45.48800,-73.58100  c3d4e5f600000000000000000000000000000000000000000000000000000000
+Yagi-Repeater   repeater      7m     -  a1    45.50190,-73.56740  a1b2c3d400000000000000000000000000000000000000000000000000000000
 ```
 
-`TYPE` is the node's advertised role in words — `node`, `repeater`, `room`, `sensor`, or
-`unknown`. `HEARD` is a relative age, because "recently?" is what this listing is opened to
-answer; `--absolute` turns it into an instant. `PKTS` is how many packets passive
+`TYPE` is the node's advertised role in words — `companion`, `repeater`, `room server`,
+`sensor`, or `unknown`. `HEARD` is a relative age, because "recently?" is what this listing
+is opened to answer; `--absolute` turns it into an instant. `PKTS` is how many packets passive
 monitoring has overheard.
 
 **`HASH` is the token `--path` and `--to` take**, so it never has to be sliced out of `KEY`
@@ -853,7 +853,7 @@ far more detail than a row could hold.
 **`--json`** is an array of rows, each embedding the `node` shape.
 
 ```json
-{"node":{"name":"Observer-Bot","key":"c3d4e5f600000000000000000000000000000000000000000000000000000000","hash":"c3","type":"node","self":false},"heard_at":"2026-09-08T08:30:50Z","packets":null,"position":{"lat":45.488,"lon":-73.581}}
+{"node":{"name":"Observer-Bot","key":"c3d4e5f600000000000000000000000000000000000000000000000000000000","hash":"c3","type":"companion","self":false},"heard_at":"2026-09-08T08:30:50Z","packets":null,"position":{"lat":45.488,"lon":-73.581}}
 ```
 
 | Field | Type | Meaning |
@@ -1050,7 +1050,7 @@ for working out whether messages are being pulled from the companion at all.
 
 ```console
 $ meshterm chat send "see you there" --to Alice --json
-{"kind":"direct","node":{"name":"Alice","key":"d4e5f6a700000000000000000000000000000000000000000000000000000000","hash":"d4e5f6a7","type":"node","self":false},"channel":null,"sent":true,"acked":true}
+{"kind":"direct","node":{"name":"Alice","key":"d4e5f6a700000000000000000000000000000000000000000000000000000000","hash":"d4e5f6a7","type":"companion","self":false},"channel":null,"sent":true,"acked":true}
 
 $ meshterm chat send "net in 5" --channel 0 --json
 {"kind":"channel","node":null,"channel":{"slot":0,"name":"#0","public":true,"hash":null},"sent":true,"acked":null}
@@ -1335,7 +1335,7 @@ single transmission.
 objects, which matters most here: the two nodes are told apart by nothing else on the line.
 
 ```json
-{"tuning_node":{"name":"Yagi-Repeater","key":"a1b2c3d400000000000000000000000000000000000000000000000000000000","hash":"a1b2c3d4","type":"repeater","self":false},"target":{"name":"Alice","key":"d4e5f6a700000000000000000000000000000000000000000000000000000000","hash":"d4e5f6a7","type":"node","self":false},"path":"a1b2c3d4,d4e5f6a7","optimal_tx_dbm":19,"target_snr_db":8.7,"reliability":1.0,"previous_tx_dbm":20,"applied":true,"levels":[{"tx_dbm":18,"target_snr_db":6.6,"successes":2,"samples":2},{"tx_dbm":19,"target_snr_db":8.7,"successes":4,"samples":4},{"tx_dbm":20,"target_snr_db":9.1,"successes":2,"samples":2},{"tx_dbm":21,"target_snr_db":7.6,"successes":2,"samples":2},{"tx_dbm":24,"target_snr_db":4.0,"successes":2,"samples":2},{"tx_dbm":27,"target_snr_db":-9.9,"successes":2,"samples":2},{"tx_dbm":28,"target_snr_db":-15.1,"successes":1,"samples":2}]}
+{"tuning_node":{"name":"Yagi-Repeater","key":"a1b2c3d400000000000000000000000000000000000000000000000000000000","hash":"a1b2c3d4","type":"repeater","self":false},"target":{"name":"Alice","key":"d4e5f6a700000000000000000000000000000000000000000000000000000000","hash":"d4e5f6a7","type":"companion","self":false},"path":"a1b2c3d4,d4e5f6a7","optimal_tx_dbm":19,"target_snr_db":8.7,"reliability":1.0,"previous_tx_dbm":20,"applied":true,"levels":[{"tx_dbm":18,"target_snr_db":6.6,"successes":2,"samples":2},{"tx_dbm":19,"target_snr_db":8.7,"successes":4,"samples":4},{"tx_dbm":20,"target_snr_db":9.1,"successes":2,"samples":2},{"tx_dbm":21,"target_snr_db":7.6,"successes":2,"samples":2},{"tx_dbm":24,"target_snr_db":4.0,"successes":2,"samples":2},{"tx_dbm":27,"target_snr_db":-9.9,"successes":2,"samples":2},{"tx_dbm":28,"target_snr_db":-15.1,"successes":1,"samples":2}]}
 ```
 
 `reliability` is a fraction in `[0, 1]`, not a formatted `"1.00"`. `levels` is ordered by
@@ -1531,7 +1531,7 @@ powerline      full (font:windows-terminal)
 connected       yes
 transport       ble
 port            -
-device_role     client
+device_role     companion
 device_model    Heltec V3
 firmware        v1.7.1 1c3f9a2
 radio_freq_mhz  906.8750

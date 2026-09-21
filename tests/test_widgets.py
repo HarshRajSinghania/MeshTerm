@@ -11,6 +11,7 @@ from __future__ import annotations
 from rich.style import Style
 from rich.text import Text
 
+from meshterm.core.models import node_type_label
 from meshterm.ui.pathline import (
     POWERLINE_ROUND_CLOSE,
     POWERLINE_ROUND_OPEN,
@@ -276,3 +277,13 @@ def test_name_chip_falls_back_to_the_bare_name_without_powerline(powerline) -> N
 
     assert chip.plain == "Alice"  # exactly what an arrow-mode path line makes of one hop
     assert str(next(iter(chip.spans)).style) == node_style("a1b2")  # still its own hue
+
+
+def test_every_advert_type_has_one_name() -> None:
+    """Type 1 is a companion everywhere: info, diagnostics, contacts and the legend agree."""
+    assert node_type_label(1) == "companion"
+    assert node_type_label(2) == "repeater"
+    assert node_type_label(3) == "room server"
+    assert node_type_label(4) == "sensor"
+    assert node_type_label(9) == "type 9"  # an advert type MeshTerm does not know yet
+    assert node_type_label(None) is None
