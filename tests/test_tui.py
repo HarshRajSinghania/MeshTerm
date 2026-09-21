@@ -3425,3 +3425,151 @@ def test_a_shortcut_is_only_honoured_where_a_letter_is_free() -> None:
     filtering.handle("text", "h")
     assert len(resolved) == 1  # nothing new resolved
     assert filtering._filter == "h"  # the letter went to the query, where it belongs
+
+
+# -- the splash keeps looking ---------------------------------------------------------
+
+
+def _drive_picker(tmp_path, monkeypatch, *, serial_rounds, ble_rounds=None, hide=None):
+    """Run the picker's rescan against a scripted sequence of scans.
+
+    The fake UI stands in for the splash being open: it is handed the ``live`` callable
+    and runs it until the script is exhausted, recording every redraw. Discovery is
+    replaced rather than mocked at the port level, because what is under test is the
+    rescan's behaviour -- when it redraws, when it keeps quiet -- and not pyserial.
+    """
+    import asyncio
+
+    from meshterm.core.device_store import DeviceStore
+    from meshterm.ui import device_picker
+
+    monkeypatch.setattr(device_picker, "_POLL_S", 0.001)
+    monkeypatch.setattr(device_picker, "_BLE_EVERY_S", 0.0025)
+    monkeypatch.setattr(device_picker, "_BLE_WINDOW_S", 0.0)
+
+    serial = list(serial_rounds)
+    ble = list(ble_rounds or [[]])
+    calls = {"serial": 0, "ble": 0}
+
+    def _serial():
+        calls["serial"] += 1
+        return list(serial[min(calls["serial"] - 1, len(serial) - 1)])
+
+    async def _ble(_timeout):
+        calls["ble"] += 1
+        return list(ble[min(calls["ble"] - 1, len(ble) - 1)])
+
+    monkeypatch.setattr(device_picker, "discover_devices", _serial)
+    monkeypatch.setattr(device_picker, "discover_ble_devices", _ble)
+
+    store = DeviceStore(tmp_path / "devices.json")
+    for stable in hide or []:
+        store.hide(stable)
+
+    redraws: list = []
+
+    class _Ui:
+        async def select_startup(  # noqa: ANN001, ANN201, ANN003
+            self, title, items, *, default=None, banner=None, footnote=None, live=None, **_kw
+        ):
+            task = asyncio.ensure_future(live(redraws.append))
+            # Long enough for the script to run several times over at this cadence.
+            await asyncio.sleep(0.05)
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            return None
+
+    async def _never(_device):
+        raise AssertionError("verify should not run when selection is skipped")
+
+    asyncio.run(device_picker.prompt_device(_Ui(), list(serial[0]), store, _never))
+    return redraws, calls
+
+
+def _labels(items) -> list[str]:
+    return [
+        (it.title.plain if hasattr(it.title, "plain") else str(it.title))
+        for it in items
+        if isinstance(it, Choice)
+    ]
+
+
+def test_splash_redraws_when_a_device_is_plugged_in(tmp_path, monkeypatch) -> None:
+    """A radio attached after the splash opened appears without restarting MeshTerm."""
+    from meshterm.core.discovery import DiscoveredDevice
+
+    first = DiscoveredDevice(port="COM5", product="Wio SX1262", vid=0x2886)
+    later = DiscoveredDevice(port="COM9", product="RAK4631", vid=0x239A)
+
+    redraws, _ = _drive_picker(tmp_path, monkeypatch, serial_rounds=[[first], [first, later]])
+
+    assert redraws, "the splash never redrew after the device appeared"
+    assert any("COM9" in label for label in _labels(redraws[-1]))
+
+
+def test_splash_stays_quiet_when_nothing_changed(tmp_path, monkeypatch) -> None:
+    """A poll that finds the same ports redraws nothing.
+
+    This is the half that matters for somebody mid-way through arrowing down the list:
+    a redraw they did not ask for, on a list that has not changed, is the screen moving
+    under their hands for no reason.
+    """
+    from meshterm.core.discovery import DiscoveredDevice
+
+    same = [DiscoveredDevice(port="COM5", product="Wio SX1262", vid=0x2886)]
+    redraws, calls = _drive_picker(tmp_path, monkeypatch, serial_rounds=[same])
+
+    assert calls["serial"] > 1, "the rescan never ran"
+    assert redraws == []
+
+
+def test_splash_notices_a_device_going_away(tmp_path, monkeypatch) -> None:
+    """Unplugging removes the row, which is the same question asked backwards."""
+    from meshterm.core.discovery import DiscoveredDevice
+
+    one = DiscoveredDevice(port="COM5", product="Wio SX1262", vid=0x2886)
+    redraws, _ = _drive_picker(tmp_path, monkeypatch, serial_rounds=[[one], []])
+
+    assert redraws, "the splash never redrew after the device went away"
+    assert not any("COM5" in label for label in _labels(redraws[-1]))
+
+
+def test_a_rescan_does_not_unhide_what_the_reader_hid(tmp_path, monkeypatch) -> None:
+    """A refresh is not ⇧H. Whatever `h` hid stays hidden when the list is rebuilt."""
+    from meshterm.core.discovery import DiscoveredDevice
+
+    kept = DiscoveredDevice(port="COM5", product="Wio SX1262", vid=0x2886)
+    buried = DiscoveredDevice(port="COM7", product="FT232R USB UART", vid=0x0403)
+    later = DiscoveredDevice(port="COM9", product="RAK4631", vid=0x239A)
+
+    redraws, _ = _drive_picker(
+        tmp_path,
+        monkeypatch,
+        serial_rounds=[[kept, buried], [kept, buried, later]],
+        hide=[buried.stable_id],
+    )
+
+    assert redraws, "the splash never redrew"
+    labels = _labels(redraws[-1])
+    assert any("COM9" in label for label in labels)
+    assert not any("COM7" in label for label in labels)
+
+
+def test_bluetooth_is_not_scanned_on_every_poll(tmp_path, monkeypatch) -> None:
+    """Serial is cheap and polled; Bluetooth is a listen and gets a duty cycle.
+
+    Each BLE scan keeps the radio listening, and this is the screen somebody leaves open
+    on a battery-powered handheld while they go and find a cable -- so it must not be in
+    the poll loop.
+    """
+    from meshterm.core.discovery import DiscoveredDevice
+
+    same = [DiscoveredDevice(port="COM5", product="Wio SX1262", vid=0x2886)]
+    _, calls = _drive_picker(tmp_path, monkeypatch, serial_rounds=[same])
+
+    assert calls["serial"] > calls["ble"], (
+        f"bluetooth scanned {calls['ble']} time(s) against {calls['serial']} serial poll(s)"
+    )

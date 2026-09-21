@@ -15,8 +15,8 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
-from collections.abc import AsyncIterator, Callable, Mapping, Sequence
-from contextlib import asynccontextmanager, nullcontext
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
+from contextlib import asynccontextmanager, nullcontext, suppress
 from typing import Any
 
 from prompt_toolkit.application import Application
@@ -917,6 +917,7 @@ class TuiSession:
         footer_hint: str = "↑↓ move · Enter select · Esc bye",
         keys: Mapping[str, Any] | None = None,
         key_hint: Callable[[Any], str] | None = None,
+        live: Callable[[Callable[[list], None]], Awaitable[None]] | None = None,
     ) -> Any:
         """Show a chromeless select splash (banner above a content-sized box).
 
@@ -930,6 +931,15 @@ class TuiSession:
         atom joins the footer — but only while the highlight is actually on such a row, so the
         removal key advertises itself exactly where it acts (see
         :attr:`~meshterm.ui.tui.select.SelectScreen.footer_hint`).
+
+        ``live`` is work to do *while* the list is up — the device picker's rescan, which
+        keeps looking for a companion the whole time the splash is open. It is handed one
+        function, ``redraw(items)``, which swaps the rows under the reader and repaints;
+        the screen itself stays in here, since a caller holding one could not repaint it
+        anyway (``invalidate`` is the session's, not the screen's). It runs as a task for
+        exactly as long as the screen does and is cancelled when the screen resolves, so
+        nothing outlives the list it was redrawing and no repaint lands on a dialog that
+        has since opened over it.
 
         ``keys`` hands the list bare-key shortcuts — which a splash can afford precisely
         because it does not filter, so every letter is free (see :class:`SelectScreen`) —
@@ -959,7 +969,19 @@ class TuiSession:
         # ⇧H only appears at all once something is hidden, which is exactly the state where
         # a reader needs to be told how to undo it, and by then they have already found h.
         screen.spare_hint_atoms = ("←→ scroll", "h hide")
-        result = await self.run_screen(screen)
+        def redraw(new_items: list) -> None:
+            """Swap the rows and repaint. The reader keeps their place, by value."""
+            screen.replace_items(new_items)
+            self.invalidate()
+
+        worker = asyncio.ensure_future(live(redraw)) if live else None
+        try:
+            result = await self.run_screen(screen)
+        finally:
+            if worker is not None:
+                worker.cancel()
+                with suppress(asyncio.CancelledError):
+                    await worker
         return None if result is CANCEL else result
 
     async def confirm_startup(

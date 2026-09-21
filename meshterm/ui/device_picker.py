@@ -28,6 +28,7 @@ is connected to again.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable, Mapping
 from typing import TYPE_CHECKING
 
@@ -40,6 +41,8 @@ from ..core.device_store import DeviceStore, RememberedDevice
 from ..core.discovery import (
     DEFAULT_TCP_PORT,
     DiscoveredDevice,
+    discover_ble_devices,
+    discover_devices,
     parse_tcp_endpoint,
     serial_device,
     tcp_device,
@@ -298,6 +301,27 @@ async def _smoke_test(
         return info
 
 
+#: How often the splash re-enumerates serial ports. `comports()` is a SetupAPI/sysfs
+#: walk rather than a free read, so it runs off the event loop -- but it is cheap enough
+#: to repeat at this rate without anyone noticing, and it covers the common case: a USB
+#: radio plugged in after the splash appeared.
+_POLL_S = 2.0
+
+#: Bluetooth is not cheap in the same way. Each scan is a bounded listen, so keeping one
+#: running means keeping the radio listening for as long as this screen is open -- and
+#: this screen is the one a reader leaves up while they go and find a cable, on a handheld,
+#: on a battery. So it gets a duty cycle rather than a loop: a window this often, and only
+#: while it is still plausible somebody is waiting on one.
+_BLE_EVERY_S = 15.0
+_BLE_WINDOW_S = 4.0
+
+#: How many windows to run before giving up on finding a companion nobody has turned on.
+#: Once something *is* listed the reader has what they came for; while the list is still
+#: empty the count is ignored, because an empty splash is exactly where somebody is
+#: waiting and the cost of another listen is the cost of being useful.
+_BLE_WINDOWS = 8
+
+
 async def prompt_device(
     ui: Ui,
     devices: list[DiscoveredDevice],
@@ -327,11 +351,24 @@ async def prompt_device(
         leave the picker without selecting one — by pressing Esc or choosing the Quit row —
         which the caller treats as a request to exit.
     """
-    scanned = list(devices)
+    # Serial and Bluetooth are kept apart because they are refreshed on different clocks:
+    # a poll replaces everything attached, a Bluetooth window replaces everything in range,
+    # and one must not wipe the other's findings.
+    wired = [d for d in devices if not d.is_ble]
+    wireless = [d for d in devices if d.is_ble]
     #: The row the *next* redraw should open on, when the pass just finished moved the list
     #: under the reader (see :func:`_after_hiding`). Cleared as soon as it is spent.
     focus: DiscoveredDevice | None = None
-    while True:
+
+    def assemble() -> tuple[
+        list[DiscoveredDevice], list, RememberedDevice | None, dict[str, RememberedDevice]
+    ]:
+        """The list as it stands this instant: what is there, less what is hidden.
+
+        Built in one place because two callers need it now -- the loop below, and the
+        rescan that redraws the rows under the reader while the splash is open.
+        """
+        scanned = wired + wireless
         remembered = store.load()
         # The full registry (not just the single last device) so *every* confirmed companion
         # can be named, highlighted, and sorted to the top — keyed by stable_id. Reloaded each
@@ -353,7 +390,42 @@ async def prompt_device(
         # only feedback hiding needs.
         hidden = store.hidden_ids()
         # In display order, so a shortcut acting on a row can say what the row *after* it is.
-        ordered = _order([d for d in listed if d.stable_id not in hidden], registry)
+        order = _order([d for d in listed if d.stable_id not in hidden], registry)
+        items = _build_items(order, remembered, registry, hidden=len(hidden))
+        return order, items, remembered, registry
+
+    async def keep_looking(redraw: Callable[[list], None]) -> None:
+        """Re-enumerate while the splash is up, and redraw when the answer changes.
+
+        The screen used to scan once on the way in and never again, so a radio plugged in
+        ten seconds late was invisible until MeshTerm was restarted -- and the screen that
+        said so offered only a network address typed by hand, or quitting. Fetching the
+        cable is the obvious thing to do and it was the one thing that did not work.
+
+        Only a change redraws. A poll that finds the same ports is silence, which matters
+        because the reader may be part-way through arrowing down the list.
+        """
+        windows = 0
+        waited = 0.0
+        while True:
+            await asyncio.sleep(_POLL_S)
+            before = {d.stable_id for d in wired + wireless}
+
+            # ``comports()`` blocks; off the event loop so the splash stays live.
+            wired[:] = await asyncio.to_thread(discover_devices)
+
+            waited += _POLL_S
+            if waited >= _BLE_EVERY_S and (windows < _BLE_WINDOWS or not wired + wireless):
+                waited = 0.0
+                windows += 1
+                wireless[:] = await discover_ble_devices(_BLE_WINDOW_S)
+
+            if {d.stable_id for d in wired + wireless} != before:
+                _, rows, _, _ = assemble()
+                redraw(rows)
+
+    while True:
+        ordered, items, remembered, registry = assemble()
         # Preselect the remembered "last known good" device when it is currently attached/in
         # range — unless the last pass asked for a particular row, which a hide does so the
         # highlight lands where the vanished row was rather than jumping back to the default.
@@ -362,16 +434,14 @@ async def prompt_device(
             default = focus if focus in ordered else default
             focus = None
 
-        # Build the rows once so the same list can be redrawn as the backdrop behind a
-        # removal confirm (so it floats over the picker rather than replacing it).
-        items = _build_items(ordered, remembered, registry, hidden=len(hidden))
         chosen = await ui.select_startup(
             "Select a companion device",
             items,
             default=default,
             banner=load_logo(),
             keys=_SHORTCUTS,
-            key_hint=_shortcut_hint(len(hidden)),
+            key_hint=_shortcut_hint(len(store.hidden_ids())),
+            live=keep_looking,
         )
         # Esc (``None``) and the Quit row both mean "leave the picker" — surface that to the
         # caller as ``None`` so it can exit the program instead of continuing device-less.
