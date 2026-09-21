@@ -1,6 +1,6 @@
 # MeshTerm — working notes for Claude
 
-MeshTerm is a full-screen terminal companion for MeshCore LoRa mesh devices. The UI is a
+MeshTerm is a full-featured TUI MeshCore client for your terminal. The UI is a
 prompt_toolkit session rendering Rich content (`meshterm/ui/`), tools register into a
 menu (`meshterm/tools/`), services run in the background (`meshterm/services/`), and
 everything heard is recorded to SQLite (`meshterm/persistence/`).

@@ -121,8 +121,8 @@ app = typer.Typer(
     # The one description, same as the package summary and the PyPI page. See
     # `meshterm.__doc__` — if this drifts from that, one of them is lying.
     help=(
-        "MeshTerm is a full-featured TUI-based MeshCore client for your terminal. "
-        "Supports USB, Bluetooth and TCP companion connection. "
+        "MeshTerm is a full-featured TUI MeshCore client for your terminal. "
+        "Connects to a companion over USB, Bluetooth or TCP. "
         "For Windows, macOS and Linux."
     ),
     epilog=EXIT_STATUS_EPILOG,

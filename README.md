@@ -1,9 +1,9 @@
 # MeshTerm
 
-**A full-screen terminal companion for [MeshCore](https://meshcore.io/) LoRa mesh
-devices** — tune your radio, chat across the mesh, watch the network live, and keep a
-longitudinal record of everything you overhear, all from a connected serial, Bluetooth, or
-network (TCP) companion.
+**A full-featured TUI [MeshCore](https://meshcore.io/) client for your terminal** — tune
+your radio, chat across the mesh, watch the network live, and keep a longitudinal record
+of everything you overhear, all from a connected serial, Bluetooth, or network (TCP)
+companion.
 
 MeshTerm is interactive by default: a modern, keyboard-driven TUI built on
 [Rich](https://github.com/Textualize/rich) and
