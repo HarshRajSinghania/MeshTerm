@@ -1,14 +1,14 @@
 ## Why it needs support
 
-**MeshTerm** is free. 
+**MeshTerm** is free and open source, and it will stay that way.
 
 The project is a labour of love. I've poured hundreds of hours of my free time into it. Evenings, late nights, weekends, even some of my vacation time!
 
-As I mentionned in the about pages, this project relies on AI tools to accelerate development. Without them, MeshTerm would absolutely not exist. Subscriptions to these AI tools are a recurring expense! 
+As I mentioned on the Author page, this project relies on AI tools to accelerate development. Without them, MeshTerm would absolutely not exist. Subscriptions to these AI tools are a recurring expense!
 
-Routers, companion devices, handhelds, antennas, and batteries aren't super expensive individually, but it all adds up quickly!
+Repeaters, companion devices, handhelds, antennas, and batteries aren't super expensive individually, but it all adds up quickly!
 
-If you want pitch in and contribute financially, you're more that welcome to do so. Any help will be greatly appreciated and put to good use.
+If you want to pitch in and contribute financially, you're more than welcome to do so. Any help will be greatly appreciated and put to good use.
 
 ## Chip in
 
@@ -20,7 +20,7 @@ If you want pitch in and contribute financially, you're more that welcome to do 
 https://buymeacoffee.com/johnputer
 ```
 
-### Donate via Paypal
+### Donate via PayPal
 
 - *https://www.paypal.com/donate/?hosted_button_id=5RATNEJP2K5U6*
 
@@ -30,17 +30,17 @@ https://www.paypal.com/donate/?hosted_button_id=5RATNEJP2K5U6
 
 ### Become a patron
 
-- *https://www.patreon.com/c/MeshTerm*
+- *https://www.patreon.com/cw/MeshTerm*
 
 ```qr
-https://www.patreon.com/c/MeshTerm
+https://www.patreon.com/cw/MeshTerm
 ```
 
 ## Other ways to help
 
 - Spread the word and let others know how awesome **MeshTerm** is!
 - Join the Discord community!
-- Give this project a Star **⭐** on **GitHub**! 
+- Give this project a Star **⭐** on **GitHub**!
 - Open an issue on **GitHub** when you encounter a bug or problem!
 
     *https://github.com/jpmartineau/MeshTerm*

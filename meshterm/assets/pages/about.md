@@ -6,9 +6,9 @@
 
 **MeshTerm** is a full-featured **MeshCore** client that lives in your terminal. Plug in a companion device over USB, pair one over Bluetooth, or reach one over TCP. Windows, macOS, and Linux. Free and open-source.
 
-Nearly everything MeshTerm can do thru its interactive Text-based User Interface *(TUI)*, it can also do from the Command-Line Interface *(CLI)*. The live pictures stay in the TUI, where they belong — the map, the dashboard, the live feed, the watchtower, the mesh walk — and everything else has a command. The TUI runs the same code as the CLI, so you get the best of both worlds: a great user experience, and the ability to script or schedule tasks! Every command prints for a person by default, and speaks JSON with `--json` when a program is reading!
+Nearly everything MeshTerm can do through its interactive Text-based User Interface *(TUI)*, it can also do from the Command-Line Interface *(CLI)*. The live pictures stay in the TUI, where they belong — the map, the dashboard, the live feed, the watchtower, the mesh walk — and everything else has a command. The TUI runs the same code as the CLI, so you get the best of both worlds: a great user experience, and the ability to script or schedule tasks! Every command prints for a person by default, and speaks JSON with `--json` when a program is reading!
 
-Everything the radio overhears is recorded to a local database from the moment it's turned on — adverts, telemetry, signal quality, positions, etc. Features like maps, dashboard, and route graphs read back from it, so the longer it runs, the more it know about the mesh!
+While MeshTerm is running and connected to your radio, everything the radio overhears is recorded to a local database — adverts, telemetry, signal quality, positions, etc. Features like maps, dashboard, and route graphs read back from it, so the longer it runs, the more it knows about the mesh!
 
 ## Where it came from
 
@@ -18,29 +18,29 @@ I wanted something I could run from my computer. I wanted it to run on Windows, 
 
 ## Platform-specific developments
 
-In addition to generic Terminal setup, I wanted it to run on two devices I had lying around on my nerdcave.
+In addition to a generic terminal setup, I wanted it to run on two devices I had lying around in my nerdcave.
 
-### Clockwork uConsole
-MeshTerm is compatible with the **HackerGadgets AIO board v1**. The **AIO** board has just a raw LoRa radio, meaning it can't run MeshCore firmware. MeshTerm includes a script to run the mesh node in software, and expose it using a TCP port which MeshTerm can connect to.
+### ClockworkPi uConsole
+MeshTerm is compatible with the **HackerGadgets AIO board (v1 or v2)**. The **AIO** board has just a raw LoRa radio, meaning it can't run MeshCore firmware. MeshTerm includes a script to run the mesh node in software, and expose it using a TCP port which MeshTerm can connect to.
 
 MeshTerm feels right at home on the **uConsole**. Running MeshTerm on it makes it feel like a piece of gear straight out of a William Gibson novel.
 
-### Clockwork PicoCalc
+### ClockworkPi PicoCalc
 Getting MeshTerm to run on the **PicoCalc** is a bit more involved, but totally worth it:
 - Swap out the **Raspberry Pi Pico** for a **Luckfox Lyra** to run **Calculinux**.
-- Add a compatible 3.3v USB wifi dongle (e.g.: **TP-Link TL-WN725N N150 Nano**) to the **Lyra**'s internal USB port.
-- Add a LoRa device. Here's a few options:
+- Add a compatible 3.3 V USB Wi-Fi dongle (e.g. **TP-Link TL-WN725N N150 Nano**) to the **Lyra**'s internal USB port.
+- Add a LoRa device. Here are two options:
     - Connect a companion via USB-C;
     - add **Seeed Studio XIAO nRF52840 + Wio-SX1262** internally, soldered to GPIO connectors' legs.
-- In order to use the XIAO nRF52840 via GPIO, we do need to use a modified firmware. A **PR** *https://github.com/meshcore-dev/MeshCore/pull/3191* has been submitted to MeshCore, but it might take a while for it to go through.
+- In order to use the XIAO nRF52840 via GPIO, a modified firmware is needed. A **PR** *https://github.com/meshcore-dev/MeshCore/pull/3191* has been submitted to MeshCore, but it might take a while for it to go through.
 
-The UX is a bit different on the the PicoCalc's 16-color 53-column screen layout, but it's been tailored to make good use of the available space and the PicoCalc's F-keys. The result is, in my humble opinion, the best MeshCore experience you can get on a portable device. With two 18650 batteries, it'll run all day.
+The UX is a bit different on the PicoCalc's 16-colour 53-column screen layout, but it's been tailored to make good use of the available space and the PicoCalc's F-keys. The result is, in my humble opinion, the best MeshCore experience you can get on a portable device. It runs on one 18650 battery, and a second one roughly doubles the runtime.
 
 ## What the future holds
 
-MeshTerm will evolve over time, it is a work in progress.
+MeshTerm will evolve over time. It is a work in progress.
 
-I've build MeshTerm for myself — I find that's when I produce my best work — but I sincerely hope it will be appreciated by others.
+I've built MeshTerm for myself — I find that's when I produce my best work — but I sincerely hope it will be appreciated by others.
 
 If you'd like a specific feature, pitch your idea on the Discord!
 
@@ -49,9 +49,9 @@ If you'd like a specific feature, pitch your idea on the Discord!
 MeshTerm ships under the **Apache License, Version 2.0** — free to use,
 change, and redistribute, commercially or otherwise, as long as the
 LICENSE and NOTICE files travel with it. The full terms:
-**apache.org/licenses/LICENSE-2.0** *https://www.apache.org/licenses/LICENSE-2.0*.
+*https://www.apache.org/licenses/LICENSE-2.0*.
 
-The licence covers the code, not the name: **MeshTerm and its logo are
+The licence does not cover the name: **MeshTerm and its logo are
 trademarks the author keeps**, so a fork goes out under a name of its own.
 The donate link in this app supports this project and its original
 author — a fork that keeps soliciting through it, without pointing it at
