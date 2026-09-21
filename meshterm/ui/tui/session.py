@@ -975,6 +975,7 @@ class TuiSession:
         # ⇧H only appears at all once something is hidden, which is exactly the state where
         # a reader needs to be told how to undo it, and by then they have already found h.
         screen.spare_hint_atoms = ("←→ scroll", "h hide")
+
         def redraw(new_items: list) -> None:
             """Swap the rows and repaint. The reader keeps their place, by value."""
             screen.replace_items(new_items)

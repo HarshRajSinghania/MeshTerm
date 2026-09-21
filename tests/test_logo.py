@@ -37,10 +37,7 @@ def _params(text: str) -> list[list[str]]:
 
 def _brights(text: str) -> int:
     """How many sequences in `text` name a bright-bank foreground."""
-    return sum(
-        any(p.isdigit() and 90 <= int(p) <= 97 for p in parts)
-        for parts in _params(text)
-    )
+    return sum(any(p.isdigit() and 90 <= int(p) <= 97 for p in parts) for parts in _params(text))
 
 
 # -- a bare intensity change ----------------------------------------------------------
