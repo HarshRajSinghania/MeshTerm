@@ -25,8 +25,8 @@ what the mesh is doing.
 - **Run it two ways, and it behaves the same either way.** Type `meshterm` on its own and
   you get a full-screen menu you drive with the arrow keys. Type a command instead —
   `meshterm contacts`, `meshterm info` — and it prints an answer and exits, which is what you
-  want in a script. Add `--json` to any command and the answer comes back as data for
-  another program to read.
+  want in a script. Add `--json` to nearly any command and the answer comes back as data
+  for another program to read.
 
 - **It listens all the time, and writes down what it hears.** Radios on a mesh announce
   themselves. From the moment yours is connected, MeshTerm notes down every announcement it
@@ -51,13 +51,12 @@ what the mesh is doing.
 - **It talks to your radio however your radio talks.** USB cable, Bluetooth, or over the
   network. It finds the ones it can find on its own and asks you to pick. If a connection
   drops it reconnects by itself. No radio yet? `meshterm --mock` runs the whole program
-  against a simulated mesh, and keeps that pretend mesh in a history of its own, so none
-  of it ever turns up beside your real one.
+  against a simulated mesh, and records what it hears in a history database of its own,
+  apart from your real one.
 
 - **It runs on the small machines too.** The PicoCalc gets a layout of its own, built
-  for its 53-column screen, with its own fonts, colours and on-screen key labels — not just
-  the desktop screen squeezed. The uConsole has room for the full desktop layout, and runs
-  that.
+  for its 53-column screen, with its own fonts, colours and on-screen key labels. The
+  uConsole has room for the full desktop layout, and runs that.
 
 - **It works with no internet.** Map tiles are kept on disk once fetched, and when there is
   no network at all the map falls back to a plain grid. Nothing about MeshTerm needs to
@@ -73,11 +72,11 @@ what the mesh is doing.
 ### Getting it
 
 One file to download, with nothing else to install, for Windows, macOS (both Intel and
-Apple silicon) and Linux (including 64-bit ARM, so handhelds are covered). If you would
+Apple silicon) and Linux (including 64-bit ARM, which covers the uConsole). If you would
 rather use Python, `pipx install` works too. The README has the exact commands.
 
 MeshTerm is free and open source under the Apache 2.0 licence. The name and the logo are
-not — see `NOTICE` — so a fork is welcome, under its own name.
+not covered by the licence (see `NOTICE`), so a fork is welcome under its own name.
 
 [Unreleased]: https://github.com/jpmartineau/MeshTerm/compare/v0.9.0...HEAD
 [0.9.0]: https://github.com/jpmartineau/MeshTerm/releases/tag/v0.9.0

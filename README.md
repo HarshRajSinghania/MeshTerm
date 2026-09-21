@@ -8,7 +8,7 @@ network (TCP) companion.
 MeshTerm is interactive by default: a modern, keyboard-driven TUI built on
 [Rich](https://github.com/Textualize/rich) and
 [prompt_toolkit](https://github.com/prompt-toolkit/python-prompt-toolkit). It is also
-fully scriptable — **every screen has a mirror `meshterm` subcommand** — so the same
+fully scriptable — **most screens have a mirror `meshterm` subcommand** — so the same
 capabilities drive both an evening of exploring the mesh and a cron job. Every packet the
 radio overhears is recorded to a local SQLite database, so the longer you run it, the more
 your mesh's history is worth.
@@ -23,8 +23,9 @@ your mesh's history is worth.
   <a href="https://discord.gg/AZwe5Uvb3S"><img alt="Discord" src="https://img.shields.io/badge/chat-Discord-5865F2"></a>
 </p>
 
-> MeshTerm is a side project, not a product. Bug reports are very welcome — but please
-> open an issue before writing a pull request. [More on how it's run](#how-this-project-is-run).
+> MeshTerm is a side project, run by one person. Bug reports are very welcome. Small fixes
+> can go straight to a pull request; for anything bigger, please open an issue first.
+> [More on how it's run](#how-this-project-is-run).
 
 <p align="center">
   <a href="https://meshterm.net/#demo"><img src="https://meshterm.net/assets/demo-play.png" alt="Watch the demo: MeshTerm showing every route a channel message took to arrive" width="840"></a>
@@ -90,7 +91,7 @@ chmod +x meshterm
 ./meshterm
 ```
 
-That's the Apple silicon build — every Mac since 2020. On an **Intel** Mac, swap `arm64`
+That's the build for Apple silicon Macs (M1 and later). On an **Intel** Mac, swap `arm64`
 for `x64`. And if you already downloaded it with a browser, you don't have to start over:
 `xattr -d com.apple.quarantine meshterm` clears the flag.
 
@@ -116,8 +117,9 @@ then open Windows Terminal or PowerShell, `cd` to your downloads, and run it:
 
 Windows says *"Windows protected your PC"* the first time. Click **More info → Run anyway**.
 
-Whichever you took, you now have a file called `meshterm` — put it somewhere on your
-`PATH` and it's just `meshterm` from anywhere.
+Whichever you took, you now have a single file: `meshterm` on macOS and Linux,
+`meshterm-windows-x64.exe` on Windows. Put it somewhere on your `PATH` (renamed to
+`meshterm.exe` on Windows) and it's just `meshterm` from anywhere.
 
 > **These builds aren't code-signed**, which is why macOS and Windows both push back the
 > first time; signing costs real money on both platforms and this is a free side project.
@@ -242,17 +244,17 @@ contacts; **Watch** is the dashboard, the live feed, the watchtower and the time
 and **This app** is MeshTerm itself — preferences, diagnostics, and the written pages.
 
 Nearly every one of them has a mirror `meshterm` subcommand — the same registry builds
-the menu and the CLI, so they can't drift apart. The live pictures stay in the menu,
-where their meaning is.
+the menu and the CLI, so they can't drift apart. The live screens, such as the map and
+the dashboard, are only in the menu.
 
 **[What MeshTerm does](docs/features.md)** is the full catalogue: every screen, what it
 does, and its scripted equivalent where one exists.
 
 ## Scripting it
 
-Every command speaks `--json`, and the global options — `--profile/-p`, `--port`,
-`--ble`, `--tcp`, `--mock`, `--db`, `--json`, `--quiet/-q` — may be typed before or
-after the subcommand.
+Nearly every command speaks `--json`, and the global options — `--profile/-p`, `--port`,
+`--ble`, `--ble-pin`, `--tcp`, `--mock`, `--db`, `--json`, `--absolute`, `--quiet/-q`,
+`--platform` — may be typed before or after the subcommand.
 
 ```bash
 # Every repeater's public key, for a script
@@ -280,18 +282,19 @@ MeshTerm is one person working evenings and weekends. I'd rather tell you that u
 than have you guess from how long things take.
 
 **Issues are welcome — all of them.** Bugs, questions, "is this supposed to do that". The
-[bug form](.github/ISSUE_TEMPLATE/bug.yml) asks for a fair bit, and that's on purpose: how
-well a problem is described really does decide whether I can do anything with it. If I can
-reproduce it, I'll usually chase it. If I can't, I'm mostly guessing.
+[bug form](https://github.com/jpmartineau/MeshTerm/issues/new?template=bug.yml) asks for a
+fair bit, and that's on purpose: how well a problem is described really does decide whether
+I can do anything with it. If I can reproduce it, I'll usually chase it. If I can't, I'm
+mostly guessing.
 
-**Ask before you write a pull request.** Open an issue first and wait for a yes. I'm not
-being precious — MeshTerm has firm house rules about how screens get built (they're in
+**Ask before you write a big pull request.** Small fixes can go straight to a pull
+request. For anything bigger, open an issue first and wait for a yes. I'm not being
+precious — MeshTerm has firm house rules about how screens get built (they're in
 [CLAUDE.md](CLAUDE.md)), and I'd hate for you to spend a weekend on something I then ask
 you to rewrite. A quick conversation first saves us both.
 
 **I can't promise timelines.** Some things get fixed the same night. Some sit for a month
-because life happened. If your issue goes quiet, a nudge is completely fine — it's not
-rude, it's helpful.
+because life happened. If your issue goes quiet, please give it a nudge. That helps me.
 
 **Where to report things.** Either works:
 
@@ -346,7 +349,7 @@ respective project for the authoritative terms):
 
 | Library | Role | License |
 | --- | --- | --- |
-| [meshcore](https://pypi.org/project/meshcore/) | Companion-device protocol (serial / BLE) | MIT |
+| [meshcore](https://pypi.org/project/meshcore/) | Companion-device protocol (serial / BLE / TCP) | MIT |
 | [pycryptodome](https://www.pycryptodome.org/) | AES/HMAC for decrypting overheard channel packets | BSD-2-Clause / Public Domain |
 | [pyserial](https://github.com/pyserial/pyserial) | Serial-port enumeration and I/O | BSD-3-Clause |
 | [bleak](https://github.com/hbldh/bleak) | Bluetooth LE scanning + connection | MIT |
@@ -375,7 +378,8 @@ is Microsoft's Cascadia Mono PL, redistributed unmodified under the SIL Open Fon
 [CascadiaMono-OFL.txt](meshterm/assets/fonts/CascadiaMono-OFL.txt) and stays its only
 license.
 
-Each standalone build carries `LICENSE`, `NOTICE` and a generated `THIRD-PARTY-NOTICES.txt`
-(every dependency's own license text) inside the archive, and the same three files sit
-beside the downloads on the [releases page](https://github.com/jpmartineau/MeshTerm/releases)
-so you don't have to extract one just to read them.
+Each standalone build is a single file with `LICENSE`, `NOTICE` and a generated
+`THIRD-PARTY-NOTICES.txt` (every dependency's own license text) bundled inside it. The same
+three files are also attached to each release on the
+[releases page](https://github.com/jpmartineau/MeshTerm/releases), so you can read them
+without running anything.

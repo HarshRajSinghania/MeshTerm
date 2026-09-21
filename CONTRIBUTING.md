@@ -25,8 +25,8 @@ this repository.
   seen, etc.), UX standards for screens/dialogs/menus, and where the reusable building
   blocks live in code (`ui/menus.py`, `ui/markdown.py`, `ui/widgets.py`, `ui/theme.py`).
   New code should read like it always belonged here.
-- For anything bigger than a small fix, open an issue first to talk it through before
-  writing a lot of code — saves both of us a rewrite.
+- Small fixes can go straight to a pull request. For anything bigger, open an issue
+  first and wait for a yes before writing a lot of code — saves both of us a rewrite.
 
 ## Making a change
 
@@ -61,7 +61,12 @@ this repository.
 Open a GitHub issue. For bugs, include what you expected, what happened, and enough to
 reproduce it — device/platform, MeshCore firmware version if relevant, and steps.
 
+The [bug form](https://github.com/jpmartineau/MeshTerm/issues/new?template=bug.yml) asks
+for all of this. Attach the file that `meshterm diagnostics --out bug.md` writes. No
+GitHub account? Post it in the #bugs forum on [Discord](https://discord.gg/AZwe5Uvb3S)
+instead.
+
 ---
 
-Questions about any of this, licensing included, are welcome as a GitHub issue or
-discussion before you put work in.
+Questions about any of this, licensing included, are welcome as a GitHub issue before you
+put work in.
