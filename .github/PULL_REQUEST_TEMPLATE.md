@@ -4,8 +4,9 @@
 
 ## Related issue
 
-<!-- CONTRIBUTING asks for an issue first on anything non-trivial, so a large PR with no
-     issue behind it will get a conversation before it gets a review. Link it here. -->
+<!-- Small fixes can come straight to a PR. For anything bigger, CONTRIBUTING asks for an
+     issue first and a yes on it, so a large PR with no issue behind it will get a
+     conversation before it gets a review. Link it here. -->
 
 ## Before you mark it ready
 

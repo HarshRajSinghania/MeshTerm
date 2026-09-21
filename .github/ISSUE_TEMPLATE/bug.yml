@@ -19,12 +19,8 @@ body:
         in it is private: no keys, no pairing PINs, no positions, no contacts. That is a
         tested property, not a promise.
 
-        No clipboard on your handheld? The **Diagnostics** page saves the same file with
-        `s`, next to the log.
-
-        **`diagnostics` not recognised?** You are on 0.3.7 or older, where the command does
-        not exist yet. Say which version you have in the block below and fill in what you
-        can — that is a complete answer, not a failure.
+        The **Diagnostics** page in the menu saves the same file (with `s`, or F3 on the
+        PicoCalc), next to the log.
 
         The rest of this form asks only for what that file cannot know.
 
@@ -86,9 +82,8 @@ body:
       label: The diagnostics block
       description: >
         Attach `bug.md` by dragging it in, or paste its contents here. If you genuinely
-        cannot produce one — an older build, or MeshTerm will not start at all — write down
-        why instead, along with your version, and I will work with that.
-      render: markdown
+        cannot produce one, because MeshTerm will not start at all, write down why instead,
+        along with your version, and I will work with that.
     validations:
       required: true
 
@@ -100,7 +95,7 @@ body:
         Only if you are running on something the diagnostics file cannot name. It knows a
         PicoCalc from a regular terminal, but a uConsole and a laptop look much the same to
         it. Leave blank on a desktop, laptop or Mac.
-      placeholder: "ClockworkPi uConsole (CM4) / M5Stack Cardputer"
+      placeholder: "ClockworkPi uConsole (CM4)"
 
   - type: input
     id: radio
@@ -128,10 +123,10 @@ body:
       label: The log file
       description: >
         MeshTerm keeps one at `~/.meshterm/meshterm.log` (or wherever `MESHTERM_HOME`
-        points). Attach it, or paste the last twenty lines. If the problem is hard to
-        catch, set **Log detail** to `DEBUG` on the Preferences page, do it once more, and
-        send that instead — it records a great deal more.
-      render: text
+        points). Attach the file, or paste the last twenty lines inside a ``` fence. If the
+        problem is hard to catch, set **Log detail** to Debug on the Preferences page,
+        restart MeshTerm, do it once more, and send that instead. It records a great deal
+        more.
 
   - type: textarea
     id: workaround

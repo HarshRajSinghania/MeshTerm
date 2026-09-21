@@ -6,7 +6,7 @@ contact_links:
       Setup trouble, "is it supposed to do this", or anything you want a second opinion
       on. The #support forum is the place. Someone running your radio has probably hit it.
 
-  - name: No GitHub account? Report it in the #bugs forum instead
+  - name: "No GitHub account? Report it in the #bugs forum instead"
     url: https://discord.gg/AZwe5Uvb3S
     about: >
       One post per bug, tagged, with the diagnostics file attached. Real ones get opened
