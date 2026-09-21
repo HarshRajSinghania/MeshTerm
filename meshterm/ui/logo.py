@@ -180,6 +180,7 @@ def _state_intensity(row: str) -> str:
     """
     out: list[str] = []
     bright = False
+    standing: str | None = None  # the dim-bank foreground currently in force
     at = 0
     while at < len(row):
         found = _SGR.match(row, at)
@@ -193,17 +194,31 @@ def _state_intensity(row: str) -> str:
         says = [p for p in parts if p in ("", "0", "1", "22")]
         for part in says:
             bright = part == "1"
+            if part in ("", "0"):
+                standing = None  # a reset takes the foreground with it
         # Whether *this* sequence's own foreground is bright: what it says, else what stands.
         here = bright
         fg = next((p for p in parts if _DIM_FG.fullmatch(p)), None)
         if fg is None:
-            # No foreground to restate. A bare "1" has nothing left to do once brightness
-            # travels as a colour, and dropping it keeps bold off glyphs a terminal may
-            # redraw at another weight; a reset still has to go through.
+            # A bare "1" has nothing left to say once brightness travels as a colour, and
+            # dropping it keeps bold off glyphs a terminal may redraw at another weight.
             kept = [p for p in parts if p != "1"]
+            # But the brightness it was announcing applies to the colour already in force,
+            # not only to the next one named. `ESC[1m` is how the art says "everything after
+            # this is bright", and with the "1" gone that run would carry on in the dim bank
+            # -- two spans meant to read dark then light both coming out dark. So the
+            # standing foreground is restated in whichever bank now applies.
+            if standing is not None and says:
+                if here:
+                    kept.append(str(int(standing) + 60))
+                else:
+                    kept.append(standing)
+                    if "22" not in kept:
+                        kept.insert(0, "22")
             if kept:
                 out.append("\x1b[" + ";".join(kept) + "m")
         else:
+            standing = fg
             rewritten = []
             for part in parts:
                 if part == "1":
