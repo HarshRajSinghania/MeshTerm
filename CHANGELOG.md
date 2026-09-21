@@ -9,16 +9,6 @@ one caveat SemVer makes for a leading zero: while the major version is still `0`
 
 ## [Unreleased]
 
-### Changed
-
-- **`--mock` keeps its invented mesh out of your history.** The simulator is a fake radio,
-  not a fake MeshTerm: what it adverted was written to `meshterm.db` like anything a real
-  companion said, and its four invented contacts then turned up in the mesh walk, the
-  dashboard and the map of the mesh you actually run. A `--mock` run now records to
-  `meshterm-mock.db` beside it, created on first use. Naming a database with `--db` still
-  wins, and `$MESHTERM_HOME` is still the only thing that isolates a run whole — the
-  contact and channel caches, the outbox and the remembered devices are untouched by this.
-
 ## [0.9.0] — 2026-09-22
 
 **The first public release.** Everything in MeshTerm is new today, so instead of a list of
@@ -34,7 +24,7 @@ what the mesh is doing.
 
 - **Run it two ways, and it behaves the same either way.** Type `meshterm` on its own and
   you get a full-screen menu you drive with the arrow keys. Type a command instead —
-  `meshterm contacts`, `meshterm map` — and it prints an answer and exits, which is what you
+  `meshterm contacts`, `meshterm info` — and it prints an answer and exits, which is what you
   want in a script. Add `--json` to any command and the answer comes back as data for
   another program to read.
 
@@ -45,8 +35,9 @@ what the mesh is doing.
   what is happening now, but what was happening last Tuesday.
 
 - **You can see where everyone is.** There is a street map, drawn in the terminal, with the
-  radios on it. You can pan it, zoom it, and search it. There is also a Time Machine that
-  winds the map back so you can watch the mesh change over days.
+  radios on it. You can pan it, zoom it, and search it. There is also a Time Machine: charts of
+  everything you have ever overheard, so you can see when a radio usually talks and how
+  well you have heard it, over a day, a week, a month or all of it.
 
 - **You can talk to people.** Group channels and one-to-one messages, both live. If someone
   is out of range right now, the courier holds your message and delivers it when they come
@@ -60,11 +51,13 @@ what the mesh is doing.
 - **It talks to your radio however your radio talks.** USB cable, Bluetooth, or over the
   network. It finds the ones it can find on its own and asks you to pick. If a connection
   drops it reconnects by itself. No radio yet? `meshterm --mock` runs the whole program
-  against a simulated mesh.
+  against a simulated mesh, and keeps that pretend mesh in a history of its own, so none
+  of it ever turns up beside your real one.
 
-- **It runs on the small machines too.** There is a second layout built for handheld
-  consoles — the PicoCalc's 53-column screen and the uConsole — with its own fonts, colours
-  and on-screen key labels, not just the desktop screen squeezed.
+- **It runs on the small machines too.** The PicoCalc gets a layout of its own, built
+  for its 53-column screen, with its own fonts, colours and on-screen key labels — not just
+  the desktop screen squeezed. The uConsole has room for the full desktop layout, and runs
+  that.
 
 - **It works with no internet.** Map tiles are kept on disk once fetched, and when there is
   no network at all the map falls back to a plain grid. Nothing about MeshTerm needs to

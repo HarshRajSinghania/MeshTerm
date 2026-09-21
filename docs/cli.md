@@ -1464,7 +1464,7 @@ each link; the scripted face prints the link alone.
 **`--json`:**
 
 ```json
-{"page":"discord","title":"Join Discord","version":"0.3.7","text":"Join the Discord\n  Questions, ideas, bug reports, and mesh talk.\n\n  • https://discord.gg/AZwe5Uvb3S","links":["https://discord.gg/AZwe5Uvb3S"]}
+{"page":"discord","title":"Join Discord","version":"0.9.0","text":"Join the Discord\n  Questions, ideas, bug reports, and mesh talk.\n\n  • https://discord.gg/AZwe5Uvb3S","links":["https://discord.gg/AZwe5Uvb3S"]}
 ```
 
 | Field | Type | Meaning |
@@ -1490,7 +1490,7 @@ resolved at boot and shown on no screen.
 
 ```console
 $ meshterm diagnostics
-meshterm  0.3.7
+meshterm  0.9.0
 install   frozen
 
 os        Windows 11
@@ -1566,7 +1566,7 @@ Under `--json`, the five fact blocks merge into one flat object and the two list
 a key of their own:
 
 ```json
-{"meshterm":"0.3.7","install":"frozen","os":"Windows 11","…":"…","tables":[{"table":"observations","rows":418203}],"preferences":[{"preference":"log_level","value":"DEBUG"}]}
+{"meshterm":"0.9.0","install":"frozen","os":"Windows 11","…":"…","tables":[{"table":"observations","rows":418203}],"preferences":[{"preference":"log_level","value":"DEBUG"}]}
 ```
 
 **`--out PATH` writes it to a file instead of printing it**, and the answer becomes the
