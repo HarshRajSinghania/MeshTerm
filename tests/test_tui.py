@@ -3344,8 +3344,18 @@ def test_a_hint_too_long_for_its_box_drops_atoms_rather_than_its_tail() -> None:
     )
 
 
-def test_the_splash_scrolls_the_hardware_column_of_the_row_it_is_on() -> None:
-    """←→ read a long firmware model to its end; the lanes in front of it stay put."""
+def test_the_splash_scrolls_the_whole_row_it_is_on() -> None:
+    """←→ move the entire row, lanes included, rather than sliding the tail under them.
+
+    The Trophy case pins its rank/date/score lanes because those always fit and only the
+    walk overflows, so they are the reader's place in a long list. This list inverts that:
+    on a narrow terminal it is the device name and the address that get cut, so pinning
+    them would pin the truncation in place and the one thing ←→ could not reach would be
+    the text somebody most wants to finish reading.
+
+    Scrolling has to be asked for outright here, because it is a row pinning a head block
+    that normally turns it on and no row does now.
+    """
     from meshterm.core.device_store import RememberedDevice
     from meshterm.core.discovery import serial_device
     from meshterm.platforms import PICOCALC, REGULAR, set_platform
@@ -3367,17 +3377,22 @@ def test_the_splash_scrolls_the_hardware_column_of_the_row_it_is_on() -> None:
         for platform, width in ((REGULAR, 66), (PICOCALC, 47)):
             set_platform(platform)
             items = _build_items([radio], registry[radio.stable_id], registry)
-            screen = SelectScreen("Select a companion device", items, filterable=False)
+            screen = SelectScreen(
+                "Select a companion device", items, filterable=False, hscroll=True
+            )
             row = next(it for it in items if isinstance(it, Choice))
-            assert row.hscroll_from > 0  # the fixed lanes are pinned...
-            assert row.hscroll_from < width  # ...and leave something to scroll into
+            assert not row.hscroll_from, "no lane is pinned on the splash any more"
 
             before = _plain(screen.render_body(width)[1])
             for _ in range(3):
                 screen.handle("right")
             after = _plain(screen.render_body(width)[1])
             assert before != after, platform.name
-            assert after.startswith(before[: row.hscroll_from - 4]), "the lanes moved"
+            # The head moved with everything else: what was at the left edge is gone.
+            assert not after.startswith(before[:8]), f"the lanes stayed put on {platform.name}"
+            # And the name is what scrolled out of view, which is the point -- it is the
+            # part a narrow terminal cuts, so it has to be reachable.
+            assert "Wardriver" in before
     finally:
         set_platform(REGULAR)
 

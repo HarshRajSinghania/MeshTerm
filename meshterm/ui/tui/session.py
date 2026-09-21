@@ -918,6 +918,7 @@ class TuiSession:
         keys: Mapping[str, Any] | None = None,
         key_hint: Callable[[Any], str] | None = None,
         live: Callable[[Callable[[list], None]], Awaitable[None]] | None = None,
+        hscroll: bool | None = None,
     ) -> Any:
         """Show a chromeless select splash (banner above a content-sized box).
 
@@ -941,6 +942,10 @@ class TuiSession:
         nothing outlives the list it was redrawing and no repaint lands on a dialog that
         has since opened over it.
 
+        ``hscroll`` overrules what the rows imply: a splash whose rows pin no head block
+        still wants ←→ to read a long row to its end, and a row that pins nothing cannot
+        ask for that on its own (see :class:`~meshterm.ui.tui.select.SelectScreen`).
+
         ``keys`` hands the list bare-key shortcuts — which a splash can afford precisely
         because it does not filter, so every letter is free (see :class:`SelectScreen`) —
         and ``key_hint`` says what they are called on the row the highlight is standing on,
@@ -958,6 +963,7 @@ class TuiSession:
             filterable=False,
             keys=keys,
             key_hint=key_hint,
+            hscroll=hscroll,
         )
         screen.chrome = False
         screen.banner = banner

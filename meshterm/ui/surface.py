@@ -223,6 +223,7 @@ class Ui:
         keys: Mapping[str, Any] | None = None,
         key_hint: Callable[[Any], str] | None = None,
         live: Callable[[Callable[[list], None]], Awaitable[None]] | None = None,
+        hscroll: bool | None = None,
     ) -> Any:
         """Choose one item on a chromeless startup splash; ``None`` if skipped.
 
@@ -522,6 +523,7 @@ class PlainUi(Ui):
         keys: Mapping[str, Any] | None = None,
         key_hint: Callable[[Any], str] | None = None,
         live: Callable[[Callable[[list], None]], Awaitable[None]] | None = None,
+        hscroll: bool | None = None,
     ) -> Any:
         """Unsupported in scripted CLI mode."""
         raise self._no_prompt()
@@ -786,6 +788,7 @@ class TuiUi(Ui):
         keys: Mapping[str, Any] | None = None,
         key_hint: Callable[[Any], str] | None = None,
         live: Callable[[Callable[[list], None]], Awaitable[None]] | None = None,
+        hscroll: bool | None = None,
     ) -> Any:
         """Delegate to the session's chromeless startup select splash."""
         return await self.session.select_startup(
@@ -797,6 +800,7 @@ class TuiUi(Ui):
             keys=keys,
             key_hint=key_hint,
             live=live,
+            hscroll=hscroll,
             **({} if footer_hint is None else {"footer_hint": footer_hint}),
         )
 

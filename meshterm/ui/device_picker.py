@@ -442,6 +442,9 @@ async def prompt_device(
             keys=_SHORTCUTS,
             key_hint=_shortcut_hint(len(store.hidden_ids())),
             live=keep_looking,
+            # Said outright because the rows no longer imply it: scrolling is switched on by
+            # a row pinning a head block, and none of these do any more.
+            hscroll=True,
         )
         # Esc (``None``) and the Quit row both mean "leave the picker" — surface that to the
         # caller as ``None`` so it can exit the program instead of continuing device-less.
@@ -949,11 +952,12 @@ def _build_items(
         row.append_text(cell)
         row.append(" " * max(0, type_w - cell.cell_len))
         row.append("  ")
-        # Everything up to here is the row's fixed lanes — the reader's place in the list —
-        # so it is pinned and only what follows slides under ←→ (see Choice.hscroll_from).
-        # What follows is the hardware model and its tag, which is the part that runs long:
-        # a firmware model string is as long as its vendor felt like making it.
-        head = row.cell_len
+        # Nothing is pinned here, so ←→ slide the whole row. The Trophy case pins its
+        # rank/date/score lanes because those always fit and only the walk overflows, which
+        # makes them the reader's place in a long list. This list inverts that: on a narrow
+        # terminal it is the device name and the address that get cut, so pinning them would
+        # pin the truncation in place and leave the one thing ←→ could not reach being the
+        # text somebody most wants to finish reading.
         row.append(_pad(_hardware_label(device, registry), hardware_w), style="muted")
         # Only devices we've actually confirmed are billed as MeshCore companions; a USB
         # vendor ID (or a BLE advert) is a sort hint, not a claim. A bare serial bridge earns
@@ -973,7 +977,7 @@ def _build_items(
         # Only a network device opts into Delete-to-remove: it's listed solely from its
         # remembered endpoint, so forgetting it is the only way it leaves the picker. A scanned
         # serial/BLE device would just reappear, so Delete stays inert on those rows.
-        items.append(Choice(title=row, value=device, deletable=device.is_tcp, hscroll_from=head))
+        items.append(Choice(title=row, value=device, deletable=device.is_tcp))
     items.extend(_action_rows())
     return items
 
