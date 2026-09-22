@@ -9,6 +9,13 @@ one caveat SemVer makes for a leading zero: while the major version is still `0`
 
 ## [Unreleased]
 
+### Added
+
+- **Python 3.14 is supported.** The full test suite passes on it, and CI now tests it on
+  Linux, Windows and macOS. Python 3.10 is still the oldest version MeshTerm runs on.
+- **The standalone downloads are built with Python 3.14**, and carry it inside them in
+  place of 3.10. Nothing changes for how you run them.
+
 ### Changed
 
 - **A type-1 node is a companion everywhere.** 0.9.0 called it three different things:
