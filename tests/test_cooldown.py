@@ -140,20 +140,28 @@ def test_the_box_does_not_resize_as_it_counts() -> None:
 def test_the_countdown_resolves_itself_at_zero() -> None:
     """Reaching zero is the dialog's own answer: the wait is over, the action goes ahead."""
     dialog = CountdownDialog("Advert", 5.0)
-    dialog.future = asyncio.get_event_loop_policy().new_event_loop().create_future()
-    dialog.set_remaining(3.0)
-    assert not dialog.future.done()
-    dialog.set_remaining(0.0)
-    assert dialog.future.done() and dialog.future.result() is True
+    loop = asyncio.new_event_loop()
+    try:
+        dialog.future = loop.create_future()
+        dialog.set_remaining(3.0)
+        assert not dialog.future.done()
+        dialog.set_remaining(0.0)
+        assert dialog.future.done() and dialog.future.result() is True
+    finally:
+        loop.close()
 
 
 @pytest.mark.parametrize("key", ["enter", "escape"])
 def test_either_key_abandons_the_wait(key: str) -> None:
     """There is nothing to choose between, so Enter and Esc both mean cancel."""
     dialog = CountdownDialog("Advert", 30.0)
-    dialog.future = asyncio.get_event_loop_policy().new_event_loop().create_future()
-    dialog.handle(key)
-    assert dialog.future.done() and dialog.future.result() is CANCEL
+    loop = asyncio.new_event_loop()
+    try:
+        dialog.future = loop.create_future()
+        dialog.handle(key)
+        assert dialog.future.done() and dialog.future.result() is CANCEL
+    finally:
+        loop.close()
 
 
 # -- the wait --------------------------------------------------------------------

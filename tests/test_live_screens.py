@@ -1209,7 +1209,7 @@ def test_sweep_screen_new_sweep_clears_the_old_evidence() -> None:
         assert "TX 19" not in body and "-2.0" not in body
         await task
 
-    asyncio.get_event_loop_policy().new_event_loop().run_until_complete(go())
+    asyncio.run(go())
 
 
 def test_sweep_screen_escape_resolves() -> None:
