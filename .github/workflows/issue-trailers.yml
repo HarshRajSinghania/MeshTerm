@@ -47,16 +47,18 @@ jobs:
 
             # Trailers only: a line that starts with the keyword. A bare "#12"
             # in prose is a reference someone wrote on purpose, not a claim
-            # that this commit closes anything.
+            # that this commit closes anything. The colon is optional, because
+            # GitHub closes on "Fixes #12" just as it does on "Fixes: #12", and
+            # the keywords are every form GitHub accepts, plus refs and see.
             refs=$(printf '%s\n' "$msg" \
-              | grep -oiE '^(fixes|closes|resolves|refs|see):[[:space:]]*([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)?#[0-9]+' \
+              | grep -oiE '^(fix|fixes|fixed|close|closes|closed|resolve|resolves|resolved|refs|see)(:[[:space:]]*|[[:space:]]+)([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)?#[0-9]+' \
               || true)
 
             [ -z "$refs" ] && continue
 
             while IFS= read -r ref; do
               [ -z "$ref" ] && continue
-              target=$(printf '%s' "$ref" | sed -E 's/^[A-Za-z]+:[[:space:]]*//')
+              target=$(printf '%s' "$ref" | sed -E 's/^[A-Za-z]+:?[[:space:]]*//')
               num="${target##*#}"
 
               if [ "$target" != "#${num}" ]; then
@@ -65,8 +67,13 @@ jobs:
                 continue
               fi
 
-              if state=$(gh api "repos/$REPO/issues/$num" --jq .state 2>/dev/null); then
+              if state=$(gh api "repos/$REPO/issues/$num" --jq .state 2>/tmp/gh.err); then
                 echo "  $short -> #$num ($state)"
+              elif ! grep -q 'HTTP 404' /tmp/gh.err; then
+                # Only a 404 means the issue is missing. Anything else (a rate
+                # limit, an outage) says nothing about the trailer, and a public
+                # comment calling a real issue missing would be worse than silence.
+                echo "::warning::could not check #$num for commit $short: $(head -c 200 /tmp/gh.err)"
               else
                 echo "::error::commit $short names #$num, which does not exist in $REPO"
                 problems=$((problems + 1))
