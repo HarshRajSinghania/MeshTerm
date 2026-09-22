@@ -127,6 +127,7 @@ jobs:
           awk -v v="$VERSION" '
               $0 ~ "^## \\[" v "\\]" {found=1; next}
               found && /^## \[/ {exit}
+              found && /^\[[^]]+\]: / {next}
               found {print}
             ' CHANGELOG.md > notes.md
           if ! grep -q '[^[:space:]]' notes.md; then
@@ -166,7 +167,7 @@ jobs:
           ./meshterm
           ```
 
-          That is the Apple silicon build — every Mac since 2020. On an Intel Mac, swap
+          That is the build for Apple silicon Macs (M1 and later). On an Intel Mac, swap
           `arm64` for `x64`.
 
           **Linux** — the same three lines with `linux-x64`, or `linux-arm64` on a uConsole
@@ -186,7 +187,7 @@ jobs:
           .\meshterm-@VERSION@-windows-x64.exe
           ```
 
-          Every file below is listed in `SHA256SUMS`. The version-less copies —
+          Every binary below is listed in `SHA256SUMS`. The version-less copies —
           `meshterm-macos-arm64` and its four siblings — are the same binaries under a name
           that never changes, for anything that wants whichever release is newest without
           being told its number. [Installing with pip or pipx, and the rest of the

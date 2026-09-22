@@ -9,25 +9,6 @@ one caveat SemVer makes for a leading zero: while the major version is still `0`
 
 ## [Unreleased]
 
-### Added
-
-- **Python 3.14 is supported.** The full test suite passes on it, and CI now tests it on
-  Linux, Windows and macOS. Python 3.10 is still the oldest version MeshTerm runs on.
-- **The standalone downloads are built with Python 3.14**, and carry it inside them in
-  place of 3.10. Nothing changes for how you run them.
-
-### Changed
-
-- **A type-1 node is a companion everywhere.** 0.9.0 called it three different things:
-  `companion` in `meshterm info`, `client` in `meshterm diagnostics`, and `node` in
-  `contacts` and every other screen that names a node's type. All three now say
-  `companion`, and a room server is `room server` everywhere rather than sometimes just
-  `room`. This changes `--json` output: `diagnostics` gives `"device_role": "companion"`,
-  and the `type` field on a node gives `"companion"` and `"room server"`. Scripts that
-  matched the old words need updating.
-- The node-type legend under a route graph moves onto a second line when the screen is
-  too narrow for it, such as on the PicoCalc, instead of cutting the last entry off.
-
 ## [0.9.0] — 2026-09-22
 
 **The first public release.** Everything in MeshTerm is new today, so instead of a list of
@@ -92,7 +73,8 @@ what the mesh is doing.
 
 One file to download, with nothing else to install, for Windows, macOS (both Intel and
 Apple silicon) and Linux (including 64-bit ARM, which covers the uConsole). If you would
-rather use Python, `pipx install` works too. The README has the exact commands.
+rather use Python, `pipx install` works too, on Python 3.10 to 3.14. The README has the
+exact commands.
 
 MeshTerm is free and open source under the Apache 2.0 licence. The name and the logo are
 not covered by the licence (see `NOTICE`), so a fork is welcome under its own name.
