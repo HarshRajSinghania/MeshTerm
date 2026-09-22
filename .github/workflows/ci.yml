@@ -59,8 +59,12 @@ jobs:
         # shows up. It was shaped this way when the repository was private and
         # minutes were metered; on a public one they are not, so this can widen to
         # every OS times every version whenever the wait for a full run is worth it.
+        #
+        # 3.10 stays on Ubuntu 24.04. It reaches end of life in October 2026, and a
+        # newer image that ubuntu-latest moves to may not offer it at all. That would
+        # turn the badge red with nothing broken. Drop this leg when the floor rises.
         include:
-          - { os: ubuntu-latest, python: "3.10" }
+          - { os: ubuntu-24.04, python: "3.10" }
           - { os: ubuntu-latest, python: "3.11" }
           - { os: ubuntu-latest, python: "3.12" }
           - { os: ubuntu-latest, python: "3.13" }
