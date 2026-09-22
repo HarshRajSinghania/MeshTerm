@@ -198,7 +198,16 @@ jobs:
           ## What changed
           INSTALL_MD
           sed -e "s/@TAG@/$TAG/g" -e "s/@VERSION@/$VERSION/g" install.md.in > install.md
-          cat install.md notes.md > body.md
+
+          # One ask, at the end, with the reason. The install commands keep the top of
+          # the page, and the changelog stays a record of what changed.
+          cat > star.md <<'STAR_MD'
+
+          ---
+
+          If MeshTerm is useful to you, please give [the repository](https://github.com/jpmartineau/MeshTerm) a ⭐. It helps other MeshCore users find it, because GitHub ranks projects by stars in its search and topic pages.
+          STAR_MD
+          cat install.md notes.md star.md > body.md
           echo "--- body ---"; cat body.md
 
       - name: Create it
