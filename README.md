@@ -27,10 +27,9 @@ your mesh's history is worth.
 > can go straight to a pull request; for anything bigger, please open an issue first.
 > [More on how it's run](#how-this-project-is-run).
 
-<p align="center">
-  <a href="https://meshterm.net/#demo"><img src="https://meshterm.net/assets/demo-play.png" alt="Watch the demo: MeshTerm showing every route a channel message took to arrive" width="840"></a>
-</p>
-<p align="center"><sub>Under two minutes on a real mesh &mdash; <a href="https://meshterm.net/#demo">watch it on meshterm.net</a>.</sub></p>
+https://github.com/user-attachments/assets/f91a6695-14d5-4ae0-8fdc-e65492d0955d
+
+<p align="center"><sub>Under two minutes on a real mesh.</sub></p>
 
 <p align="center">
   <img src="docs/screenshots/dashboard.png" alt="The dashboard: a packets-per-minute timeline over the last two hours, and every packet class counted" width="49%">
